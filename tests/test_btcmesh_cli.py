@@ -2,7 +2,8 @@ import unittest
 import subprocess
 import sys
 import os
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call, ANY
+from btcmesh_cli import cli_main
 
 SCRIPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'btcmesh_cli.py')
 
@@ -181,6 +182,68 @@ class TestMeshtasticCliInitializationStory62(unittest.TestCase):
         # Should log every connection attempt and error
         # ...
         pass
+
+class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
+    """
+    TDD for Story 6.3: Chunked transaction sending via Meshtastic in CLI.
+    Covers multi-chunk, single-chunk, send errors, and logging.
+    """
+    def setUp(self):
+        self.mock_iface = MagicMock()
+        self.mock_logger = MagicMock()
+    def make_args(self, dest, tx_hex, dry_run=False):
+        return type('Args', (), {
+            'destination': dest,
+            'tx': tx_hex,
+            'dry_run': dry_run
+        })()
+    def assert_printed_substring(self, mock_print, substring):
+        found = any(substring in str(call.args[0]) for call in mock_print.call_args_list)
+        assert found, f"Did not find print call containing: {substring}"
+    def test_multi_chunk_transaction_sends_all(self):
+        dest = '!abcdef12'
+        tx_hex = 'a' * 450  # 3 chunks
+        self.mock_iface.sendText.return_value = None
+        args = self.make_args(dest, tx_hex)
+        with patch('builtins.print') as mock_print:
+            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+        self.assertEqual(ret, 0)
+        self.assertEqual(self.mock_iface.sendText.call_count, 3)
+        self.assert_printed_substring(mock_print, 'Sent chunk 1/3 for session')
+        self.assert_printed_substring(mock_print, 'Sent chunk 2/3 for session')
+        self.assert_printed_substring(mock_print, 'Sent chunk 3/3 for session')
+        self.assert_printed_substring(mock_print, 'All transaction chunks sent for session')
+    def test_single_chunk_transaction_sends_one(self):
+        dest = '!abcdef12'
+        tx_hex = 'b' * 100  # 1 chunk
+        self.mock_iface.sendText.return_value = None
+        args = self.make_args(dest, tx_hex)
+        with patch('builtins.print') as mock_print:
+            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+        self.assertEqual(ret, 0)
+        self.assertEqual(self.mock_iface.sendText.call_count, 1)
+        self.assert_printed_substring(mock_print, 'Sent chunk 1/1 for session')
+        self.assert_printed_substring(mock_print, 'All transaction chunks sent for session')
+    def test_error_sending_chunk_logs_and_prints(self):
+        dest = '!abcdef12'
+        tx_hex = 'c' * 300  # 2 chunks
+        def sendText_side_effect(*args, **kwargs):
+            # Raise on first chunk
+            raise Exception('Send failed')
+        self.mock_iface.sendText.side_effect = sendText_side_effect
+        args = self.make_args(dest, tx_hex)
+        with patch('builtins.print') as mock_print, self.assertRaises(Exception):
+            cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+        self.assert_printed_substring(mock_print, 'Error sending chunk 1/2 for session')
+        found_log = any('Error sending chunk 1/2 for session' in str(call.args[0]) for call in self.mock_logger.error.call_args_list)
+        assert found_log, 'Did not find logger.error call containing: Error sending chunk 1/2 for session'
+    def test_logging_on_all_chunking_and_sending(self):
+        dest = '!abcdef12'
+        tx_hex = 'd' * 400  # 2 chunks
+        self.mock_iface.sendText.return_value = None
+        args = self.make_args(dest, tx_hex)
+        cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+        self.mock_logger.info.assert_any_call(ANY)
 
 if __name__ == '__main__':
     unittest.main() 

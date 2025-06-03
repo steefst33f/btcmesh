@@ -73,19 +73,21 @@ def initialize_meshtastic_interface_cli(port=None):
         cli_logger.error(f"An unexpected error occurred during Meshtastic initialization: {e}", exc_info=True)
         return None
 
-def main():
-    parser = argparse.ArgumentParser(description="Send a raw Bitcoin transaction via Meshtastic LoRa relay.")
-    parser.add_argument('-d', '--destination', required=True, help='Destination node ID (e.g., !abcdef12)')
-    parser.add_argument('-tx', '--tx', required=True, help='Raw transaction hex string')
-    parser.add_argument('--dry-run', action='store_true', help='Only parse and print arguments, do not send')
-    args = parser.parse_args()
-
-    # Validate tx hex
+def cli_main(args=None, injected_iface=None, injected_logger=None):
+    import argparse
+    import sys
+    import re
+    if args is None:
+        parser = argparse.ArgumentParser(description="Send a raw Bitcoin transaction via Meshtastic LoRa relay.")
+        parser.add_argument('-d', '--destination', required=True, help='Destination node ID (e.g., !abcdef12)')
+        parser.add_argument('-tx', '--tx', required=True, help='Raw transaction hex string')
+        parser.add_argument('--dry-run', action='store_true', help='Only parse and print arguments, do not send')
+        args = parser.parse_args()
     tx_hex = args.tx
     if len(tx_hex) % 2 != 0 or not re.fullmatch(r'[0-9a-fA-F]+', tx_hex):
         print('Invalid raw transaction hex: must be even length and hex characters only.', file=sys.stderr)
-        sys.exit(1)
-
+        raise ValueError('Invalid raw transaction hex')
+    logger = injected_logger if injected_logger is not None else cli_logger
     if args.dry_run:
         print(f"Arguments parsed successfully:")
         print(f"  Destination: {args.destination}")
@@ -95,16 +97,39 @@ def main():
         total_chunks = len(chunks)
         for i, payload in enumerate(chunks, 1):
             print(f"BTC_TX|{session_id}|{i}/{total_chunks}|{payload}")
-        sys.exit(0)
-
-    # Initialize Meshtastic interface (Story 6.2)
-    iface = initialize_meshtastic_interface_cli()
+        return 0
+    iface = injected_iface if injected_iface is not None else initialize_meshtastic_interface_cli()
     if iface is None:
         print("Failed to initialize Meshtastic interface. See logs for details.", file=sys.stderr)
-        sys.exit(2)
+        raise RuntimeError('Failed to initialize Meshtastic interface')
+    session_id = generate_session_id()
+    chunks = chunk_transaction(tx_hex, CHUNK_SIZE)
+    total_chunks = len(chunks)
+    for i, payload in enumerate(chunks, 1):
+        msg = f"BTC_TX|{session_id}|{i}/{total_chunks}|{payload}"
+        try:
+            iface.sendText(text=msg, destinationId=args.destination)
+            print(f"Sent chunk {i}/{total_chunks} for session {session_id}")
+            logger.info(f"Sent chunk {i}/{total_chunks} for session {session_id} to {args.destination}")
+        except Exception as e:
+            err_msg = f"Error sending chunk {i}/{total_chunks} for session {session_id}: {e}"
+            print(err_msg, file=sys.stderr)
+            logger.error(f"Error sending chunk {i}/{total_chunks} for session {session_id}", exc_info=True)
+            raise
+    print(f"All transaction chunks sent for session {session_id}.")
+    logger.info(f"All transaction chunks sent for session {session_id} to {args.destination}.")
+    return 0
 
-    # (Actual sending logic will be implemented in later stories)
-    print("Sending not implemented yet.")
+def main():
+    import sys
+    try:
+        cli_main()
+    except ValueError:
+        sys.exit(1)
+    except RuntimeError:
+        sys.exit(2)
+    except Exception:
+        sys.exit(3)
     sys.exit(0)
 
 if __name__ == '__main__':
