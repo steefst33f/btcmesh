@@ -216,19 +216,20 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                         try:
                             int(reassembled_hex, 16)
                         except ValueError:
-                            error_msg = "Invalid reassembled data: Not a hex string"
-                            server_logger.error(
-                                f"[Sender: {sender_node_id_for_reply}] {error_msg}"
-                            )
-                            nack_message = f"BTC_NACK|UNKNOWN|ERROR|{error_msg}"
-                            if iface:
-                                send_meshtastic_reply(
-                                    iface, sender_node_id_for_reply, nack_message, None
-                                )
+                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
+                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid reassembled data: Not a hex string"
+                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
-                        # Placeholder: Further processing (decode, validate, broadcast)
-                        # and sending BTC_ACK will happen in subsequent stories.
-                        # For now, just log reassembly success.
+                        # Story 2.3: Decode raw transaction hex
+                        try:
+                            from core.transaction_parser import decode_raw_transaction_hex
+                            tx_decoded = decode_raw_transaction_hex(reassembled_hex)
+                        except Exception as e:
+                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
+                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
+                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            return
+                        # If successful, tx_decoded is available for further processing
                     # --- Replacement of TRX_CHUNK_BUFFER logic ends ---
 
                 except (InvalidChunkFormatError, MismatchedTotalChunksError) as e:

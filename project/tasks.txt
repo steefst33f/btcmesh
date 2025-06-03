@@ -114,20 +114,13 @@ lora/
         - [x] *   **Scenario:** Reassembled payload contains non-hex characters
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestHexValidationStory22`)._
 
-- [ ] **Story 2.3: Decode Reassembled Raw Bitcoin Transaction Hex**
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to decode the reassembled and validated hexadecimal string into its constituent Bitcoin transaction fields,
-- [ ] *   **So that** basic structural validation can be performed.
-    - [ ] *   **Scenario:** Valid reassembled hex string representing a simple P2PKH transaction
-        - [ ] *   **Given** a valid, reassembled hexadecimal string (from Story 2.2).
-        - [ ] *   **When** the decode function is called.
-        - [ ] *   **Then** the function returns a structured representation of the transaction.
-        - [ ] *   **And** no errors are thrown during decoding.
-    - [ ] *   **Scenario:** Malformed or incomplete reassembled hex string
-        - [ ] *   **Given** a reassembled hexadecimal string that is structurally invalid as a raw transaction.
-        - [ ] *   **When** the decode function is called.
-        - [ ] *   **Then** the function returns an error indicating a decoding failure.
-        - [ ] *   **And** an error message "Invalid transaction: Decoding failed on reassembled data" is prepared for reply.
+- [x] **Story 2.3: Decode Reassembled Raw Bitcoin Transaction Hex**
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to decode the reassembled and validated hexadecimal string into its constituent Bitcoin transaction fields,
+    - [x] *   **So that** basic structural validation can be performed.
+        - [x] *   **Scenario:** Valid reassembled hex string representing a simple P2PKH transaction
+        - [x] *   **Scenario:** Malformed or incomplete reassembled hex string
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestTransactionDecodeStory23`)._
 
 ### 3. Basic Transaction Validation (Relay Device - `btcmesh-server.py`)
 
