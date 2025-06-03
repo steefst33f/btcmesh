@@ -8,13 +8,14 @@ from typing import Optional, Any, Dict, TYPE_CHECKING
 # to be imported by tests even if meshtastic is not installed.
 
 from core.logger_setup import server_logger
-from core.config_loader import get_meshtastic_serial_port, load_app_config
+from core.config_loader import get_meshtastic_serial_port, load_app_config, load_bitcoin_rpc_config
 from core.reassembler import (
     TransactionReassembler,
     InvalidChunkFormatError,
     MismatchedTotalChunksError,
     ReassemblyError
 )
+from core.rpc_client import connect_bitcoin_rpc
 
 if TYPE_CHECKING:
     import meshtastic.serial_interface
@@ -480,6 +481,17 @@ def main() -> None:
     """
     global meshtastic_interface_instance
     server_logger.info("Starting BTC Mesh Relay Server...")
+
+    # --- Story 4.2: Connect to Bitcoin RPC ---
+    try:
+        rpc_config = load_bitcoin_rpc_config()
+        bitcoin_rpc = connect_bitcoin_rpc(rpc_config)
+        server_logger.info("Connected to Bitcoin Core RPC node successfully.")
+    except Exception as e:
+        bitcoin_rpc = None
+        server_logger.error(f"Failed to connect to Bitcoin Core RPC node: {e}. Continuing without RPC connection.")
+    # Store bitcoin_rpc for later use (e.g., as a global or pass to handlers)
+    # --- End Story 4.2 integration ---
 
     # initialize_meshtastic_interface will now use the config loader by default
     meshtastic_iface = initialize_meshtastic_interface()

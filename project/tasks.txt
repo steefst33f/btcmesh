@@ -145,7 +145,14 @@ lora/
         - [x] *   **Scenario:** Invalid config in .env
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestBitcoinRpcConfigStory41`)._
 
-- [ ] **Story 4.2: Connect to Bitcoin RPC** (No change)
+- [x] **Story 4.2: Connect to Bitcoin RPC**
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to connect to the Bitcoin Core node's RPC interface using the loaded config,
+    - [x] *   **So that** I can prepare to broadcast transactions.
+        - [x] *   **Scenario:** Valid config, node reachable
+        - [x] *   **Scenario:** Invalid config or node unreachable
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestBitcoinRpcConnectionStory42`)._
+
 - [ ] **Story 4.3: Broadcast Transaction via RPC `sendrawtransaction`** (Input is the reassembled, validated hex)
 
 ### 5. Logging and Configuration (Relay Device - `btcmesh-server.py`)
