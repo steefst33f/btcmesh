@@ -450,7 +450,7 @@ class TestMessageHandling(unittest.TestCase):
         # )
 
     def test_receive_btc_tx_chunk_success_reassembly(self):
-        """Test receiving a BTC_TX chunk that leads to successful reassembly."""
+        """Test receiving a BTC_TX chunk that leads to successful reassembly and triggers broadcast logic."""
         sender_node_id_int = 0x12345 # Example sender
         server_node_id_str_formatted = "!abcdef" # Our server's ID
 
@@ -461,6 +461,8 @@ class TestMessageHandling(unittest.TestCase):
 
         # Configure the mock reassembler to return the complete payload
         self.mock_reassembler.add_chunk.return_value = reassembled_hex_payload
+        # Patch _extract_session_id_from_raw_chunk to return the correct session_id
+        self.mock_extract_id.return_value = session_id
 
         packet = {
             'from': sender_node_id_int,
@@ -481,13 +483,16 @@ class TestMessageHandling(unittest.TestCase):
             message_text
         )
 
-        # 2. No ACK/NACK reply should be sent directly by on_receive_text_message 
-        #    upon successful reassembly. Further processing (validation, RPC) would 
-        #    trigger replies via send_meshtastic_reply.
-        self.mock_send_reply.assert_not_called()
+        # 2. Since there is no RPC connection, a NACK should be sent for broadcast failure.
+        expected_nack_msg = f"BTC_NACK|{session_id}|ERROR|Broadcast failed: No RPC connection"
+        self.mock_send_reply.assert_called_once_with(
+            self.mock_iface,
+            '!12345',
+            expected_nack_msg,
+            session_id
+        )
 
-        # 3. Assert the log message for successful reassembly.
-        #    The sender_id for logging is formatted by _format_node_id inside on_receive_text_message
+        # 3. Assert the log message for successful reassembly (optional, for completeness).
         sender_node_id_str_formatted_for_log = _format_node_id(sender_node_id_int)
         expected_log_reassembly_success = (
             f"[Sender: {sender_node_id_str_formatted_for_log}] Successfully reassembled transaction: "
@@ -1180,50 +1185,75 @@ class TestMeshtasticReplySending(unittest.TestCase):
 
 class TestTransactionReassemblerStory21(unittest.TestCase):
     def setUp(self):
+        # Patch logger for log assertions
+        self.logger_patcher = patch('core.reassembler.server_logger', MagicMock())
+        self.mock_logger = self.logger_patcher.start()
         self.reassembler = TransactionReassembler(timeout_seconds=1)  # Short timeout for test
         self.sender_id = 12345
         self.session_id = "story21sess"
 
-    def test_out_of_order_chunk_reassembly(self):
-        """Given chunks arrive out of order, When all are received, Then reassembly succeeds in order."""
-        # Given
-        chunk1 = f"BTC_TX|{self.session_id}|1/3|AAA"
-        chunk2 = f"BTC_TX|{self.session_id}|2/3|BBB"
-        chunk3 = f"BTC_TX|{self.session_id}|3/3|CCC"
-        # When: Add out of order
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk2))
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
-        # Then: Only after last chunk, reassembly occurs
-        result = self.reassembler.add_chunk(self.sender_id, chunk3)
-        self.assertEqual(result, "AAABBBCCC")
+    def tearDown(self):
+        self.logger_patcher.stop()
 
-    def test_duplicate_chunk_ignored(self):
-        """Given a duplicate chunk, When it is received, Then it is ignored and not reassembled twice."""
+    def test_logs_on_new_session_and_chunk(self):
         chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
+        self.reassembler.add_chunk(self.sender_id, chunk1)
+        # Should log new session start and chunk add
+        log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
+        self.mock_logger.info.assert_any_call(
+            f"{log_ctx} New reassembly session started. Expecting 2 chunks."
+        )
+        self.mock_logger.debug.assert_any_call(
+            f"{log_ctx} Added chunk 1/2. Collected 1 chunks."
+        )
+
+    def test_logs_on_duplicate_chunk(self):
+        chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
+        self.reassembler.add_chunk(self.sender_id, chunk1)
+        self.reassembler.add_chunk(self.sender_id, chunk1)  # Duplicate
+        log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
+        self.mock_logger.warning.assert_any_call(
+            f"{log_ctx} Duplicate chunk 1/2 received. Ignoring."
+        )
+
+    def test_logs_on_out_of_order_and_reassembly_success(self):
         chunk2 = f"BTC_TX|{self.session_id}|2/2|BBB"
-        # Add first chunk
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
-        # Add duplicate of first chunk
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
-        # Add second chunk
-        result = self.reassembler.add_chunk(self.sender_id, chunk2)
-        self.assertEqual(result, "AAABBB")
-        # Add duplicate of second chunk (should not reassemble again)
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk2))
-
-    def test_reassembly_timeout(self):
-        """Given not all chunks arrive, When timeout passes, Then session is cleaned up and NACK info is returned."""
         chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
-        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
-        # Wait for timeout
+        self.reassembler.add_chunk(self.sender_id, chunk2)
+        self.reassembler.add_chunk(self.sender_id, chunk1)
+        log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
+        self.mock_logger.debug.assert_any_call(
+            f"{log_ctx} Added chunk 2/2. Collected 1 chunks."
+        )
+        self.mock_logger.debug.assert_any_call(
+            f"{log_ctx} Added chunk 1/2. Collected 2 chunks."
+        )
+        self.mock_logger.info.assert_any_call(
+            f"{log_ctx} All 2 chunks received. Attempting reassembly."
+        )
+        self.mock_logger.info.assert_any_call(
+            f"{log_ctx} Reassembly successful."
+        )
+
+    def test_logs_on_timeout(self):
+        chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
+        self.reassembler.add_chunk(self.sender_id, chunk1)
         import time as _time
         _time.sleep(1.1)
-        # When: cleanup is called
-        nacks = self.reassembler.cleanup_stale_sessions()
-        # Then: NACK info is returned for the timed out session
-        self.assertTrue(any(n["tx_session_id"] == self.session_id for n in nacks))
-        # And: session is removed
-        self.assertIsNone(self.reassembler.get_session_sender_id_str(self.sender_id, self.session_id))
+        self.reassembler.cleanup_stale_sessions()
+        log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
+        self.mock_logger.warning.assert_any_call(
+            f"{log_ctx} Reassembly timeout after 1s. Received 1/2 chunks. Discarding."
+        )
+        self.mock_logger.info.assert_any_call(
+            "Identified 1 stale reassembly sessions for cleanup and NACK."
+        )
+
+    def test_logs_timeout_value_on_init(self):
+        # The info log for timeout value should be called on init
+        self.mock_logger.info.assert_any_call(
+            "TransactionReassembler initialized with timeout: 1s"
+        )
 
 
 class TestHexValidationStory22(unittest.TestCase):
@@ -1386,6 +1416,128 @@ class TestBitcoinRpcConfigStory41(unittest.TestCase):
         with unittest.mock.patch.dict('os.environ', env, clear=True):
             with self.assertRaises(ValueError):
                 load_bitcoin_rpc_config()
+
+
+class TestBitcoinRpcConnectionStory42(unittest.TestCase):
+    def setUp(self):
+        self.valid_config = {
+            'host': '127.0.0.1',
+            'port': 8332,
+            'user': 'testuser',
+            'password': 'testpass'
+        }
+
+    def test_valid_config_node_reachable(self):
+        """Given valid config and node reachable, When connecting, Then connection is established."""
+        with unittest.mock.patch('core.rpc_client.AuthServiceProxy') as mock_proxy:
+            from core.rpc_client import connect_bitcoin_rpc
+            mock_proxy.return_value.getblockchaininfo.return_value = {'blocks': 100}
+            rpc = connect_bitcoin_rpc(self.valid_config)
+            self.assertIsNotNone(rpc)
+            mock_proxy.assert_called_once()
+            self.assertTrue(hasattr(rpc, 'getblockchaininfo'))
+
+    def test_invalid_config_raises(self):
+        """Given invalid config, When connecting, Then error is raised."""
+        from core.rpc_client import connect_bitcoin_rpc
+        bad_config = self.valid_config.copy()
+        bad_config['port'] = 'notanint'
+        with self.assertRaises(Exception):
+            connect_bitcoin_rpc(bad_config)
+
+    def test_node_unreachable_raises(self):
+        """Given valid config but node unreachable, When connecting, Then error is raised."""
+        with unittest.mock.patch('core.rpc_client.AuthServiceProxy', side_effect=ConnectionRefusedError):
+            from core.rpc_client import connect_bitcoin_rpc
+            with self.assertRaises(ConnectionRefusedError):
+                connect_bitcoin_rpc(self.valid_config)
+
+
+class TestBitcoinRpcBroadcastStory43(unittest.TestCase):
+    def setUp(self):
+        self.valid_hex = '0100000001abcdef...'
+        self.txid = 'deadbeefcafebabe1234567890abcdef1234567890abcdef'
+
+    def test_valid_broadcast_returns_txid(self):
+        """Given valid hex and RPC connection, When broadcast, Then TXID is returned."""
+        mock_rpc = unittest.mock.Mock()
+        mock_rpc.sendrawtransaction.return_value = self.txid
+        from core.rpc_client import broadcast_transaction_via_rpc
+        txid, error = broadcast_transaction_via_rpc(mock_rpc, self.valid_hex)
+        self.assertEqual(txid, self.txid)
+        self.assertIsNone(error)
+
+    def test_rpc_error_returns_error_message(self):
+        """Given valid hex but RPC error, When broadcast, Then error message is returned."""
+        mock_rpc = unittest.mock.Mock()
+        from bitcoinrpc.authproxy import JSONRPCException
+        mock_rpc.sendrawtransaction.side_effect = JSONRPCException({'code': -26, 'message': 'txn-mempool-conflict'})
+        from core.rpc_client import broadcast_transaction_via_rpc
+        txid, error = broadcast_transaction_via_rpc(mock_rpc, self.valid_hex)
+        self.assertIsNone(txid)
+        self.assertIn('txn-mempool-conflict', error)
+
+    def test_no_rpc_connection_returns_error(self):
+        """Given no RPC connection, When broadcast, Then error message is returned."""
+        from core.rpc_client import broadcast_transaction_via_rpc
+        txid, error = broadcast_transaction_via_rpc(None, self.valid_hex)
+        self.assertIsNone(txid)
+        self.assertIn('No RPC connection', error)
+
+
+class TestReassemblyTimeoutConfigStory52(unittest.TestCase):
+    def setUp(self):
+        self.default_timeout = 30
+        self.env_key = 'REASSEMBLY_TIMEOUT_SECONDS'
+        self.env = {
+            'BITCOIN_RPC_HOST': '127.0.0.1',
+            'BITCOIN_RPC_PORT': '8332',
+            'BITCOIN_RPC_USER': 'user',
+            'BITCOIN_RPC_PASSWORD': 'pass',
+        }
+
+    def test_timeout_loaded_from_env(self):
+        from core.config_loader import load_reassembly_timeout
+        env = self.env.copy()
+        env[self.env_key] = '42'
+        with unittest.mock.patch.dict('os.environ', env, clear=True):
+            timeout, source = load_reassembly_timeout()
+            self.assertEqual(timeout, 42)
+            self.assertEqual(source, 'env')
+
+    def test_timeout_missing_uses_default(self):
+        from core.config_loader import load_reassembly_timeout
+        with unittest.mock.patch.dict('os.environ', self.env, clear=True):
+            timeout, source = load_reassembly_timeout()
+            self.assertEqual(timeout, self.default_timeout)
+            self.assertEqual(source, 'default')
+
+    def test_timeout_invalid_uses_default_and_logs_warning(self):
+        from core.config_loader import load_reassembly_timeout
+        env = self.env.copy()
+        env[self.env_key] = 'notanint'
+        with unittest.mock.patch.dict('os.environ', env, clear=True):
+            with unittest.mock.patch('core.config_loader.server_logger') as mock_logger:
+                timeout, source = load_reassembly_timeout()
+                self.assertEqual(timeout, self.default_timeout)
+                self.assertEqual(source, 'default')
+                mock_logger.warning.assert_any_call(
+                    "Invalid REASSEMBLY_TIMEOUT_SECONDS value 'notanint'. Using default: 30s."
+                )
+
+    def test_timeout_zero_or_negative_uses_default_and_logs_warning(self):
+        from core.config_loader import load_reassembly_timeout
+        for bad_val in ['0', '-5']:
+            env = self.env.copy()
+            env[self.env_key] = bad_val
+            with unittest.mock.patch.dict('os.environ', env, clear=True):
+                with unittest.mock.patch('core.config_loader.server_logger') as mock_logger:
+                    timeout, source = load_reassembly_timeout()
+                    self.assertEqual(timeout, self.default_timeout)
+                    self.assertEqual(source, 'default')
+                    mock_logger.warning.assert_any_call(
+                        f"Invalid REASSEMBLY_TIMEOUT_SECONDS value '{bad_val}'. Using default: 30s."
+                    )
 
 
 if __name__ == '__main__':

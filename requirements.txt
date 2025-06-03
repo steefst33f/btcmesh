@@ -1,2 +1,3 @@
 meshtastic
-python-dotenv 
+python-dotenv
+python-bitcoinrpc

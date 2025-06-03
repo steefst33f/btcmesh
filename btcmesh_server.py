@@ -8,21 +8,21 @@ from typing import Optional, Any, Dict, TYPE_CHECKING
 # to be imported by tests even if meshtastic is not installed.
 
 from core.logger_setup import server_logger
-from core.config_loader import get_meshtastic_serial_port, load_app_config, load_bitcoin_rpc_config
+from core.config_loader import get_meshtastic_serial_port, load_app_config, load_bitcoin_rpc_config, load_reassembly_timeout
 from core.reassembler import (
     TransactionReassembler,
     InvalidChunkFormatError,
     MismatchedTotalChunksError,
     ReassemblyError
 )
-from core.rpc_client import connect_bitcoin_rpc
+from core.rpc_client import connect_bitcoin_rpc, broadcast_transaction_via_rpc
 
 if TYPE_CHECKING:
     import meshtastic.serial_interface
 
 # Global instance of the TransactionReassembler
-# TODO: Consider timeout configuration from .env file later if needed for reassembler
-transaction_reassembler = TransactionReassembler()
+# Now initialized in main() with config timeout
+transaction_reassembler: TransactionReassembler = None  # type: ignore
 
 # Placeholder for the main Meshtastic interface, to be set in main()
 # This is needed if on_receive_text_message or other global scope functions
@@ -34,6 +34,7 @@ meshtastic_interface_instance: (
     Optional["meshtastic.serial_interface.SerialInterface"]
 ) = None
 
+bitcoin_rpc = None  # Global RPC connection for broadcasting
 
 TRX_CHUNK_BUFFER: Dict[str, Any] = {}  # This will be replaced by reassembler logic
 # TODO: Remove TRX_CHUNK_BUFFER once reassembler is fully integrated and tested.
@@ -202,9 +203,8 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                     f"Potential BTC transaction chunk from {sender_node_id_for_reply}. Processing..."
                 )
                 try:
-                    # --- Replacement of TRX_CHUNK_BUFFER logic starts ---
                     reassembled_hex = transaction_reassembler.add_chunk(
-                        sender_raw_key_for_reassembler, # Use the key consistent with reassembler's design
+                        sender_raw_key_for_reassembler,
                         message_text
                     )
 
@@ -218,6 +218,7 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                             int(reassembled_hex, 16)
                         except ValueError:
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
+                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid reassembled data: Not a hex string"
                             send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
@@ -227,6 +228,7 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                             tx_decoded = decode_raw_transaction_hex(reassembled_hex)
                         except Exception as e:
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
+                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
                             send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
@@ -234,12 +236,27 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                         valid, error = basic_sanity_check(tx_decoded)
                         if not valid:
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
+                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: {error}"
                             send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
-                        # If successful, tx_decoded is available for further processing
-                    # --- Replacement of TRX_CHUNK_BUFFER logic ends ---
-
+                        # --- Story 4.3: Broadcast transaction via RPC ---
+                        tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
+                        global bitcoin_rpc
+                        txid, error = broadcast_transaction_via_rpc(bitcoin_rpc, reassembled_hex)
+                        if txid:
+                            ack_msg = f"BTC_ACK|{tx_session_id}|SUCCESS|TXID:{txid}"
+                            send_meshtastic_reply(iface, sender_node_id_for_reply, ack_msg, tx_session_id)
+                            server_logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast success. TXID: {txid}")
+                        else:
+                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Broadcast failed: {error}"
+                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            server_logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast failed: {error}. Sending NACK.")
+                        # --- End Story 4.3 ---
+                    else:
+                        server_logger.info(
+                            f"Std direct text from {sender_node_id_for_reply} (not BTC_TX): '{message_text}'"
+                        )
                 except (InvalidChunkFormatError, MismatchedTotalChunksError) as e:
                     error_type_str = type(e).__name__.replace("Error", "").replace("Invalid", "Invalid ")
                     
@@ -480,11 +497,19 @@ def main() -> None:
     Main function for the BTC Mesh Server.
     """
     global meshtastic_interface_instance
+    global transaction_reassembler
     server_logger.info("Starting BTC Mesh Relay Server...")
+
+    # --- Story 5.2: Load reassembly timeout from config ---
+    timeout_seconds, timeout_source = load_reassembly_timeout()
+    transaction_reassembler = TransactionReassembler(timeout_seconds=timeout_seconds)
+    server_logger.info(f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})")
+    # --- End Story 5.2 integration ---
 
     # --- Story 4.2: Connect to Bitcoin RPC ---
     try:
         rpc_config = load_bitcoin_rpc_config()
+        global bitcoin_rpc
         bitcoin_rpc = connect_bitcoin_rpc(rpc_config)
         server_logger.info("Connected to Bitcoin Core RPC node successfully.")
     except Exception as e:

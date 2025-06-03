@@ -59,6 +59,29 @@ def load_bitcoin_rpc_config():
         'password': password
     }
 
+def load_reassembly_timeout():
+    """
+    Loads the reassembly timeout (in seconds) from environment variables (.env).
+    Returns (timeout_seconds: int, source: str), where source is 'env' or 'default'.
+    Logs the loaded value and its source. Falls back to default (30s) if missing/invalid.
+    """
+    if not dotenv_loaded:
+        load_app_config()
+    val = os.environ.get('REASSEMBLY_TIMEOUT_SECONDS')
+    default = 30
+    if val is None:
+        server_logger.info(f"REASSEMBLY_TIMEOUT_SECONDS not set. Using default: {default}s.")
+        return default, 'default'
+    try:
+        timeout = int(val)
+        if timeout <= 0:
+            raise ValueError()
+        server_logger.info(f"Loaded reassembly timeout from env: {timeout}s.")
+        return timeout, 'env'
+    except Exception:
+        server_logger.warning(f"Invalid REASSEMBLY_TIMEOUT_SECONDS value '{val}'. Using default: {default}s.")
+        return default, 'default'
+
 # Example of how to extend for more configurations:
 # def get_rpc_host() -> Optional[str]:
 #     if not dotenv_loaded:
