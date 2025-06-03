@@ -222,11 +222,18 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                             return
                         # Story 2.3: Decode raw transaction hex
                         try:
-                            from core.transaction_parser import decode_raw_transaction_hex
+                            from core.transaction_parser import decode_raw_transaction_hex, basic_sanity_check
                             tx_decoded = decode_raw_transaction_hex(reassembled_hex)
                         except Exception as e:
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
+                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            return
+                        # Story 3.1: Basic sanity checks
+                        valid, error = basic_sanity_check(tx_decoded)
+                        if not valid:
+                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
+                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: {error}"
                             send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
                         # If successful, tx_decoded is available for further processing

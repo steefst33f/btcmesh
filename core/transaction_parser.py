@@ -1,7 +1,7 @@
 """
 Bitcoin raw transaction parser for btcmesh relay.
 """
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Helper for varint parsing
 
@@ -46,4 +46,18 @@ def decode_raw_transaction_hex(hex_str: str) -> Dict[str, Any]:
             # TODO: Add 'inputs', 'outputs' fields after full parsing
         }
     except Exception as e:
-        raise ValueError(f"Failed to decode raw transaction: {e}") 
+        raise ValueError(f"Failed to decode raw transaction: {e}")
+
+def basic_sanity_check(tx: dict) -> (bool, Optional[str]):
+    """
+    Performs basic sanity checks on a decoded Bitcoin transaction dict.
+    Returns (True, None) if valid, (False, error_message) if invalid.
+    - Fails if input_count == 0 ("No inputs")
+    - Fails if output_count == 0 ("No outputs")
+    Story 3.1, see reference_materials.md for structure.
+    """
+    if tx.get('input_count', 0) == 0:
+        return False, "No inputs"
+    if tx.get('output_count', 0) == 0:
+        return False, "No outputs"
+    return True, None 

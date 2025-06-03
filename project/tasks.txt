@@ -124,25 +124,14 @@ lora/
 
 ### 3. Basic Transaction Validation (Relay Device - `btcmesh-server.py`)
 
-- [ ] **Story 3.1: Perform Basic Sanity Checks on Decoded Transaction**
-- [ ] *   (Content largely the same, but now acts on the result of Story 2.3)
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to perform basic sanity checks on the decoded transaction structure (from reassembled data),
-- [ ] *   **So that** obviously invalid transactions are not relayed.
-    - [ ] *   **Scenario:** Decoded transaction with no inputs
-        - [ ] *   **Given** a decoded transaction structure (from reassembled data).
-        - [ ] *   **When** it is validated.
-        - [ ] *   **Then** if it has zero inputs, it is flagged as invalid.
-        - [ ] *   **And** an error message "Invalid transaction: No inputs" is prepared for reply.
-    - [ ] *   **Scenario:** Decoded transaction with no outputs
-        - [ ] *   **Given** a decoded transaction structure (from reassembled data).
-        - [ ] *   **When** it is validated.
-        - [ ] *   **Then** if it has zero outputs, it is flagged as invalid.
-        - [ ] *   **And** an error message "Invalid transaction: No outputs" is prepared for reply.
-    - [ ] *   **Scenario:** Decoded transaction with valid structure
-        - [ ] *   **Given** a decoded transaction structure (from reassembled data) with at least one input and one output.
-        - [ ] *   **When** it is validated for basic structure.
-        - [ ] *   **Then** it passes this basic validation step.
+- [x] **Story 3.1: Perform Basic Sanity Checks on Decoded Transaction**
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to perform basic sanity checks on the decoded transaction structure (from reassembled data),
+    - [x] *   **So that** obviously invalid transactions are not relayed.
+        - [x] *   **Scenario:** Decoded transaction with no inputs
+        - [x] *   **Scenario:** Decoded transaction with no outputs
+        - [x] *   **Scenario:** Decoded transaction with valid structure
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestTransactionSanityChecksStory31`)._
 
 ### 4. Bitcoin RPC Communication (Relay Device - `btcmesh-server.py`)
     (Stories 4.1, 4.2, 4.3 remain largely the same but operate on data validated from reassembled chunks)
