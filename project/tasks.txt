@@ -172,22 +172,12 @@ lora/
 
 ### 6. `btcmesh-cli.py` Client Sender Script
 
-- [ ] **Story 6.1: Parse Command-Line Arguments (`btcmesh-cli.py`)**
-- [ ] *   **As a** user,
-- [ ] *   **I want** `btcmesh-cli.py` to accept a destination ID and a raw transaction hex string,
-- [ ] *   **So that** I can specify what to send and where.
-    - [ ] *   **Scenario:** Valid arguments provided
-        - [ ] *   **Given** the script is called with `btcmesh-cli.py -d <destination_id> -tx <raw_tx_hex>`.
-        - [ ] *   **When** the script starts.
-        - [ ] *   **Then** it correctly parses `<destination_id>` and `<raw_tx_hex>`.
-    - [ ] *   **Scenario:** Missing arguments
-        - [ ] *   **Given** the script is called without `-d` or `-tx`.
-        - [ ] *   **When** the script starts.
-        - [ ] *   **Then** it prints a usage/help message and exits.
-    - [ ] *   **Scenario:** Invalid raw transaction hex (e.g., odd length, non-hex characters)
-        - [ ] *   **Given** the script is called with an invalid `<raw_tx_hex>`.
-        - [ ] *   **When** the script validates the input.
-        - [ ] *   **Then** it prints an error message (e.g., "Invalid raw transaction hex provided") and exits.
+- [x] **Story 6.1: Parse Command-Line Arguments (`btcmesh-cli.py`)**
+    - [x] btcmesh-cli.py parses -d/--destination and -tx/--tx arguments.
+    - [x] Validates raw tx hex (even length, hex chars).
+    - [x] Handles missing/invalid input with usage or error message.
+    - [x] Supports --dry-run for testable output.
+    - [x] Ready for chunking/sending logic (Story 6.3).
 
 - [ ] **Story 6.2: Initialize Meshtastic Interface (`btcmesh-cli.py`)**
 - [ ] *   **As a** `btcmesh-cli.py` script,
