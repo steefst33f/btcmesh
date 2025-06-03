@@ -14,7 +14,8 @@ from core.reassembler import (
     InvalidChunkFormatError,
     MismatchedTotalChunksError,
     ReassemblyError,
-    CHUNK_PREFIX  # Import CHUNK_PREFIX directly
+    CHUNK_PREFIX,  # Import CHUNK_PREFIX directly
+    TransactionReassembler
 )
 
 # Import the module to be tested AFTER mocks are in sys.modules
@@ -1175,6 +1176,54 @@ class TestMeshtasticReplySending(unittest.TestCase):
             f"objects are valid. Message: '{message}'",
             exc_info=True
         )
+
+
+class TestTransactionReassemblerStory21(unittest.TestCase):
+    def setUp(self):
+        self.reassembler = TransactionReassembler(timeout_seconds=1)  # Short timeout for test
+        self.sender_id = 12345
+        self.session_id = "story21sess"
+
+    def test_out_of_order_chunk_reassembly(self):
+        """Given chunks arrive out of order, When all are received, Then reassembly succeeds in order."""
+        # Given
+        chunk1 = f"BTC_TX|{self.session_id}|1/3|AAA"
+        chunk2 = f"BTC_TX|{self.session_id}|2/3|BBB"
+        chunk3 = f"BTC_TX|{self.session_id}|3/3|CCC"
+        # When: Add out of order
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk2))
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
+        # Then: Only after last chunk, reassembly occurs
+        result = self.reassembler.add_chunk(self.sender_id, chunk3)
+        self.assertEqual(result, "AAABBBCCC")
+
+    def test_duplicate_chunk_ignored(self):
+        """Given a duplicate chunk, When it is received, Then it is ignored and not reassembled twice."""
+        chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
+        chunk2 = f"BTC_TX|{self.session_id}|2/2|BBB"
+        # Add first chunk
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
+        # Add duplicate of first chunk
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
+        # Add second chunk
+        result = self.reassembler.add_chunk(self.sender_id, chunk2)
+        self.assertEqual(result, "AAABBB")
+        # Add duplicate of second chunk (should not reassemble again)
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk2))
+
+    def test_reassembly_timeout(self):
+        """Given not all chunks arrive, When timeout passes, Then session is cleaned up and NACK info is returned."""
+        chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
+        self.assertIsNone(self.reassembler.add_chunk(self.sender_id, chunk1))
+        # Wait for timeout
+        import time as _time
+        _time.sleep(1.1)
+        # When: cleanup is called
+        nacks = self.reassembler.cleanup_stale_sessions()
+        # Then: NACK info is returned for the timed out session
+        self.assertTrue(any(n["tx_session_id"] == self.session_id for n in nacks))
+        # And: session is removed
+        self.assertIsNone(self.reassembler.get_session_sender_id_str(self.sender_id, self.session_id))
 
 
 if __name__ == '__main__':

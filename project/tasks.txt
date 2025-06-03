@@ -96,40 +96,15 @@ lora/
 ### 2. Transaction Payload Handling (Relay Device - `btcmesh-server.py`)
 
 - [x] **Story 2.1: Reassemble Chunked Transaction Hex**
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to reassemble the complete raw Bitcoin transaction hex string from incoming chunks,
-- [ ] *   **So that** it can be decoded and validated.
-    - [ ] *   **Scenario:** Receiving all chunks for a transaction in order
-        - [ ] *   **Given** the relay is buffering chunks.
-        - [ ] *   **When** all chunks for a specific `tx_session_id` (e.g., "BTC_TX|sess123|1/3|...", "BTC_TX|sess123|2/3|...", "BTC_TX|sess123|3/3|...") arrive in sequential order.
-        - [ ] *   **Then** the system correctly identifies all parts using `tx_session_id`, `chunk_num`, and `total_chunks`.
-        - [ ] *   **And** reconstructs the original complete hexadecimal transaction string.
-        - [ ] *   **And** logs the successful reassembly for `tx_session_id`.
-    - [ ] *   **Scenario:** Receiving chunks out of order
-        - [ ] *   **Given** the relay is buffering chunks.
-        - [ ] *   **When** chunks for a `tx_session_id` arrive out of order (e.g., 2/3, then 1/3, then 3/3).
-        - [ ] *   **Then** the system buffers them correctly.
-        - [ ] *   **And** upon receiving the final chunk (identified by `total_chunks`), reconstructs the original complete hexadecimal transaction string in the correct order.
-        - [ ] *   **And** logs the successful reassembly.
-    - [ ] *   **Scenario:** Timeout waiting for missing chunks
-        - [ ] *   **Given** some, but not all, chunks for a `tx_session_id` have been received.
-        - [ ] *   **And** a predefined timeout period (e.g., 5 minutes) has passed since the last chunk for that `tx_session_id` was received.
-        - [ ] *   **When** the timeout occurs.
-        - [ ] *   **Then** the system discards the buffered chunks for that `tx_session_id`.
-        - [ ] *   **And** logs a "Reassembly timeout" error for that `tx_session_id`.
-        - [ ] *   **And** (Optionally) sends a "BTC_NACK|<tx_session_id>|ERROR|Reassembly timeout" message to the sender.
-    - [ ] *   **Scenario:** Receiving a duplicate chunk
-        - [ ] *   **Given** a chunk for a `tx_session_id` and `chunk_num` has already been received and buffered.
-        - [ ] *   **When** an identical chunk (same `tx_session_id` and `chunk_num`) arrives.
-        - [ ] *   **Then** the system ignores the duplicate chunk.
-        - [ ] *   **And** logs the receipt of a duplicate chunk.
-    - [ ] *   **Scenario:** Mismatched `total_chunks` for the same `tx_session_id`
-        - [ ] *   **Given** chunks are arriving for a `tx_session_id`.
-        - [ ] *   **When** a chunk arrives with a `total_chunks` value different from a previously received chunk for the same `tx_session_id`.
-        - [ ] *   **Then** the system flags this as an error for the `tx_session_id`.
-        - [ ] *   **And** logs the inconsistency.
-        - [ ] *   **And** potentially discards all chunks for this `tx_session_id` or awaits a timeout.
-        - [ ] *   **And** (Optionally) sends a "BTC_NACK|<tx_session_id>|ERROR|Inconsistent chunk metadata" message.
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to reassemble the complete raw Bitcoin transaction hex string from incoming chunks,
+    - [x] *   **So that** it can be decoded and validated.
+        - [x] *   **Scenario:** Receiving all chunks for a transaction in order
+        - [x] *   **Scenario:** Receiving chunks out of order
+        - [x] *   **Scenario:** Timeout waiting for missing chunks
+        - [x] *   **Scenario:** Receiving a duplicate chunk
+        - [x] *   **Scenario:** Mismatched `total_chunks` for the same `tx_session_id`
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestTransactionReassemblerStory21`)._
 
 - [ ] **Story 2.2: Validate Reassembled Hexadecimal String**
 - [ ] *   **As a** relay system (`btcmesh-server.py`),
