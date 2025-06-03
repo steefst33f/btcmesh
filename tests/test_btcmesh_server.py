@@ -1345,5 +1345,48 @@ class TestTransactionSanityChecksStory31(unittest.TestCase):
         self.assertIsNone(error)
 
 
+class TestBitcoinRpcConfigStory41(unittest.TestCase):
+    def setUp(self):
+        self.env_keys = [
+            'BITCOIN_RPC_HOST', 'BITCOIN_RPC_PORT', 'BITCOIN_RPC_USER', 'BITCOIN_RPC_PASSWORD'
+        ]
+        self.default_env = {
+            'BITCOIN_RPC_HOST': '127.0.0.1',
+            'BITCOIN_RPC_PORT': '8332',
+            'BITCOIN_RPC_USER': 'testuser',
+            'BITCOIN_RPC_PASSWORD': 'testpass'
+        }
+
+    def test_all_fields_present_in_env(self):
+        """Given all required RPC fields in .env, When loaded, Then config is correct."""
+        from core.config_loader import load_bitcoin_rpc_config
+        with unittest.mock.patch.dict('os.environ', self.default_env, clear=True):
+            config = load_bitcoin_rpc_config()
+            self.assertEqual(config['host'], '127.0.0.1')
+            self.assertEqual(config['port'], 8332)
+            self.assertEqual(config['user'], 'testuser')
+            self.assertEqual(config['password'], 'testpass')
+
+    def test_missing_required_field_raises(self):
+        """Given missing required RPC fields, When loaded, Then error is raised or logged."""
+        from core.config_loader import load_bitcoin_rpc_config
+        env = self.default_env.copy()
+        del env['BITCOIN_RPC_USER']
+        with unittest.mock.patch.dict('os.environ', env, clear=True):
+            with self.assertRaises(ValueError):
+                load_bitcoin_rpc_config()
+
+    def test_partial_fields_use_defaults(self):
+        """Given only host and port in .env, When loaded, Then user/password missing triggers error."""
+        from core.config_loader import load_bitcoin_rpc_config
+        env = {
+            'BITCOIN_RPC_HOST': '10.0.0.2',
+            'BITCOIN_RPC_PORT': '18443',
+        }
+        with unittest.mock.patch.dict('os.environ', env, clear=True):
+            with self.assertRaises(ValueError):
+                load_bitcoin_rpc_config()
+
+
 if __name__ == '__main__':
     unittest.main() 

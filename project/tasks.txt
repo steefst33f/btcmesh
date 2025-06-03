@@ -136,7 +136,15 @@ lora/
 ### 4. Bitcoin RPC Communication (Relay Device - `btcmesh-server.py`)
     (Stories 4.1, 4.2, 4.3 remain largely the same but operate on data validated from reassembled chunks)
 
-- [ ] **Story 4.1: Configure Bitcoin RPC Connection Details** (No change)
+- [x] **Story 4.1: Configure Bitcoin RPC Connection Details**
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to load Bitcoin Core RPC connection details from .env,
+    - [x] *   **So that** the relay can connect to the Bitcoin node securely and flexibly.
+        - [x] *   **Scenario:** Config present in .env
+        - [x] *   **Scenario:** Missing/partial config in .env
+        - [x] *   **Scenario:** Invalid config in .env
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestBitcoinRpcConfigStory41`)._
+
 - [ ] **Story 4.2: Connect to Bitcoin RPC** (No change)
 - [ ] **Story 4.3: Broadcast Transaction via RPC `sendrawtransaction`** (Input is the reassembled, validated hex)
 
