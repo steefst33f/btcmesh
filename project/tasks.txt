@@ -1,0 +1,335 @@
+# Proposed Project Directory Structure
+
+The `btcmesh` project will be organized within the `lora/` directory as follows:
+
+```
+lora/
+└── btcmesh/
+    ├── btcmesh_cli.py         # Client script for sending transactions
+    ├── btcmesh_server.py      # Server/Relay script for processing transactions
+    ├── core/                  # Core logic for the server/relay
+    │   ├── __init__.py
+    │   ├── config_loader.py   # For loading config.ini
+    │   ├── logger_setup.py    # For setting up consistent logging
+    │   ├── transaction_parser.py # For decoding raw Bitcoin transactions
+    │   ├── rpc_client.py      # For interacting with Bitcoin RPC
+    │   └── reassembler.py     # For reassembling chunked messages
+    ├── project/               # Project planning documents (this file, reference_materials.md)
+    │   ├── tasks.txt
+    │   └── reference_materials.md
+    ├── logs/                  # Directory for log files (created at runtime)
+    │   └── btcmesh_server.log
+    │   └── btcmesh_cli.log    # If btcmesh_cli.py also implements file logging
+    ├── tests/                 # Unit and integration tests
+    │   ├── __init__.py
+    │   ├── test_config_loader.py
+    │   ├── test_transaction_parser.py
+    │   ├── test_rpc_client.py
+    │   ├── test_reassembler.py
+    │   ├── test_btcmesh_cli.py
+    │   └── test_btcmesh_server.py
+    ├── config.ini.example     # Example configuration file for the server
+    └── README.md              # Project README describing setup, usage, etc.
+```
+
+---
+
+# EPIC: Bitcoin Transaction Relay over LoRa Meshtastic
+
+**Goal:** To enable users to broadcast Bitcoin raw transactions by sending them as **chunked hexadecimal strings** via a LoRa Meshtastic direct message, using a dedicated client script (`btcmesh-cli.py`). The relay device (`btcmesh-server.py`) will reassemble these chunks, decode, validate, and then relay the complete transaction to a configured Bitcoin RPC node.
+
+**User Persona:** A Bitcoin user who wants to broadcast a raw transaction using a command-line tool (`btcmesh-cli.py`), potentially in an environment with limited or censored internet access, but with LoRa Meshtastic network availability.
+
+---
+
+## Stories:
+
+### 1. Meshtastic Communication (Relay Device - `btcmesh-server.py`)
+
+- [ ] **Story 1.1: Initialize Meshtastic Interface (Relay Device - `btcmesh-server.py`)**
+- [ ] *   **As a** system operator,
+- [ ] *   **I want** the relay application (`btcmesh-server.py`) to initialize a connection to its Meshtastic device,
+- [ ] *   **So that** it can send and receive messages.
+    - [ ] *   **Scenario:** Application starts
+        - [ ] *   **Given** a Meshtastic device is connected (e.g., via serial).
+        - [ ] *   **When** the relay application (`btcmesh-server.py`) starts.
+        - [ ] *   **Then** it successfully establishes a connection with the Meshtastic interface.
+        - [ ] *   **And** logs the successful initialization.
+
+- [ ] **Story 1.2: Receive and Identify Transaction Chunks (Relay Device - `btcmesh-server.py`)**
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to listen for and identify incoming direct messages that are part of a chunked Bitcoin transaction,
+- [ ] *   **So that** I can process them for reassembly.
+    - [ ] *   **Scenario:** Incoming Meshtastic DM with transaction chunk prefix
+        - [ ] *   **Given** the Meshtastic interface is initialized and listening.
+        - [ ] *   **When** a direct message starting with "BTC_TX|" is received.
+        - [ ] *   **Then** the message is identified as a potential transaction chunk.
+        - [ ] *   **And** its payload and sender ID are captured for reassembly processing.
+        - [ ] *   **And** the event is logged.
+    - [ ] *   **Scenario:** Incoming standard Meshtastic DM (non-transaction chunk)
+        - [ ] *   **Given** the Meshtastic interface is initialized and listening.
+        - [ ] *   **When** a direct message *not* starting with "BTC_TX|" is received.
+        - [ ] *   **Then** the message is processed according to standard Meshtastic DM handling (e.g., logged, ignored, or other programmed behavior).
+    - [ ] *   **Scenario:** Non-text message received
+        - [ ] *   **Given** the Meshtastic interface is listening.
+        - [ ] *   **When** a non-text message (e.g., position update) is received as a DM.
+        - [ ] *   **Then** the message is logged as an irrelevant DM type and ignored for transaction processing.
+
+- [ ] **Story 1.3: Send Reply via DM (Relay Device - `btcmesh-server.py`)**
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to send a reply message to the original sender via Meshtastic DM,
+- [ ] *   **So that** the user (via `btcmesh-cli.py` or directly) receives feedback on their transaction submission.
+    - [ ] *   **Scenario:** Sending a success message after broadcast
+        - [ ] *   **Given** a `tx_session_id` from a successfully reassembled and broadcasted transaction, the original sender ID, and the Bitcoin transaction TXID.
+        - [ ] *   **When** the system needs to send feedback.
+        - [ ] *   **Then** a direct message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is sent to the sender ID.
+        - [ ] *   **And** the sent message is logged.
+    - [ ] *   **Scenario:** Sending an error message (e.g., reassembly failed, validation failed, RPC error)
+        - [ ] *   **Given** a `tx_session_id` (if available), sender ID, and a specific error message string.
+        - [ ] *   **When** the system needs to send error feedback.
+        - [ ] *   **Then** a direct message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is sent to the sender ID.
+        - [ ] *   **And** the sent message is logged.
+
+### 2. Transaction Payload Handling (Relay Device - `btcmesh-server.py`)
+
+- [ ] **Story 2.1: Reassemble Chunked Transaction Hex**
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to reassemble the complete raw Bitcoin transaction hex string from incoming chunks,
+- [ ] *   **So that** it can be decoded and validated.
+    - [ ] *   **Scenario:** Receiving all chunks for a transaction in order
+        - [ ] *   **Given** the relay is buffering chunks.
+        - [ ] *   **When** all chunks for a specific `tx_session_id` (e.g., "BTC_TX|sess123|1/3|...", "BTC_TX|sess123|2/3|...", "BTC_TX|sess123|3/3|...") arrive in sequential order.
+        - [ ] *   **Then** the system correctly identifies all parts using `tx_session_id`, `chunk_num`, and `total_chunks`.
+        - [ ] *   **And** reconstructs the original complete hexadecimal transaction string.
+        - [ ] *   **And** logs the successful reassembly for `tx_session_id`.
+    - [ ] *   **Scenario:** Receiving chunks out of order
+        - [ ] *   **Given** the relay is buffering chunks.
+        - [ ] *   **When** chunks for a `tx_session_id` arrive out of order (e.g., 2/3, then 1/3, then 3/3).
+        - [ ] *   **Then** the system buffers them correctly.
+        - [ ] *   **And** upon receiving the final chunk (identified by `total_chunks`), reconstructs the original complete hexadecimal transaction string in the correct order.
+        - [ ] *   **And** logs the successful reassembly.
+    - [ ] *   **Scenario:** Timeout waiting for missing chunks
+        - [ ] *   **Given** some, but not all, chunks for a `tx_session_id` have been received.
+        - [ ] *   **And** a predefined timeout period (e.g., 5 minutes) has passed since the last chunk for that `tx_session_id` was received.
+        - [ ] *   **When** the timeout occurs.
+        - [ ] *   **Then** the system discards the buffered chunks for that `tx_session_id`.
+        - [ ] *   **And** logs a "Reassembly timeout" error for that `tx_session_id`.
+        - [ ] *   **And** (Optionally) sends a "BTC_NACK|<tx_session_id>|ERROR|Reassembly timeout" message to the sender.
+    - [ ] *   **Scenario:** Receiving a duplicate chunk
+        - [ ] *   **Given** a chunk for a `tx_session_id` and `chunk_num` has already been received and buffered.
+        - [ ] *   **When** an identical chunk (same `tx_session_id` and `chunk_num`) arrives.
+        - [ ] *   **Then** the system ignores the duplicate chunk.
+        - [ ] *   **And** logs the receipt of a duplicate chunk.
+    - [ ] *   **Scenario:** Mismatched `total_chunks` for the same `tx_session_id`
+        - [ ] *   **Given** chunks are arriving for a `tx_session_id`.
+        - [ ] *   **When** a chunk arrives with a `total_chunks` value different from a previously received chunk for the same `tx_session_id`.
+        - [ ] *   **Then** the system flags this as an error for the `tx_session_id`.
+        - [ ] *   **And** logs the inconsistency.
+        - [ ] *   **And** potentially discards all chunks for this `tx_session_id` or awaits a timeout.
+        - [ ] *   **And** (Optionally) sends a "BTC_NACK|<tx_session_id>|ERROR|Inconsistent chunk metadata" message.
+
+- [ ] **Story 2.2: Validate Reassembled Hexadecimal String**
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to validate that the reassembled payload is a valid hexadecimal string,
+- [ ] *   **So that** I don't try to decode invalid data.
+    - [ ] *   **Scenario:** Reassembled payload is valid hex
+        - [ ] *   **Given** a successfully reassembled payload string from Story 2.1.
+        - [ ] *   **When** the string is checked for hexadecimal validity.
+        - [ ] *   **Then** if it contains only hexadecimal characters, it passes validation.
+    - [ ] *   **Scenario:** Reassembled payload contains non-hex characters
+        - [ ] *   **Given** a successfully reassembled payload string.
+        - [ ] *   **When** the string contains non-hexadecimal characters.
+        - [ ] *   **Then** it is flagged as invalid.
+        - [ ] *   **And** an error message "Invalid reassembled data: Not a hex string" is prepared for reply to the sender (associated with the `tx_session_id`).
+        - [ ] *   **And** the error is logged.
+
+- [ ] **Story 2.3: Decode Reassembled Raw Bitcoin Transaction Hex**
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to decode the reassembled and validated hexadecimal string into its constituent Bitcoin transaction fields,
+- [ ] *   **So that** basic structural validation can be performed.
+    - [ ] *   **Scenario:** Valid reassembled hex string representing a simple P2PKH transaction
+        - [ ] *   **Given** a valid, reassembled hexadecimal string (from Story 2.2).
+        - [ ] *   **When** the decode function is called.
+        - [ ] *   **Then** the function returns a structured representation of the transaction.
+        - [ ] *   **And** no errors are thrown during decoding.
+    - [ ] *   **Scenario:** Malformed or incomplete reassembled hex string
+        - [ ] *   **Given** a reassembled hexadecimal string that is structurally invalid as a raw transaction.
+        - [ ] *   **When** the decode function is called.
+        - [ ] *   **Then** the function returns an error indicating a decoding failure.
+        - [ ] *   **And** an error message "Invalid transaction: Decoding failed on reassembled data" is prepared for reply.
+
+### 3. Basic Transaction Validation (Relay Device - `btcmesh-server.py`)
+
+- [ ] **Story 3.1: Perform Basic Sanity Checks on Decoded Transaction**
+- [ ] *   (Content largely the same, but now acts on the result of Story 2.3)
+- [ ] *   **As a** relay system (`btcmesh-server.py`),
+- [ ] *   **I want** to perform basic sanity checks on the decoded transaction structure (from reassembled data),
+- [ ] *   **So that** obviously invalid transactions are not relayed.
+    - [ ] *   **Scenario:** Decoded transaction with no inputs
+        - [ ] *   **Given** a decoded transaction structure (from reassembled data).
+        - [ ] *   **When** it is validated.
+        - [ ] *   **Then** if it has zero inputs, it is flagged as invalid.
+        - [ ] *   **And** an error message "Invalid transaction: No inputs" is prepared for reply.
+    - [ ] *   **Scenario:** Decoded transaction with no outputs
+        - [ ] *   **Given** a decoded transaction structure (from reassembled data).
+        - [ ] *   **When** it is validated.
+        - [ ] *   **Then** if it has zero outputs, it is flagged as invalid.
+        - [ ] *   **And** an error message "Invalid transaction: No outputs" is prepared for reply.
+    - [ ] *   **Scenario:** Decoded transaction with valid structure
+        - [ ] *   **Given** a decoded transaction structure (from reassembled data) with at least one input and one output.
+        - [ ] *   **When** it is validated for basic structure.
+        - [ ] *   **Then** it passes this basic validation step.
+
+### 4. Bitcoin RPC Communication (Relay Device - `btcmesh-server.py`)
+    (Stories 4.1, 4.2, 4.3 remain largely the same but operate on data validated from reassembled chunks)
+
+- [ ] **Story 4.1: Configure Bitcoin RPC Connection Details** (No change)
+- [ ] **Story 4.2: Connect to Bitcoin RPC** (No change)
+- [ ] **Story 4.3: Broadcast Transaction via RPC `sendrawtransaction`** (Input is the reassembled, validated hex)
+
+### 5. Logging and Configuration (Relay Device - `btcmesh-server.py`)
+    (Stories 5.1, 5.2 remain largely the same)
+
+- [ ] **Story 5.1: Implement Local Logging** (Ensure logging covers chunking/reassembly)
+- [ ] **Story 5.2: Manage Configuration File** (May need a parameter for reassembly timeout)
+
+### 6. `btcmesh-cli.py` Client Sender Script
+
+- [ ] **Story 6.1: Parse Command-Line Arguments (`btcmesh-cli.py`)**
+- [ ] *   **As a** user,
+- [ ] *   **I want** `btcmesh-cli.py` to accept a destination ID and a raw transaction hex string,
+- [ ] *   **So that** I can specify what to send and where.
+    - [ ] *   **Scenario:** Valid arguments provided
+        - [ ] *   **Given** the script is called with `btcmesh-cli.py -d <destination_id> -tx <raw_tx_hex>`.
+        - [ ] *   **When** the script starts.
+        - [ ] *   **Then** it correctly parses `<destination_id>` and `<raw_tx_hex>`.
+    - [ ] *   **Scenario:** Missing arguments
+        - [ ] *   **Given** the script is called without `-d` or `-tx`.
+        - [ ] *   **When** the script starts.
+        - [ ] *   **Then** it prints a usage/help message and exits.
+    - [ ] *   **Scenario:** Invalid raw transaction hex (e.g., odd length, non-hex characters)
+        - [ ] *   **Given** the script is called with an invalid `<raw_tx_hex>`.
+        - [ ] *   **When** the script validates the input.
+        - [ ] *   **Then** it prints an error message (e.g., "Invalid raw transaction hex provided") and exits.
+
+- [ ] **Story 6.2: Initialize Meshtastic Interface (`btcmesh-cli.py`)**
+- [ ] *   **As a** `btcmesh-cli.py` script,
+- [ ] *   **I want** to initialize a connection to the Meshtastic device,
+- [ ] *   **So that** I can send messages.
+    - [ ] *   **Scenario:** Script starts
+        - [ ] *   **Given** a Meshtastic device is connected.
+        - [ ] *   **When** `btcmesh-cli.py` needs to send messages.
+        - [ ] *   **Then** it successfully establishes a connection with the Meshtastic interface.
+
+- [ ] **Story 6.3: Chunk Transaction and Send via Meshtastic (`btcmesh-cli.py`)**
+- [ ] *   **As a** `btcmesh-cli.py` script,
+- [ ] *   **I want** to segment the raw transaction hex, format it into chunks, and send each chunk,
+- [ ] *   **So that** the relay device can reassemble it.
+    - [ ] *   **Scenario:** Sending a multi-chunk transaction
+        - [ ] *   **Given** a valid destination ID and a raw transaction hex string.
+        - [ ] *   **And** a defined chunk payload size (e.g., 200 hex characters).
+        - [ ] *   **When** the script processes the transaction.
+        - [ ] *   **Then** it generates a unique `tx_session_id`.
+        - [ ] *   **And** calculates `total_chunks`.
+        - [ ] *   **And** for each chunk:
+            - [ ] *   Formats the message as `BTC_TX|<tx_session_id>|<chunk_num>/<total_chunks>|<hex_payload_part>`.
+            - [ ] *   Sends the formatted message to the destination ID via Meshtastic.
+            - [ ] *   Prints a confirmation of sending each chunk (e.g., "Sent chunk X/Y for session Z").
+        - [ ] *   **And** after all chunks are sent, prints "All transaction chunks sent for session Z."
+    - [ ] *   **Scenario:** Sending a transaction that fits in one chunk
+        - [ ] *   **Given** a raw transaction hex string short enough to fit in one chunk's payload.
+        - [ ] *   **When** the script processes the transaction.
+        - [ ] *   **Then** it sends one chunk: `BTC_TX|<tx_session_id>|1/1|<full_hex_payload>`.
+
+- [ ] **Story 6.4: Listen for Acknowledgement (`btcmesh-cli.py`) (Optional Enhancement)**
+- [ ] *   **As a** user of `btcmesh-cli.py`,
+- [ ] *   **I want** the script to listen for a confirmation message from the relay,
+- [ ] *   **So that** I know if the transaction was successfully processed or if an error occurred.
+    - [ ] *   **Scenario:** Relay sends SUCCESS acknowledgement
+        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
+        - [ ] *   **When** a message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is received from the relay.
+        - [ ] *   **Then** `btcmesh-cli.py` prints "Transaction successfully broadcast by relay. TXID: [actual_txid]" and exits.
+    - [ ] *   **Scenario:** Relay sends ERROR acknowledgement
+        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
+        - [ ] *   **When** a message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is received from the relay.
+        - [ ] *   **Then** `btcmesh-cli.py` prints "Relay reported an error: [error_details]" and exits.
+    - [ ] *   **Scenario:** Timeout waiting for acknowledgement
+        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks.
+        - [ ] *   **And** no BTC_ACK/BTC_NACK is received within a timeout period (e.g., 2 minutes).
+        - [ ] *   **When** the timeout occurs.
+        - [ ] *   **Then** `btcmesh-cli.py` prints "No acknowledgement received from relay for session <tx_session_id>" and exits.
+
+### 7. End-to-End Flow (With Chunking)
+
+- [ ] **Story 7.1: Successful End-to-End Transaction Relay (Chunked)**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to use `btcmesh-cli.py` to send a valid raw Bitcoin transaction hex,
+- [ ] *   **So that** it gets chunked, sent, reassembled by the relay, broadcasted to the Bitcoin network, and I receive a confirmation with the TXID via `btcmesh-cli.py`.
+    - [ ] *   **Scenario:** User runs `btcmesh-cli.py` with a valid raw tx
+        - [ ] *   **Given** the relay device (`btcmesh-server.py`) is running and configured correctly.
+        - [ ] *   **And** the user has `btcmesh-cli.py` and a valid raw Bitcoin transaction hex.
+        - [ ] *   **When** the user executes `btcmesh-cli.py -d <relay_node_id> -tx <raw_tx_hex>`.
+        - [ ] *   **Then** `btcmesh-cli.py` connects to its Meshtastic device.
+        - [ ] *   **And** generates a `tx_session_id`.
+        - [ ] *   **And** chunks the transaction hex and sends each chunk (e.g., `BTC_TX|sess123|1/2|...`, `BTC_TX|sess123|2/2|...`) to the relay.
+        - [ ] *   **And** the relay device (`btcmesh-server.py`) receives these chunks.
+        - [ ] *   **And** the relay reassembles the complete hex string for `sess123` successfully.
+        - [ ] *   **And** the relay decodes the hex string successfully.
+        - [ ] *   **And** the relay validates the transaction structure successfully.
+        - [ ] *   **And** the relay connects to the Bitcoin RPC node.
+        - [ ] *   **And** the relay broadcasts the transaction successfully using `sendrawtransaction`.
+        - [ ] *   **And** the relay receives a TXID from the RPC node.
+        - [ ] *   **And** the relay sends a DM "BTC_ACK|sess123|SUCCESS|TXID:[actual_txid]" back to the `btcmesh-cli.py` sender's node ID.
+        - [ ] *   **And** (if Story 6.4 implemented) `btcmesh-cli.py` receives this ACK and prints the success message with TXID.
+        - [ ] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`).
+
+- [ ] **Story 7.2: End-to-End Relay with Reassembly Failure (Chunked)**
+- [ ] *   **As a** user,
+- [ ] *   **I want** `btcmesh-cli.py` to inform me if the transaction could not be reassembled by the relay,
+- [ ] *   **So that** I know the transaction was not processed.
+    - [ ] *   **Scenario:** Relay times out waiting for chunks
+        - [ ] *   **Given** `btcmesh-cli.py` sends some but not all chunks of a transaction.
+        - [ ] *   **And** the relay device's reassembly timeout for that `tx_session_id` is triggered.
+        - [ ] *   **When** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Reassembly timeout".
+        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
+        - [ ] *   **And** the error is logged by the relay (`btcmesh-server.py`) and potentially `btcmesh-cli.py`.
+
+- [ ] **Story 7.3: End-to-End Relay with Invalid Reassembled Data (Chunked)**
+- [ ] *   **As a** user,
+- [ ] *   **I want** `btcmesh-cli.py` to inform me if the reassembled transaction data was invalid at the relay,
+- [ ] *   **So that** I can check my input.
+    - [ ] *   **Scenario:** Reassembled data on relay is not valid hex
+        - [ ] *   **Given** `btcmesh-cli.py` sends chunks that, when reassembled by the relay, do not form a valid hex string.
+        - [ ] *   **When** the relay (`btcmesh-server.py`) fails at Story 2.2 (Validate Reassembled Hex).
+        - [ ] *   **And** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Invalid reassembled data: Not a hex string".
+        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
+
+- [ ] **Story 7.4: End-to-End Relay with RPC Broadcast Error (Chunked)**
+- [ ] *   (Similar to original Story 6.3, but initiated by `btcmesh-cli.py` and involves chunking/reassembly)
+- [ ] *   **As a** user of `btcmesh-cli.py`,
+- [ ] *   **I want** to be informed if the Bitcoin node rejects my reassembled transaction,
+- [ ] *   **So that** I understand why it wasn't broadcast.
+    - [ ] *   **Scenario:** Bitcoin node rejects reassembled transaction
+        - [ ] *   **Given** `btcmesh-cli.py` sends chunks successfully, and the relay (`btcmesh-server.py`) reassembles and validates them.
+        - [ ] *   **And** the Bitcoin RPC node will reject this transaction (e.g., insufficient fees).
+        - [ ] *   **When** the relay attempts to broadcast it.
+        - [ ] *   **And** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Bitcoin node rejected transaction: [specific RPC error]".
+        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
+
+---
+
+**Assumptions:**
+- (Largely the same, but user interacts via `btcmesh-cli.py`)
+- A Meshtastic device is available for both the client (`btcmesh-cli.py`) and the relay (`btcmesh-server.py`).
+- The relay device (`btcmesh-server.py`) is actively listening.
+
+**Out of Scope (for initial version):**
+- Transaction signing (still out of scope).
+- Advanced transaction validation by the relay (`btcmesh-server.py`) (still out of scope).
+- Encrypted LoRa communication (relies on Meshtastic channel settings).
+- A sophisticated UI for the relay (`btcmesh-server.py`); interaction for sending is via `btcmesh-cli.py`.
+- Automatic retries of sending individual chunks by `btcmesh-cli.py` if Meshtastic send fails (can be added later).
+- Relay (`btcmesh-server.py`) confirming receipt of each individual chunk to `btcmesh-cli.py` (current design is ACK/NACK for the whole session).
+
+---
+This document follows TDD/BDD principles by outlining features as user stories and defining specific scenarios with Given-When-Then clauses, which will guide test creation before or alongside implementation.
