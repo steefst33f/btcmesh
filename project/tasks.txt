@@ -46,53 +46,56 @@ lora/
 
 ### 1. Meshtastic Communication (Relay Device - `btcmesh-server.py`)
 
-- [ ] **Story 1.1: Initialize Meshtastic Interface (Relay Device - `btcmesh-server.py`)**
-- [ ] *   **As a** system operator,
-- [ ] *   **I want** the relay application (`btcmesh-server.py`) to initialize a connection to its Meshtastic device,
-- [ ] *   **So that** it can send and receive messages.
-    - [ ] *   **Scenario:** Application starts
-        - [ ] *   **Given** a Meshtastic device is connected (e.g., via serial).
-        - [ ] *   **When** the relay application (`btcmesh-server.py`) starts.
-        - [ ] *   **Then** it successfully establishes a connection with the Meshtastic interface.
-        - [ ] *   **And** logs the successful initialization.
+- [x] **Story 1.1: Initialize Meshtastic Interface (Relay Device - `btcmesh-server.py`)**
+- [x] *   **As a** system operator,
+- [x] *   **I want** the relay application (`btcmesh-server.py`) to initialize a connection to its Meshtastic device,
+- [x] *   **So that** it can send and receive messages.
+    - [x] *   **Scenario:** Application starts
+        - [x] *   **Given** a Meshtastic device is connected (e.g., via serial, configurable via `.env` or auto-detect).
+        - [x] *   **When** the relay application (`btcmesh-server.py`) starts.
+        - [x] *   **Then** it successfully establishes a connection with the Meshtastic interface.
+        - [x] *   **And** logs the successful initialization.
+    *   _Note: Serial port is configurable via `MESHTASTIC_SERIAL_PORT` in `.env` file. Implemented `core/config_loader.py`._
 
-- [ ] **Story 1.2: Receive and Identify Transaction Chunks (Relay Device - `btcmesh-server.py`)**
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to listen for and identify incoming direct messages that are part of a chunked Bitcoin transaction,
-- [ ] *   **So that** I can process them for reassembly.
-    - [ ] *   **Scenario:** Incoming Meshtastic DM with transaction chunk prefix
-        - [ ] *   **Given** the Meshtastic interface is initialized and listening.
-        - [ ] *   **When** a direct message starting with "BTC_TX|" is received.
-        - [ ] *   **Then** the message is identified as a potential transaction chunk.
-        - [ ] *   **And** its payload and sender ID are captured for reassembly processing.
-        - [ ] *   **And** the event is logged.
-    - [ ] *   **Scenario:** Incoming standard Meshtastic DM (non-transaction chunk)
-        - [ ] *   **Given** the Meshtastic interface is initialized and listening.
-        - [ ] *   **When** a direct message *not* starting with "BTC_TX|" is received.
-        - [ ] *   **Then** the message is processed according to standard Meshtastic DM handling (e.g., logged, ignored, or other programmed behavior).
-    - [ ] *   **Scenario:** Non-text message received
-        - [ ] *   **Given** the Meshtastic interface is listening.
-        - [ ] *   **When** a non-text message (e.g., position update) is received as a DM.
-        - [ ] *   **Then** the message is logged as an irrelevant DM type and ignored for transaction processing.
+- [x] **Story 1.2: Receive and Identify Transaction Chunks (Relay Device - `btcmesh-server.py`)**
+- [x] *   **As a** relay system (`btcmesh-server.py`),
+- [x] *   **I want** to listen for and identify incoming direct messages that are part of a chunked Bitcoin transaction,
+- [x] *   **So that** I can process them for reassembly.
+    - [x] *   **Scenario:** Incoming Meshtastic DM with transaction chunk prefix
+        - [x] *   **Given** the Meshtastic interface is initialized and listening.
+        - [x] *   **When** a direct message starting with "BTC_TX|" is received (and addressed to the server).
+        - [x] *   **Then** the message is identified as a potential transaction chunk.
+        - [x] *   **And** its payload and sender ID are captured for reassembly processing (payload stored in `TRX_CHUNK_BUFFER`).
+        - [x] *   **And** the event is logged.
+    - [x] *   **Scenario:** Incoming standard Meshtastic DM (non-transaction chunk)
+        - [x] *   **Given** the Meshtastic interface is initialized and listening.
+        - [x] *   **When** a direct message *not* starting with "BTC_TX|" is received (and addressed to the server).
+        - [x] *   **Then** the message is processed according to standard Meshtastic DM handling (logged as standard DM).
+    - [x] *   **Scenario:** Non-text message received
+        - [x] *   **Given** the Meshtastic interface is listening.
+        - [x] *   **When** a non-text message (e.g., position update) is received as a DM to the server.
+        - [x] *   **Then** the message is logged as an irrelevant DM type and ignored for transaction processing.
+    *   _Note: Implemented `on_receive_text_message` callback and `TRX_CHUNK_BUFFER` placeholder. Server now only processes direct messages addressed to it._
 
-- [ ] **Story 1.3: Send Reply via DM (Relay Device - `btcmesh-server.py`)**
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to send a reply message to the original sender via Meshtastic DM,
-- [ ] *   **So that** the user (via `btcmesh-cli.py` or directly) receives feedback on their transaction submission.
-    - [ ] *   **Scenario:** Sending a success message after broadcast
-        - [ ] *   **Given** a `tx_session_id` from a successfully reassembled and broadcasted transaction, the original sender ID, and the Bitcoin transaction TXID.
-        - [ ] *   **When** the system needs to send feedback.
-        - [ ] *   **Then** a direct message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is sent to the sender ID.
-        - [ ] *   **And** the sent message is logged.
-    - [ ] *   **Scenario:** Sending an error message (e.g., reassembly failed, validation failed, RPC error)
-        - [ ] *   **Given** a `tx_session_id` (if available), sender ID, and a specific error message string.
-        - [ ] *   **When** the system needs to send error feedback.
-        - [ ] *   **Then** a direct message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is sent to the sender ID.
-        - [ ] *   **And** the sent message is logged.
+- [x] **Story 1.3: Send Reply via DM (Relay Device - `btcmesh-server.py`)**
+- [x] *   **As a** relay system (`btcmesh-server.py`),
+- [x] *   **I want** to send a reply message to the original sender via Meshtastic DM,
+- [x] *   **So that** the user (via `btcmesh-cli.py` or directly) receives feedback on their transaction submission.
+    - [x] *   **Scenario:** Sending a success message after broadcast
+        - [x] *   **Given** a `tx_session_id` from a successfully reassembled and broadcasted transaction, the original sender ID, and the Bitcoin transaction TXID.
+        - [x] *   **When** the system needs to send feedback.
+        - [x] *   **Then** a direct message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is sent to the sender ID.
+        - [x] *   **And** the sent message is logged.
+    - [x] *   **Scenario:** Sending an error message (e.g., reassembly failed, validation failed, RPC error)
+        - [x] *   **Given** a `tx_session_id` (if available), sender ID, and a specific error message string.
+        - [x] *   **When** the system needs to send error feedback.
+        - [x] *   **Then** a direct message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is sent to the sender ID.
+        - [x] *   **And** the sent message is logged.
+    *   _Note: Implemented `send_meshtastic_reply(iface, destination_id, message_text, tx_session_id)` in `btcmesh_server.py`. Unit tests cover successful sends, various error conditions (invalid destination, node not found, send exceptions), and logging. Actual invocation points for replies will be added in subsequent stories (transaction processing, RPC interaction)._
 
 ### 2. Transaction Payload Handling (Relay Device - `btcmesh-server.py`)
 
-- [ ] **Story 2.1: Reassemble Chunked Transaction Hex**
+- [x] **Story 2.1: Reassemble Chunked Transaction Hex**
 - [ ] *   **As a** relay system (`btcmesh-server.py`),
 - [ ] *   **I want** to reassemble the complete raw Bitcoin transaction hex string from incoming chunks,
 - [ ] *   **So that** it can be decoded and validated.
@@ -190,7 +193,7 @@ lora/
 ### 5. Logging and Configuration (Relay Device - `btcmesh-server.py`)
     (Stories 5.1, 5.2 remain largely the same)
 
-- [ ] **Story 5.1: Implement Local Logging** (Ensure logging covers chunking/reassembly)
+- [x] **Story 5.1: Implement Local Logging** (Ensure logging covers chunking/reassembly)
 - [ ] **Story 5.2: Manage Configuration File** (May need a parameter for reassembly timeout)
 
 ### 6. `btcmesh-cli.py` Client Sender Script

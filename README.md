@@ -24,7 +24,7 @@ btcmesh/
 ├── btcmesh_server.py      # Server/Relay script
 ├── core/                  # Core logic for the server/relay
 │   ├── __init__.py
-│   ├── config_loader.py   # For loading config.ini (Planned)
+│   ├── config_loader.py   # For loading .env and other configurations
 │   ├── logger_setup.py    # For setting up consistent logging
 │   ├── transaction_parser.py # For decoding raw Bitcoin transactions (Planned)
 │   ├── rpc_client.py      # For interacting with Bitcoin RPC (Planned)
@@ -34,7 +34,8 @@ btcmesh/
 │   └── reference_materials.md
 ├── logs/                  # Directory for log files (created at runtime)
 ├── tests/                 # Unit and integration tests
-├── config.ini.example     # Example configuration file (Planned)
+├── .env.example           # Example environment variable configuration file
+├── config.ini.example     # Example INI configuration file (Planned for more complex settings)
 ├── requirements.txt       # Python dependencies
 └── README.md              # This file
 ```
@@ -60,23 +61,38 @@ btcmesh/
     pip install -r requirements.txt
     ```
 
-4.  **Meshtastic Device Setup**:
-    *   Ensure you have a Meshtastic device connected to the machine where `btcmesh_server.py` will run (and another for the client when `btcmesh_cli.py` is used).
-    *   The Meshtastic Python library should be able to detect your device. If you have issues, you might need to specify the serial port (e.g., `/dev/ttyACM0` on Linux) when running the scripts or via a configuration file in the future.
+4.  **Configure Environment (.env)**:
+    The application can be configured using a `.env` file in the project root.
+    Copy the example file to create your own configuration:
+    ```bash
+    cp .env.example .env
+    ```
+    Then, edit the `.env` file to set your specific configurations. For example:
 
-5.  **Bitcoin Core RPC Setup (for Relay)**:
+    *   **`MESHTASTIC_SERIAL_PORT`**: Specifies the serial port for your Meshtastic device (e.g., `/dev/ttyUSB0`, `/dev/ttyACM0` on Linux, or `COM3` on Windows). If this is not set or is commented out, the application will attempt to auto-detect the Meshtastic device.
+        ```env
+        # MESHTASTIC_SERIAL_PORT=/dev/your/meshtastic_port
+        ```
+
+5.  **Meshtastic Device Setup**:
+    *   Ensure you have a Meshtastic device connected to the machine where `btcmesh_server.py` will run (and another for the client when `btcmesh_cli.py` is used).
+    *   The Meshtastic Python library, by default, attempts to auto-detect your device. You can specify the serial port explicitly by setting `MESHTASTIC_SERIAL_PORT` in your `.env` file (see step 4).
+
+6.  **Bitcoin Core RPC Setup (for Relay)**:
     *   The relay server (`btcmesh_server.py`) will need to connect to a running Bitcoin Core node with RPC enabled.
     *   Ensure your Bitcoin Core node is configured to accept RPC connections and that you have the necessary credentials (RPC user, password, host, port).
     *   (Future) These details will be configured in a `config.ini` file. See `config.ini.example` (once available).
 
 ## Configuration
 
-(Planned) The server will be configurable via a `config.ini` file. An example file `config.ini.example` will be provided with default values and explanations for each setting. You will need to copy `config.ini.example` to `config.ini` and customize it for your setup. Key settings will include:
+The primary method for basic configuration (like serial ports) is via a `.env` file in the project root (see "Configure Environment (.env)" in Setup Instructions).
 
-*   Meshtastic device parameters (if not auto-detected).
-*   Bitcoin RPC connection details (host, port, user, password).
-*   Logging levels and paths.
-*   Reassembly timeouts and buffer limits.
+(Planned) For more advanced or structured configurations, the server might also support a `config.ini` file. An example file `config.ini.example` will be provided if this is implemented.
+
+Key settings that can or will be configurable:
+
+*   Meshtastic device serial port (`MESHTASTIC_SERIAL_PORT` in `.env`).
+*   Bitcoin RPC connection details (host, port, user, password) - likely via `.env` or `config.ini` in the future.
 
 ## Running the Server
 

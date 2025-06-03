@@ -137,3 +137,4 @@ conda-meta/
 
 # Cursor files
 .cursor/ 
+.cursor-updates

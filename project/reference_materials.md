@@ -277,7 +277,7 @@ Example using INI files with `configparser`.
 *   **Example `config.ini` file**:
     ```ini
     [Meshtastic]
-    # serial_port = /dev/ttyUSB0 ; Example for Linux
+    # serial_port = /dev/ttyACM0 ; Example for Linux
     # serial_port = COM3        ; Example for Windows
 
     [BitcoinRPC]
