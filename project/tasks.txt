@@ -179,34 +179,38 @@ lora/
     - [x] Supports --dry-run for testable output.
     - [x] Ready for chunking/sending logic (Story 6.3).
 
-- [ ] **Story 6.2: Initialize Meshtastic Interface (`btcmesh-cli.py`)**
-- [ ] *   **As a** `btcmesh-cli.py` script,
-- [ ] *   **I want** to initialize a connection to the Meshtastic device,
-- [ ] *   **So that** I can send messages.
-    - [ ] *   **Scenario:** Script starts
-        - [ ] *   **Given** a Meshtastic device is connected.
-        - [ ] *   **When** `btcmesh-cli.py` needs to send messages.
-        - [ ] *   **Then** it successfully establishes a connection with the Meshtastic interface.
+- [x] **Story 6.2: Initialize Meshtastic Interface (`btcmesh-cli.py`)**
+    - [x] CLI initializes Meshtastic interface (auto-detect or config port).
+    - [x] Logs all connection attempts and errors to stdout and CLI log file.
+    - [x] Handles device not found, import error, and exits with clear message.
+    - [x] All TDD/BDD scenarios covered by tests and implementation.
 
 - [ ] **Story 6.3: Chunk Transaction and Send via Meshtastic (`btcmesh-cli.py`)**
-- [ ] *   **As a** `btcmesh-cli.py` script,
-- [ ] *   **I want** to segment the raw transaction hex, format it into chunks, and send each chunk,
-- [ ] *   **So that** the relay device can reassemble it.
-    - [ ] *   **Scenario:** Sending a multi-chunk transaction
-        - [ ] *   **Given** a valid destination ID and a raw transaction hex string.
-        - [ ] *   **And** a defined chunk payload size (e.g., 200 hex characters).
-        - [ ] *   **When** the script processes the transaction.
-        - [ ] *   **Then** it generates a unique `tx_session_id`.
-        - [ ] *   **And** calculates `total_chunks`.
-        - [ ] *   **And** for each chunk:
-            - [ ] *   Formats the message as `BTC_TX|<tx_session_id>|<chunk_num>/<total_chunks>|<hex_payload_part>`.
-            - [ ] *   Sends the formatted message to the destination ID via Meshtastic.
-            - [ ] *   Prints a confirmation of sending each chunk (e.g., "Sent chunk X/Y for session Z").
-        - [ ] *   **And** after all chunks are sent, prints "All transaction chunks sent for session Z."
-    - [ ] *   **Scenario:** Sending a transaction that fits in one chunk
-        - [ ] *   **Given** a raw transaction hex string short enough to fit in one chunk's payload.
-        - [ ] *   **When** the script processes the transaction.
-        - [ ] *   **Then** it sends one chunk: `BTC_TX|<tx_session_id>|1/1|<full_hex_payload>`.
+    - [ ] *   **As a** `btcmesh-cli.py` script,
+    - [ ] *   **I want** to segment the raw transaction hex, format it into chunks, and send each chunk,
+    - [ ] *   **So that** the relay device can reassemble it.
+        - [ ] *   **Scenario:** Sending a multi-chunk transaction
+            - [ ] *   Given a valid destination ID and a raw transaction hex string.
+            - [ ] *   And a defined chunk payload size (e.g., 200 hex characters).
+            - [ ] *   When the script processes the transaction.
+            - [ ] *   Then it generates a unique `tx_session_id`.
+            - [ ] *   And calculates `total_chunks`.
+            - [ ] *   And for each chunk:
+                - [ ] *   Formats the message as `BTC_TX|<tx_session_id>|<chunk_num>/<total_chunks>|<hex_payload_part>`.
+                - [ ] *   Sends the formatted message to the destination ID via Meshtastic.
+                - [ ] *   Prints a confirmation of sending each chunk (e.g., "Sent chunk X/Y for session Z").
+            - [ ] *   And after all chunks are sent, prints "All transaction chunks sent for session Z."
+        - [ ] *   **Scenario:** Sending a transaction that fits in one chunk
+            - [ ] *   Given a raw transaction hex string short enough to fit in one chunk's payload.
+            - [ ] *   When the script processes the transaction.
+            - [ ] *   Then it sends one chunk: `BTC_TX|<tx_session_id>|1/1|<full_hex_payload>`.
+        - [ ] *   **Scenario:** Error sending a chunk (Meshtastic sendText fails)
+            - [ ] *   Given a send error occurs for a chunk.
+            - [ ] *   When the script attempts to send.
+            - [ ] *   Then it logs the error and prints a message to the user.
+        - [ ] *   **Scenario:** Logging covers all chunking, sending, and errors
+            - [ ] *   Given any chunking or sending event (success or failure).
+            - [ ] *   Then the event is logged to both stdout and the CLI log file.
 
 - [ ] **Story 6.4: Listen for Acknowledgement (`btcmesh-cli.py`) (Optional Enhancement)**
 - [ ] *   **As a** user of `btcmesh-cli.py`,

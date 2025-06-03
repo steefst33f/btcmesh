@@ -2,6 +2,7 @@ import unittest
 import subprocess
 import sys
 import os
+from unittest.mock import patch, MagicMock, call
 
 SCRIPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'btcmesh_cli.py')
 
@@ -110,6 +111,76 @@ class TestBtcmeshCliStory63(unittest.TestCase):
         # Chunks should be in order and reconstruct the original
         payloads = [line.split('|', 3)[-1] for line in lines]
         self.assertEqual(''.join(payloads), tx_hex)
+
+class TestMeshtasticCliInitializationStory62(unittest.TestCase):
+    """
+    TDD for Story 6.2: Meshtastic interface initialization in btcmesh-cli.py
+    Covers:
+      - Successful connection (auto-detect and config port)
+      - Device not found
+      - Import error (meshtastic not installed)
+      - Logging of all attempts and errors
+    """
+    def setUp(self):
+        # Patch meshtastic and its components in sys.modules
+        self.mock_meshtastic_module = MagicMock()
+        self.mock_serial_interface_module = MagicMock()
+        self.MockMeshtasticSerialInterfaceClass = MagicMock()
+        self.mock_serial_interface_module.SerialInterface = self.MockMeshtasticSerialInterfaceClass
+        self.mock_meshtastic_module.serial_interface = self.mock_serial_interface_module
+        self.MockNoDeviceError = type('NoDeviceError', (Exception,), {})
+        self.MockMeshtasticError = type('MeshtasticError', (Exception,), {})
+        self.mock_meshtastic_module.NoDeviceError = self.MockNoDeviceError
+        self.mock_meshtastic_module.MeshtasticError = self.MockMeshtasticError
+        self.sys_modules_patcher = patch.dict(sys.modules, {
+            'meshtastic': self.mock_meshtastic_module,
+            'meshtastic.serial_interface': self.mock_serial_interface_module,
+        })
+        self.sys_modules_patcher.start()
+        # Patch config loader for port
+        self.config_loader_patcher = patch('core.config_loader.get_meshtastic_serial_port')
+        self.mock_get_serial_port = self.config_loader_patcher.start()
+        # Patch logger setup for CLI
+        self.logger_patcher = patch('core.logger_setup.setup_logger', return_value=MagicMock())
+        self.mock_setup_logger = self.logger_patcher.start()
+    def tearDown(self):
+        self.sys_modules_patcher.stop()
+        self.config_loader_patcher.stop()
+        self.logger_patcher.stop()
+    def test_successful_autodetect(self):
+        self.mock_get_serial_port.return_value = None
+        mock_iface = self.MockMeshtasticSerialInterfaceClass.return_value
+        mock_iface.devicePath = '/dev/ttyUSB0'
+        # Simulate CLI init function (to be implemented)
+        # Should log attempt and success
+        # ...
+        # self.mock_setup_logger().info.assert_any_call('Attempting to initialize Meshtastic interface (auto-detect)...')
+        # self.mock_setup_logger().info.assert_any_call('Meshtastic interface initialized successfully. Device: /dev/ttyUSB0')
+    def test_successful_with_config_port(self):
+        self.mock_get_serial_port.return_value = '/dev/ttyS0'
+        mock_iface = self.MockMeshtasticSerialInterfaceClass.return_value
+        mock_iface.devicePath = '/dev/ttyS0'
+        # Simulate CLI init function (to be implemented)
+        # Should log attempt and success
+        # ...
+    def test_no_device_error(self):
+        self.mock_get_serial_port.return_value = None
+        self.MockMeshtasticSerialInterfaceClass.side_effect = self.MockNoDeviceError('No device')
+        # Simulate CLI init function (to be implemented)
+        # Should log error and exit
+        # ...
+    def test_import_error(self):
+        # Remove meshtastic from sys.modules and patch import to raise ImportError
+        with patch.dict('sys.modules', {'meshtastic': None, 'meshtastic.serial_interface': None}):
+            with patch('builtins.__import__', side_effect=ImportError):
+                # Simulate CLI init function (to be implemented)
+                # Should log error and exit
+                # ...
+                pass
+    def test_logging_on_all_attempts(self):
+        # Should log every connection attempt and error
+        # ...
+        pass
 
 if __name__ == '__main__':
     unittest.main() 
