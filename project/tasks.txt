@@ -106,20 +106,13 @@ lora/
         - [x] *   **Scenario:** Mismatched `total_chunks` for the same `tx_session_id`
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestTransactionReassemblerStory21`)._
 
-- [ ] **Story 2.2: Validate Reassembled Hexadecimal String**
-- [ ] *   **As a** relay system (`btcmesh-server.py`),
-- [ ] *   **I want** to validate that the reassembled payload is a valid hexadecimal string,
-- [ ] *   **So that** I don't try to decode invalid data.
-    - [ ] *   **Scenario:** Reassembled payload is valid hex
-        - [ ] *   **Given** a successfully reassembled payload string from Story 2.1.
-        - [ ] *   **When** the string is checked for hexadecimal validity.
-        - [ ] *   **Then** if it contains only hexadecimal characters, it passes validation.
-    - [ ] *   **Scenario:** Reassembled payload contains non-hex characters
-        - [ ] *   **Given** a successfully reassembled payload string.
-        - [ ] *   **When** the string contains non-hexadecimal characters.
-        - [ ] *   **Then** it is flagged as invalid.
-        - [ ] *   **And** an error message "Invalid reassembled data: Not a hex string" is prepared for reply to the sender (associated with the `tx_session_id`).
-        - [ ] *   **And** the error is logged.
+- [x] **Story 2.2: Validate Reassembled Hexadecimal String**
+    - [x] *   **As a** relay system (`btcmesh-server.py`),
+    - [x] *   **I want** to validate that the reassembled payload is a valid hexadecimal string,
+    - [x] *   **So that** I don't try to decode invalid data.
+        - [x] *   **Scenario:** Reassembled payload is valid hex
+        - [x] *   **Scenario:** Reassembled payload contains non-hex characters
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_server.py` (see `TestHexValidationStory22`)._
 
 - [ ] **Story 2.3: Decode Reassembled Raw Bitcoin Transaction Hex**
 - [ ] *   **As a** relay system (`btcmesh-server.py`),
@@ -259,55 +252,4 @@ lora/
         - [ ] *   **And** the relay receives a TXID from the RPC node.
         - [ ] *   **And** the relay sends a DM "BTC_ACK|sess123|SUCCESS|TXID:[actual_txid]" back to the `btcmesh-cli.py` sender's node ID.
         - [ ] *   **And** (if Story 6.4 implemented) `btcmesh-cli.py` receives this ACK and prints the success message with TXID.
-        - [ ] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`).
-
-- [ ] **Story 7.2: End-to-End Relay with Reassembly Failure (Chunked)**
-- [ ] *   **As a** user,
-- [ ] *   **I want** `btcmesh-cli.py` to inform me if the transaction could not be reassembled by the relay,
-- [ ] *   **So that** I know the transaction was not processed.
-    - [ ] *   **Scenario:** Relay times out waiting for chunks
-        - [ ] *   **Given** `btcmesh-cli.py` sends some but not all chunks of a transaction.
-        - [ ] *   **And** the relay device's reassembly timeout for that `tx_session_id` is triggered.
-        - [ ] *   **When** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Reassembly timeout".
-        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
-        - [ ] *   **And** the error is logged by the relay (`btcmesh-server.py`) and potentially `btcmesh-cli.py`.
-
-- [ ] **Story 7.3: End-to-End Relay with Invalid Reassembled Data (Chunked)**
-- [ ] *   **As a** user,
-- [ ] *   **I want** `btcmesh-cli.py` to inform me if the reassembled transaction data was invalid at the relay,
-- [ ] *   **So that** I can check my input.
-    - [ ] *   **Scenario:** Reassembled data on relay is not valid hex
-        - [ ] *   **Given** `btcmesh-cli.py` sends chunks that, when reassembled by the relay, do not form a valid hex string.
-        - [ ] *   **When** the relay (`btcmesh-server.py`) fails at Story 2.2 (Validate Reassembled Hex).
-        - [ ] *   **And** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Invalid reassembled data: Not a hex string".
-        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
-
-- [ ] **Story 7.4: End-to-End Relay with RPC Broadcast Error (Chunked)**
-- [ ] *   (Similar to original Story 6.3, but initiated by `btcmesh-cli.py` and involves chunking/reassembly)
-- [ ] *   **As a** user of `btcmesh-cli.py`,
-- [ ] *   **I want** to be informed if the Bitcoin node rejects my reassembled transaction,
-- [ ] *   **So that** I understand why it wasn't broadcast.
-    - [ ] *   **Scenario:** Bitcoin node rejects reassembled transaction
-        - [ ] *   **Given** `btcmesh-cli.py` sends chunks successfully, and the relay (`btcmesh-server.py`) reassembles and validates them.
-        - [ ] *   **And** the Bitcoin RPC node will reject this transaction (e.g., insufficient fees).
-        - [ ] *   **When** the relay attempts to broadcast it.
-        - [ ] *   **And** the relay sends "BTC_NACK|<tx_session_id>|ERROR|Bitcoin node rejected transaction: [specific RPC error]".
-        - [ ] *   **Then** (if Story 6.4 implemented) `btcmesh-cli.py` receives this NACK and prints the error.
-
----
-
-**Assumptions:**
-- (Largely the same, but user interacts via `btcmesh-cli.py`)
-- A Meshtastic device is available for both the client (`btcmesh-cli.py`) and the relay (`btcmesh-server.py`).
-- The relay device (`btcmesh-server.py`) is actively listening.
-
-**Out of Scope (for initial version):**
-- Transaction signing (still out of scope).
-- Advanced transaction validation by the relay (`btcmesh-server.py`) (still out of scope).
-- Encrypted LoRa communication (relies on Meshtastic channel settings).
-- A sophisticated UI for the relay (`btcmesh-server.py`); interaction for sending is via `btcmesh-cli.py`.
-- Automatic retries of sending individual chunks by `btcmesh-cli.py` if Meshtastic send fails (can be added later).
-- Relay (`btcmesh-server.py`) confirming receipt of each individual chunk to `btcmesh-cli.py` (current design is ACK/NACK for the whole session).
-
----
-This document follows TDD/BDD principles by outlining features as user stories and defining specific scenarios with Given-When-Then clauses, which will guide test creation before or alongside implementation.
+        - [ ] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`

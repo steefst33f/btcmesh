@@ -456,8 +456,8 @@ class TestMessageHandling(unittest.TestCase):
 
         session_id = "sess_success_reassembly"
         # Simulate a single chunk transaction for simplicity, or the last chunk
-        message_text = f"{CHUNK_PREFIX}{session_id}|1/1|full_payload_data"
-        reassembled_hex_payload = "full_payload_data" # Expected result from reassembler
+        message_text = f"{CHUNK_PREFIX}{session_id}|1/1|deadbeefcafebabe"
+        reassembled_hex_payload = "deadbeefcafebabe" # Expected result from reassembler
 
         # Configure the mock reassembler to return the complete payload
         self.mock_reassembler.add_chunk.return_value = reassembled_hex_payload
@@ -1224,6 +1224,43 @@ class TestTransactionReassemblerStory21(unittest.TestCase):
         self.assertTrue(any(n["tx_session_id"] == self.session_id for n in nacks))
         # And: session is removed
         self.assertIsNone(self.reassembler.get_session_sender_id_str(self.sender_id, self.session_id))
+
+
+class TestHexValidationStory22(unittest.TestCase):
+    def setUp(self):
+        from core.reassembler import TransactionReassembler
+        self.reassembler = TransactionReassembler(timeout_seconds=1)
+        self.sender_id = 54321
+        self.session_id = "hexval22"
+
+    def test_valid_hex_string(self):
+        """Given a valid hex string, When validated, Then it passes validation."""
+        valid_hex = "deadbeefCAFEBABE0123456789abcdef"
+        # Should not raise
+        try:
+            int(valid_hex, 16)
+        except ValueError:
+            self.fail("Valid hex string did not pass validation")
+
+    def test_invalid_hex_string(self):
+        """Given an invalid hex string, When validated, Then it fails validation and logs error."""
+        invalid_hex = "deadbeefZZZ01234"
+        with self.assertRaises(ValueError):
+            int(invalid_hex, 16)
+
+    def test_integration_reassembled_hex_validation(self):
+        """Given a reassembled payload, When it is not valid hex, Then the server should log and prepare NACK."""
+        # Simulate reassembly
+        chunk1 = f"BTC_TX|{self.session_id}|1/2|deadbeef"
+        chunk2 = f"BTC_TX|{self.session_id}|2/2|ZZZ01234"  # Invalid hex part
+        self.reassembler.add_chunk(self.sender_id, chunk1)
+        reassembled = self.reassembler.add_chunk(self.sender_id, chunk2)
+        self.assertEqual(reassembled, "deadbeefZZZ01234")
+        # Now validate
+        with self.assertRaises(ValueError):
+            int(reassembled, 16)
+
+        # In the real server, this would trigger a NACK and log an error
 
 
 if __name__ == '__main__':

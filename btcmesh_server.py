@@ -212,6 +212,20 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                             f"[Sender: {sender_node_id_for_reply}] Successfully reassembled transaction: "
                             f"{reassembled_hex[:50]}... (len: {len(reassembled_hex)})"
                         )
+                        # Story 2.2: Validate hex string
+                        try:
+                            int(reassembled_hex, 16)
+                        except ValueError:
+                            error_msg = "Invalid reassembled data: Not a hex string"
+                            server_logger.error(
+                                f"[Sender: {sender_node_id_for_reply}] {error_msg}"
+                            )
+                            nack_message = f"BTC_NACK|UNKNOWN|ERROR|{error_msg}"
+                            if iface:
+                                send_meshtastic_reply(
+                                    iface, sender_node_id_for_reply, nack_message, None
+                                )
+                            return
                         # Placeholder: Further processing (decode, validate, broadcast)
                         # and sending BTC_ACK will happen in subsequent stories.
                         # For now, just log reassembly success.
