@@ -125,18 +125,18 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
     - [x] *   **So that** the client can recover from errors or abort cleanly.
     *   _Note: CLI now passes all NACK/abort handling tests._
 
-- [ ] **Story 8A.3: Timeout and Retries on No ACK**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to retry sending a chunk up to 3 times if no ACK is received within 30 seconds,
-    - [ ] *   **So that** transient losses do not cause session failure.
-        - [ ] *   **Given** a chunk is sent and not acknowledged within 30 seconds,
-        - [ ] *   **When** the client retries up to 3 times,
-        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+- [x] **Story 8A.3: Timeout and Retries on No ACK**
+    - [x] *   **As a** client,
+    - [x] *   **I want** to retry sending a chunk up to 3 times if no ACK is received within 30 seconds,
+    - [x] *   **So that** transient losses do not cause session failure.
+        - [x] *   **Given** a chunk is sent and not acknowledged within 30 seconds,
+        - [x] *   **When** the client retries up to 3 times,
+        - [x] *   **Then** the session continues if a response is received, or aborts after 3 failures.
 
-- [ ] **Story 8A.4: User Feedback and Logging**
-    - [ ] *   **As a** user,
-    - [ ] *   **I want** clear feedback and logs for each chunk sent, ACK/NACK received, retries, and aborts,
-    - [ ] *   **So that** I can understand the session progress and diagnose issues.
+- [x] **Story 8A.4: User Feedback and Logging**
+    - [x] *   **As a** user,
+    - [x] *   **I want** clear feedback and logs for each chunk sent, ACK/NACK received, retries, and aborts,
+    - [x] *   **So that** I can understand the session progress and diagnose issues.
 
 - [ ] **Story 8A.5: End-to-End Protocol Compliance Test Harness**
     - [ ] *   **As a** developer,

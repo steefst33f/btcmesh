@@ -2,7 +2,7 @@ import unittest
 import subprocess
 import sys
 import os
-from unittest.mock import patch, MagicMock, call, ANY
+from unittest.mock import patch, MagicMock, call, ANY, Mock
 from btcmesh_cli import cli_main
 
 SCRIPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'btcmesh_cli.py')
@@ -244,25 +244,39 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
         tx_hex = 'a' * 450  # 3 chunks
         self.mock_iface.sendText.return_value = None
         args = self.make_args(dest, tx_hex)
+        session_id = 'testsession_multi'
+        args.session_id = session_id
+        def message_receiver(timeout, session_id):
+            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+            yield f"BTC_CHUNK_ACK|{session_id}|2|OK|REQUEST_CHUNK|3"
+            yield f"BTC_CHUNK_ACK|{session_id}|3|OK|ALL_CHUNKS_RECEIVED"
+            yield f"BTC_ACK|{session_id}|SUCCESS|TXID:testtxid_multi"
         with patch('builtins.print') as mock_print:
-            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=message_receiver)
         self.assertEqual(ret, 0)
         self.assertEqual(self.mock_iface.sendText.call_count, 3)
         self.assert_printed_substring(mock_print, 'Sent chunk 1/3 for session')
         self.assert_printed_substring(mock_print, 'Sent chunk 2/3 for session')
         self.assert_printed_substring(mock_print, 'Sent chunk 3/3 for session')
         self.assert_printed_substring(mock_print, 'All transaction chunks sent for session')
+        self.assert_printed_substring(mock_print, 'Transaction successfully broadcast by relay. TXID: testtxid_multi')
     def test_single_chunk_transaction_sends_one(self):
         dest = '!abcdef12'
         tx_hex = 'b' * 100  # 1 chunk
         self.mock_iface.sendText.return_value = None
         args = self.make_args(dest, tx_hex)
+        session_id = 'testsession_single'
+        args.session_id = session_id
+        def message_receiver(timeout, session_id):
+            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|ALL_CHUNKS_RECEIVED"
+            yield f"BTC_ACK|{session_id}|SUCCESS|TXID:testtxid_single"
         with patch('builtins.print') as mock_print:
-            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=message_receiver)
         self.assertEqual(ret, 0)
         self.assertEqual(self.mock_iface.sendText.call_count, 1)
         self.assert_printed_substring(mock_print, 'Sent chunk 1/1 for session')
         self.assert_printed_substring(mock_print, 'All transaction chunks sent for session')
+        self.assert_printed_substring(mock_print, 'Transaction successfully broadcast by relay. TXID: testtxid_single')
     def test_error_sending_chunk_logs_and_prints(self):
         dest = '!abcdef12'
         tx_hex = 'c' * 300  # 2 chunks
@@ -271,56 +285,112 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
             raise Exception('Send failed')
         self.mock_iface.sendText.side_effect = sendText_side_effect
         args = self.make_args(dest, tx_hex)
+        def dummy_message_receiver(timeout, session_id):
+            if False:
+                yield  # never yields
         with patch('builtins.print') as mock_print, self.assertRaises(Exception):
-            cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
+            cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=dummy_message_receiver)
         self.assert_printed_substring(mock_print, 'Error sending chunk 1/2 for session')
         found_log = any('Error sending chunk 1/2 for session' in str(call.args[0]) for call in self.mock_logger.error.call_args_list)
         assert found_log, 'Did not find logger.error call containing: Error sending chunk 1/2 for session'
     def test_logging_on_all_chunking_and_sending(self):
         dest = '!abcdef12'
-        tx_hex = 'd' * 400  # 2 chunks
+        tx_hex = 'd' * 340  # 2 chunks
         self.mock_iface.sendText.return_value = None
         args = self.make_args(dest, tx_hex)
-        cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
-        self.mock_logger.info.assert_any_call(ANY)
+        session_id = 'testsession_logging'
+        args.session_id = session_id
+        def message_receiver(timeout, session_id):
+            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+            yield f"BTC_CHUNK_ACK|{session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        with patch('builtins.print') as mock_print:
+            cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=message_receiver)
+        # Assert logger.info called for each chunk sent and for session completion
+        info_calls = [str(call.args[0]) for call in self.mock_logger.info.call_args_list]
+        self.assertTrue(any(f"Sent chunk 1/2 for session {session_id}" in msg for msg in info_calls), "Missing log for chunk 1")
+        self.assertTrue(any(f"Sent chunk 2/2 for session {session_id}" in msg for msg in info_calls), "Missing log for chunk 2")
+        self.assertTrue(any(f"All transaction chunks sent for session {session_id}" in msg for msg in info_calls), "Missing log for session completion")
 
 class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
     """
     TDD for Story 6.4: Listen for ACK/NACK in btcmesh-cli.py.
-    Covers: success, error, timeout, unrelated messages, and logging.
+    Covers success, error, timeout, unrelated messages, and logging.
     """
     def setUp(self):
+        from btcmesh_cli import cli_main, generate_session_id
+        self.cli_main = cli_main
+        self.dest = '!abcdef12'
+        self.tx_hex = 'a' * 100  # 1 chunk
+        self.session_id = generate_session_id()
         self.mock_iface = MagicMock()
         self.mock_logger = MagicMock()
-        self.session_id = 'testsession123'
-        self.dest = '!abcdef12'
-        self.tx_hex = 'a' * 100
-    def make_args(self, dest, tx_hex, dry_run=False):
-        return type('Args', (), {
-            'destination': dest,
-            'tx': tx_hex,
-            'dry_run': dry_run
-        })()
+
+    def make_args(self, dest, tx_hex):
+        Args = type('Args', (), {'destination': dest, 'tx': tx_hex, 'dry_run': False, 'session_id': self.session_id})
+        return Args
+
     def test_receives_btc_ack_for_session(self):
-        # Simulate receiving BTC_ACK for the session
+        # Simulate receiving BTC_ACK for the session AFTER chunks are done
         txid = 'abc123txid'
-        ack_msg = f'BTC_ACK|{self.session_id}|SUCCESS|TXID:{txid}'
-        # Mock message receiver yields the ACK message
+        
+        # Message for completing chunk phase (1 chunk)
+        chunk_ack_final_msg = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|ALL_CHUNKS_RECEIVED"
+        # Message for final session ACK
+        session_ack_msg = f'BTC_ACK|{self.session_id}|SUCCESS|TXID:{txid}'
+
         def mock_message_receiver(timeout, session_id):
-            yield ack_msg
+            yield chunk_ack_final_msg  # Complete chunking phase
+            yield session_ack_msg      # Actual message being tested
+
         args = self.make_args(self.dest, self.tx_hex)
-        args.session_id = self.session_id  # Inject session_id for deterministic test
-        # Patch print and call cli_main with injected message receiver
+        # args.session_id is set in make_args
+
         with patch('builtins.print') as mock_print:
-            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=mock_message_receiver)
+            ret = self.cli_main(
+                args=args,
+                injected_iface=self.mock_iface,
+                injected_logger=self.mock_logger,
+                injected_message_receiver=mock_message_receiver
+            )
+        
         # Should print success with TXID and return 0
-        found = any(f'Transaction successfully broadcast by relay. TXID: {txid}' in str(call.args[0]) for call in mock_print.call_args_list)
-        assert found, 'Did not print success message with TXID'
-        self.assertEqual(ret, 0)
+        printed_output = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        expected_success_print = f'Transaction successfully broadcast by relay. TXID: {txid}'
+        
+        self.assertEqual(ret, 0, "CLI should return 0 on successful session ACK.")
+        self.assertIn(expected_success_print, printed_output, 'Did not print success message with TXID')
+        self.mock_logger.info.assert_any_call(f"Received ACK for session {self.session_id}: {session_ack_msg}")
+
     def test_receives_btc_nack_for_session(self):
-        # Simulate receiving BTC_NACK for the session
-        # Should print error with details and exit 1
-        pass
+        # Simulate receiving BTC_NACK for the session AFTER chunks are done
+        nack_reason = "Test session NACK reason"
+
+        # Message for completing chunk phase (1 chunk)
+        chunk_ack_final_msg = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|ALL_CHUNKS_RECEIVED"
+        # Message for final session NACK
+        session_nack_msg = f"BTC_NACK|{self.session_id}|ERROR|{nack_reason}"
+
+        def mock_message_receiver(timeout, session_id):
+            yield chunk_ack_final_msg  # Complete chunking phase
+            yield session_nack_msg     # Actual message being tested
+
+        args = self.make_args(self.dest, self.tx_hex) # tx_hex is 1 chunk from setUp
+
+        with patch('builtins.print') as mock_print:
+            ret = self.cli_main(
+                args=args,
+                injected_iface=self.mock_iface,
+                injected_logger=self.mock_logger,
+                injected_message_receiver=mock_message_receiver
+            )
+        
+        printed_output = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        expected_error_print = f"Relay reported an error: {nack_reason}"
+
+        self.assertEqual(ret, 1, "CLI should return 1 on session NACK.")
+        self.assertIn(expected_error_print, printed_output, f'Did not print session NACK error message. Output: {printed_output}')
+        self.mock_logger.info.assert_any_call(f"Received NACK for session {self.session_id}: {session_nack_msg}")
+
     def test_timeout_waiting_for_ack_nack(self):
         # Simulate no ACK/NACK received within timeout
         # Should print timeout message and exit 2
@@ -335,68 +405,106 @@ class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
 
 class TestCliStopAndWaitARQ(unittest.TestCase):
     def setUp(self):
-        from btcmesh_cli import cli_main
+        from btcmesh_cli import cli_main, generate_session_id
+        from unittest.mock import Mock, MagicMock
         self.cli_main = cli_main
         self.dest = '!abcdef12'
-        self.tx_hex = 'a' * 340  # 2 chunks of 170
-        self.session_id = 'testsession123'
+        self.tx_hex = 'a' * 340  # Ensure 2 chunks for this test case
+        self.session_id = generate_session_id() # Use dynamic session_id
+        self.mock_iface = Mock()
         self.sent_chunks = []
-        self.mock_iface = type('MockIface', (), {'sendText': self.mock_sendText})()
-        self.acks_to_send = [
-            f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2",
-            f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
-        ]
-        self.ack_index = 0
+        self.mock_iface.sendText = self.mock_sendText # Assign method directly
+        self.mock_logger = MagicMock() # Use MagicMock for the logger
+
     def mock_sendText(self, text, destinationId):
         self.sent_chunks.append((text, destinationId))
+
     def mock_message_receiver(self, timeout, session_id):
-        # Simulate server sending ACKs in order, one per chunk
-        while self.ack_index < len(self.acks_to_send):
-            yield self.acks_to_send[self.ack_index]
-            self.ack_index += 1
+        # For chunk 1
+        yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        # For chunk 2
+        yield f"BTC_CHUNK_ACK|{session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        # Final session ACK
+        yield f"BTC_ACK|{session_id}|SUCCESS|TXID:stopwait_txid"
+
     def test_cli_stop_and_wait_sends_chunks_in_order(self):
         Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
-        result = self.cli_main(
-            args=Args,
-            injected_iface=self.mock_iface,
-            injected_message_receiver=self.mock_message_receiver
-        )
+        with patch('builtins.print') as mock_print:
+            result = self.cli_main(
+                args=Args,
+                injected_iface=self.mock_iface,
+                injected_logger=self.mock_logger, # Pass the mock_logger
+                injected_message_receiver=self.mock_message_receiver
+            )
         # Should send exactly 2 chunks, in order, waiting for each ACK
         self.assertEqual(len(self.sent_chunks), 2)
         self.assertTrue(self.sent_chunks[0][0].startswith(f"BTC_TX|{self.session_id}|1/2|"))
         self.assertTrue(self.sent_chunks[1][0].startswith(f"BTC_TX|{self.session_id}|2/2|"))
         self.assertEqual(result, 0)
+        printed_output = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("Transaction successfully broadcast by relay. TXID: stopwait_txid", printed_output)
 
 class TestCliNackAndAbortHandling(unittest.TestCase):
     def setUp(self):
         from btcmesh_cli import cli_main
+        from unittest.mock import Mock, MagicMock
         self.cli_main = cli_main
         self.dest = '!abcdef12'
         self.tx_hex = 'a' * 340  # 2 chunks of 170
         self.session_id = 'testsession456'
         self.sent_chunks = []
-        self.mock_iface = type('MockIface', (), {'sendText': self.mock_sendText})()
-        self.nack_msg = f"BTC_NACK|{self.session_id}|1|ERROR|Invalid chunk"
-        self.abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason"
-        self.ack_msg = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
-        self.ack2_msg = f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
-        self.retry_count = 0
+        self.mock_iface = Mock()
+        self.mock_iface.sendText = self.mock_sendText
+        self.mock_logger = MagicMock()
+
+        # Messages used by tests in this class
+        self.nack_msg_chunk1 = f"BTC_NACK|{self.session_id}|1|ERROR|NACK for chunk 1 test"
+        self.abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason test"
+        self.ack_msg_chunk1 = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
+        self.ack_msg_chunk2_final = f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        self.final_session_ack = f"BTC_ACK|{self.session_id}|SUCCESS|TXID:final_nack_handling_test"
+
     def mock_sendText(self, text, destinationId):
         self.sent_chunks.append((text, destinationId))
+
     def test_nack_retries_and_aborts(self):
-        # Simulate NACK for chunk 1, 3 times, then abort
+        # Simulate NACK for chunk 1, 3 times, then CLI should abort
+        # The message_receiver here should only provide NACKs for chunk 1.
+        # The CLI should retry chunk 1 three times (initial + 2 retries = 3 sends)
+        # After the third NACK is processed, it should abort.
         def message_receiver(timeout, session_id):
-            for _ in range(3):
-                yield self.nack_msg
-            yield self.abort_msg
-        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
-        with self.assertRaises(SystemExit) as cm:
+            yield self.nack_msg_chunk1 # For 1st send of chunk 1
+            yield self.nack_msg_chunk1 # For 2nd send of chunk 1 (1st retry)
+            yield self.nack_msg_chunk1 # For 3rd send of chunk 1 (2nd retry)
+            # No more messages, CLI should abort after processing 3rd NACK
+
+        Args = type('Args', (), {
+            'destination': self.dest, 
+            'tx': self.tx_hex, 
+            'session_id': self.session_id, 
+            'dry_run': False
+        })
+
+        with patch('builtins.print') as mock_print, self.assertRaises(SystemExit) as cm:
             self.cli_main(
                 args=Args,
                 injected_iface=self.mock_iface,
+                injected_logger=self.mock_logger,
                 injected_message_receiver=message_receiver
             )
-        self.assertEqual(len(self.sent_chunks), 3)  # 3 retries
+        
+        self.assertEqual(cm.exception.code, 2, "CLI should exit with code 2 on abort.")
+        self.assertEqual(len(self.sent_chunks), 3, "Should send chunk 1 three times (initial + 2 retries)")
+
+        printed_output = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        expected_abort_print = f"Aborting session after 3 NACKs for chunk 1/2"
+        self.assertIn(expected_abort_print, printed_output, f"Did not print correct abort message. Output: {printed_output}")
+        
+        self.mock_logger.error.assert_any_call(f"Aborting session {self.session_id} after 3 NACKs for chunk 1/2")
+        # Check retry messages
+        self.assertIn(f"Retrying chunk 1/2 (attempt 2 of 3) due to NACK", printed_output)
+        self.assertIn(f"Retrying chunk 1/2 (attempt 3 of 3) due to NACK", printed_output)
+
     def test_abort_message_aborts_immediately(self):
         # Simulate abort message after first chunk
         def message_receiver(timeout, session_id):
@@ -409,6 +517,104 @@ class TestCliNackAndAbortHandling(unittest.TestCase):
                 injected_message_receiver=message_receiver
             )
         self.assertEqual(len(self.sent_chunks), 1)  # Only first chunk sent
+
+class TestCliTimeoutAndRetriesOnNoAck(unittest.TestCase):
+    def setUp(self):
+        from btcmesh_cli import cli_main, generate_session_id
+        from unittest.mock import Mock
+        self.cli_main = cli_main
+        self.dest = '!abcdef12'
+        self.tx_hex = 'a' * 340  # 2 chunks of 170, ensuring it's multi-chunk
+        self.session_id = generate_session_id()
+        self.mock_iface = Mock()
+        self.sent_chunks = []
+        self.mock_iface.sendText = self.mock_sendText
+        self.mock_logger = Mock()
+
+    def mock_sendText(self, text, destinationId):
+        self.sent_chunks.append((text, destinationId))
+    def test_timeout_and_retries_on_no_ack(self):
+        # Simulate no ACK/NACK for chunk 1 (generator yields nothing)
+        def message_receiver(timeout, session_id):
+            if False:
+                yield  # never yields
+        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
+        with patch('builtins.print') as mock_print, self.assertRaises(SystemExit) as cm:
+            self.cli_main(
+                args=Args,
+                injected_iface=self.mock_iface,
+                injected_message_receiver=message_receiver
+            )
+        self.assertEqual(len(self.sent_chunks), 3)  # 3 retries
+        printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        # BDD: Should print retry message for each attempt
+        self.assertIn('Retrying chunk 1/2 (attempt 2 of 3) due to timeout', printed)
+        self.assertIn('Retrying chunk 1/2 (attempt 3 of 3) due to timeout', printed)
+        # BDD: Should print abort message after 3 failures
+        self.assertIn('Aborting session after 3 failed attempts to send chunk 1/2', printed)
+
+    def test_prints_ack_and_nack_messages(self):
+        # Simulate NACK for chunk 1, then ACK on retry, then completion
+        nack_msg_chunk1 = f"BTC_NACK|{self.session_id}|1|ERROR|Test NACK for chunk 1"
+        ack_msg_chunk1_retry = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
+        ack_msg_chunk2_final = f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        final_session_ack = f"BTC_ACK|{self.session_id}|SUCCESS|TXID:acknack_txid"
+
+        def message_receiver(timeout, session_id):
+            yield nack_msg_chunk1         # NACK for 1st attempt of chunk 1
+            yield ack_msg_chunk1_retry    # ACK for 2nd attempt of chunk 1 (after CLI retry)
+            yield ack_msg_chunk2_final    # ACK for 1st attempt of chunk 2
+            yield final_session_ack       # Final session ACK
+
+        Args = type('Args', (), {
+            'destination': self.dest, 
+            'tx': self.tx_hex,  # tx_hex is 2 chunks from setUp
+            'session_id': self.session_id, 
+            'dry_run': False
+        })
+
+        with patch('builtins.print') as mock_print:
+            ret = 0
+            try:
+                ret = self.cli_main(
+                    args=Args,
+                    injected_iface=self.mock_iface,
+                    injected_logger=self.mock_logger,
+                    injected_message_receiver=message_receiver
+                )
+            except SystemExit as e:
+                ret = e.code # Capture exit code if SystemExit is raised
+            
+        printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+
+        self.assertEqual(ret, 0, f"CLI should return 0 after successful retries and completion. Output: {printed}")
+        self.assertIn(f"Received NACK for chunk 1/2: Test NACK for chunk 1", printed)
+        self.assertIn(f"Retrying chunk 1/2 (attempt 2 of 3) due to NACK", printed)
+        self.assertIn(f"Received ACK for chunk 1/2", printed) # For the ACK after retry
+        self.assertIn(f"All transaction chunks sent for session {self.session_id}.", printed) # For final chunk completion
+        self.assertIn(f"Transaction successfully broadcast by relay. TXID: acknack_txid", printed) # For final session ACK print
+
+        # Assert logger calls for NACK and retry
+        self.mock_logger.warning.assert_any_call(f"Received NACK for chunk 1/2 in session {self.session_id}: Test NACK for chunk 1")
+        self.mock_logger.warning.assert_any_call(f"Retrying chunk 1/2 (attempt 2 of 3) due to NACK")
+
+    def test_prints_abort_message_on_session_abort(self):
+        # Simulate session abort message
+        abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason"
+        def message_receiver(timeout, session_id):
+            yield abort_msg
+        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
+        with patch('builtins.print') as mock_print, self.assertRaises(SystemExit):
+            self.cli_main(
+                args=Args,
+                injected_iface=self.mock_iface,
+                injected_logger=self.mock_logger, # Pass the mock_logger from setUp
+                injected_message_receiver=message_receiver
+            )
+        printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn('Session aborted by server: Server abort reason', printed)
+        # Assert logger error call
+        self.mock_logger.error.assert_any_call(f"Session {self.session_id} aborted by server: Server abort reason")
 
 if __name__ == '__main__':
     unittest.main() 
