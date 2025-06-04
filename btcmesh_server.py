@@ -386,9 +386,44 @@ def on_receive_text_message(
                                 f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Broadcast success. TXID: {txid}"
                             )
                         else:
-                            nack_msg = (
-                                f"BTC_NACK|{session_id}|ERROR|Broadcast failed: {error}"
-                            )
+                            # Optimize error message for size constraints
+                            error_msg = str(error)
+                            if "Transaction outputs already in utxo set" in error_msg:
+                                error_msg = "TX already in UTXO set"
+                            elif "Transaction already in block chain" in error_msg:
+                                error_msg = "TX already in chain"
+                            elif "insufficient fee" in error_msg.lower():
+                                error_msg = "Insufficient fee"
+                            elif "missing inputs" in error_msg.lower():
+                                error_msg = "Missing inputs"
+                            elif "bad-txns-inputs-spent" in error_msg:
+                                error_msg = "Inputs spent"
+                            elif "bad-txns-in-belowout" in error_msg:
+                                error_msg = "Input < Output"
+                            elif "too-long-mempool-chain" in error_msg:
+                                error_msg = "Chain too long"
+                            elif "mempool full" in error_msg.lower():
+                                error_msg = "Mempool full"
+                            elif "replacement transaction" in error_msg.lower():
+                                error_msg = "RBF disabled"
+                            elif "non-mandatory-script-verify-flag" in error_msg:
+                                error_msg = "Script verify failed"
+                            elif "transaction already abandoned" in error_msg.lower():
+                                error_msg = "TX abandoned"
+                            elif "bad-txns-nonstandard-inputs" in error_msg:
+                                error_msg = "Non-std inputs"
+                            elif "bad-txns-oversize" in error_msg:
+                                error_msg = "TX too large"
+                            elif "version" in error_msg.lower() and "reject" in error_msg.lower():
+                                error_msg = "Version rejected"
+                            elif "dust" in error_msg.lower():
+                                error_msg = "Dust output"
+                            elif "fee is too high" in error_msg.lower():
+                                error_msg = "Fee too high"
+                            elif "absurdly-high-fee" in error_msg.lower():
+                                error_msg = "Absurd fee"
+                            # Keep original error in logs but use concise version in NACK
+                            nack_msg = f"BTC_NACK|{session_id}|ERROR|{error_msg}"
                             send_reply_func(
                                 iface, sender_node_id_for_reply, nack_msg, session_id
                             )

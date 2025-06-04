@@ -26,8 +26,8 @@ def chunk_transaction(tx_hex, chunk_size):
 
 
 def generate_session_id():
-    """Generate a unique 12-character hex session ID."""
-    return uuid.uuid4().hex[:12]
+    """Generate a unique 5-character hex session ID."""
+    return uuid.uuid4().hex[:5]
 
 
 # Example raw transaction for reference and testing (see reference_materials.md):
