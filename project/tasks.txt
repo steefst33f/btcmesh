@@ -232,3 +232,83 @@ lora/
         - [ ] *   **And** the relay sends a DM "BTC_ACK|sess123|SUCCESS|TXID:[actual_txid]" back to the `btcmesh-cli.py` sender's node ID.
         - [ ] *   **And** (if Story 6.4 implemented) `btcmesh-cli.py` receives this ACK and prints the success message with TXID.
         - [ ] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`)
+
+---
+
+# EPIC: Reliable Chunked Transaction Relay Protocol for LoRa/Meshtastic
+
+**Goal:**
+Ensure reliable, in-order, lossless transmission of large Bitcoin transactions over unreliable LoRa/Meshtastic links using a stop-and-wait ARQ protocol.
+
+---
+
+## Stories:
+
+### 1. Reliable Session-Based Chunk Transfer
+
+- [ ] **Story 1.1: Session Initialization (Client/Server)**
+    - [ ] *   **As a** client,
+    - [ ] *   **I want** to initiate a session with a unique session ID, total chunk count, and chunk size,
+    - [ ] *   **So that** the server can prepare to receive a new transaction in chunks.
+        - [ ] *   **Given** the client has a transaction to send,
+        - [ ] *   **When** it sends `BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>` to the server,
+        - [ ] *   **Then** the server responds with `BTC_SESSION_ACK|<session_id>|READY|REQUEST_CHUNK|1`.
+
+- [ ] **Story 1.2: Chunk Request and Transfer (Stop-and-Wait)**
+    - [ ] *   **As a** server,
+    - [ ] *   **I want** to request each chunk in order and only after the previous chunk is received and processed,
+    - [ ] *   **So that** I can ensure reliable, in-order delivery.
+        - [ ] *   **Given** a session is active,
+        - [ ] *   **When** the server sends `BTC_CHUNK_REQUEST|<session_id>|<chunk_number>`,
+        - [ ] *   **And** the client responds with `BTC_CHUNK|<session_id>|<chunk_number>/<total_chunks>|<hex_payload>`,
+        - [ ] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK` and requests the next chunk.
+
+- [ ] **Story 1.3: Timeout and Retries**
+    - [ ] *   **As a** client or server,
+    - [ ] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
+    - [ ] *   **So that** transient losses do not cause session failure.
+        - [ ] *   **Given** a message is sent and not acknowledged within 30 seconds,
+        - [ ] *   **When** the sender retries up to 3 times,
+        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+
+- [ ] **Story 1.4: Session Abort**
+    - [ ] *   **As a** client or server,
+    - [ ] *   **I want** to abort a session with a reason,
+    - [ ] *   **So that** both sides can clean up and notify the user of failure.
+        - [ ] *   **Given** a session is active,
+        - [ ] *   **When** either side sends `BTC_SESSION_ABORT|<session_id>|<reason>`,
+        - [ ] *   **Then** the other side stops processing and logs the abort.
+
+- [ ] **Story 1.5: Multiple Concurrent Sessions**
+    - [ ] *   **As a** server,
+    - [ ] *   **I want** to handle multiple concurrent sessions from different clients,
+    - [ ] *   **So that** multiple users can upload transactions in parallel.
+        - [ ] *   **Given** multiple clients initiate sessions with unique IDs,
+        - [ ] *   **When** the server receives messages,
+        - [ ] *   **Then** it tracks and processes each session independently.
+
+- [ ] **Story 1.6: Chunk Size and Payload Limit**
+    - [ ] *   **As a** client,
+    - [ ] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
+    - [ ] *   **So that** each message fits within the Meshtastic payload size limit.
+        - [ ] *   **Given** a transaction to send,
+        - [ ] *   **When** the client splits it into chunks,
+        - [ ] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
+
+- [ ] **Story 1.7: ACK/NACK and Error Handling**
+    - [ ] *   **As a** server,
+    - [ ] *   **I want** to ACK each valid chunk and NACK invalid or duplicate chunks,
+    - [ ] *   **So that** the client can retry or abort as needed.
+        - [ ] *   **Given** a chunk is received,
+        - [ ] *   **When** it is valid and in order,
+        - [ ] *   **Then** the server sends `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK`.
+        - [ ] *   **When** it is invalid or out of order,
+        - [ ] *   **Then** the server sends `BTC_CHUNK_NACK|<session_id>|<chunk_number>|ERROR|<reason>`.
+
+- [ ] **Story 1.8: End-to-End Test (TDD/BDD)**
+    - [ ] *   **As a** developer,
+    - [ ] *   **I want** to verify the full protocol with simulated packet loss and reordering,
+    - [ ] *   **So that** the implementation is robust and reliable.
+        - [ ] *   **Given** a simulated lossy channel,
+        - [ ] *   **When** a client sends a transaction using the protocol,
+        - [ ] *   **Then** the server receives and reassembles the transaction correctly, or aborts with a clear error.

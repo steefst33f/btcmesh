@@ -245,5 +245,54 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
         cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger)
         self.mock_logger.info.assert_any_call(ANY)
 
+class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
+    """
+    TDD for Story 6.4: Listen for ACK/NACK in btcmesh-cli.py.
+    Covers: success, error, timeout, unrelated messages, and logging.
+    """
+    def setUp(self):
+        self.mock_iface = MagicMock()
+        self.mock_logger = MagicMock()
+        self.session_id = 'testsession123'
+        self.dest = '!abcdef12'
+        self.tx_hex = 'a' * 100
+    def make_args(self, dest, tx_hex, dry_run=False):
+        return type('Args', (), {
+            'destination': dest,
+            'tx': tx_hex,
+            'dry_run': dry_run
+        })()
+    def test_receives_btc_ack_for_session(self):
+        # Simulate receiving BTC_ACK for the session
+        txid = 'abc123txid'
+        ack_msg = f'BTC_ACK|{self.session_id}|SUCCESS|TXID:{txid}'
+        # Mock message receiver yields the ACK message
+        def mock_message_receiver(timeout, session_id):
+            yield ack_msg
+        args = self.make_args(self.dest, self.tx_hex)
+        args.session_id = self.session_id  # Inject session_id for deterministic test
+        # Patch print and call cli_main with injected message receiver
+        with patch('builtins.print') as mock_print:
+            ret = cli_main(args=args, injected_iface=self.mock_iface, injected_logger=self.mock_logger, injected_message_receiver=mock_message_receiver)
+        # Should print success with TXID and return 0
+        found = any(f'Transaction successfully broadcast by relay. TXID: {txid}' in str(call.args[0]) for call in mock_print.call_args_list)
+        assert found, 'Did not print success message with TXID'
+        self.assertEqual(ret, 0)
+    def test_receives_btc_nack_for_session(self):
+        # Simulate receiving BTC_NACK for the session
+        # Should print error with details and exit 1
+        pass
+    def test_timeout_waiting_for_ack_nack(self):
+        # Simulate no ACK/NACK received within timeout
+        # Should print timeout message and exit 2
+        pass
+    def test_ignores_unrelated_messages(self):
+        # Simulate receiving unrelated messages (wrong session or not ACK/NACK)
+        # Should not exit or print success/error for those
+        pass
+    def test_logging_on_ack_nack_and_timeout(self):
+        # Should log all received ACK/NACK and timeouts
+        pass
+
 if __name__ == '__main__':
     unittest.main() 

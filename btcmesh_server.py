@@ -2,18 +2,30 @@ from __future__ import annotations
 
 import time
 from typing import Optional, Any, Dict, TYPE_CHECKING
+import subprocess
+import tempfile
+import shutil
+import socket
+import os
 
 # No direct 'import meshtastic' or its components here at the module level.
 # These will be imported inside functions that need them to allow the module
 # to be imported by tests even if meshtastic is not installed.
 
 from core.logger_setup import server_logger
-from core.config_loader import get_meshtastic_serial_port, load_app_config, load_bitcoin_rpc_config, load_reassembly_timeout
+from core.config_loader import (
+    get_meshtastic_serial_port,
+    load_app_config,
+    load_bitcoin_rpc_config,
+    load_reassembly_timeout,
+)
 from core.reassembler import (
     TransactionReassembler,
     InvalidChunkFormatError,
     MismatchedTotalChunksError,
-    ReassemblyError
+    ReassemblyError,
+    CHUNK_PREFIX,
+    CHUNK_PARTS_DELIMITER,
 )
 from core.rpc_client import connect_bitcoin_rpc, broadcast_transaction_via_rpc
 
@@ -42,6 +54,44 @@ TRX_CHUNK_BUFFER: Dict[str, Any] = {}  # This will be replaced by reassembler lo
 # Ensure .env is loaded at application startup
 load_app_config()
 
+# Tor integration settings
+TOR_BINARY_PATH = os.path.join(os.path.dirname(__file__), 'tor', 'tor')
+TOR_SOCKS_PORT = 19050  # You can randomize or make configurable
+TOR_CONTROL_PORT = 9051  # Not strictly needed unless you want to control Tor
+
+def is_onion_address(host):
+    return host.endswith('.onion')
+
+def start_tor(socks_port=TOR_SOCKS_PORT):
+    data_dir = tempfile.mkdtemp()
+    tor_cmd = [
+        TOR_BINARY_PATH,
+        '--SocksPort', str(socks_port),
+        '--DataDirectory', data_dir
+    ]
+    tor_process = subprocess.Popen(
+        tor_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    # Wait for Tor to be ready
+    for _ in range(30):
+        try:
+            s = socket.create_connection(('localhost', socks_port), timeout=2)
+            s.close()
+            return tor_process, data_dir
+        except Exception:
+            time.sleep(1)
+    tor_process.terminate()
+    shutil.rmtree(data_dir)
+    raise RuntimeError('Tor did not start in time')
+
+def stop_tor(tor_process, data_dir):
+    if tor_process:
+        tor_process.terminate()
+        tor_process.wait()
+    if data_dir and os.path.exists(data_dir):
+        shutil.rmtree(data_dir)
 
 def _format_node_id(node_id_val: Any) -> Optional[str]:
     """Helper to consistently format node IDs to !<hex_string> or return None."""
@@ -71,10 +121,8 @@ def _format_node_id(node_id_val: Any) -> Optional[str]:
 def _extract_session_id_from_raw_chunk(message_text: str) -> Optional[str]:
     """Rudimentary attempt to extract tx_session_id for NACKs if full parsing fails."""
     try:
-        if message_text.startswith(transaction_reassembler.CHUNK_PREFIX):
-            parts = message_text[len(transaction_reassembler.CHUNK_PREFIX):].split(
-                transaction_reassembler.CHUNK_PARTS_DELIMITER
-            )
+        if message_text.startswith(CHUNK_PREFIX):
+            parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
             if len(parts) > 0 and parts[0]:
                 return parts[0]
     except Exception: # pylint: disable=broad-except
@@ -82,12 +130,13 @@ def _extract_session_id_from_raw_chunk(message_text: str) -> Optional[str]:
     return None
 
 
-def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
+def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) -> None:
     """
     Callback function to handle received Meshtastic packets.
     Filters for direct text messages, identifies transaction chunks,
     and uses TransactionReassembler to process them.
     """
+    iface = interface
     # Ensure global meshtastic_interface_instance is available if needed for replies from here
     # However, 'iface' is passed directly by pubsub, so use that for replies triggered here.
     global meshtastic_interface_instance
@@ -187,7 +236,14 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
             return
 
         if actual_portnum_str == 'TEXT_MESSAGE_APP':
+            # Robust message extraction: support both 'text' and 'payload' (see Meshtastic autoresponder.py)
             message_text = decoded_packet.get('text')
+            if not message_text and 'payload' in decoded_packet:
+                try:
+                    message_text = decoded_packet['payload'].decode('utf-8')
+                except Exception as e:
+                    server_logger.error(f"Failed to decode payload as UTF-8: {e}")
+                    message_text = None
             if not message_text:
                 server_logger.debug(
                     f"Direct text message with no text from {sender_node_id_for_reply}: {packet.get('id', 'N/A')}"
@@ -198,7 +254,17 @@ def on_receive_text_message(packet: Dict[str, Any], iface: Any) -> None:
                 f"Direct text from {sender_node_id_for_reply}: '{message_text}'"
             )
 
-            if message_text.startswith(transaction_reassembler.CHUNK_PREFIX):
+            if message_text.startswith(CHUNK_PREFIX):
+                # Log every received chunk for diagnostics
+                try:
+                    parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
+                    session_id = parts[0] if len(parts) > 0 else 'UNKNOWN'
+                    chunk_info = parts[1] if len(parts) > 1 else 'UNKNOWN'
+                    server_logger.debug(
+                        f"Received BTC_TX chunk: session_id={session_id}, chunk={chunk_info}, from={sender_node_id_for_reply}"
+                    )
+                except Exception as e:
+                    server_logger.debug(f"Failed to parse chunk info for logging: {e}")
                 server_logger.info(
                     f"Potential BTC transaction chunk from {sender_node_id_for_reply}. Processing..."
                 )
@@ -431,62 +497,63 @@ def initialize_meshtastic_interface(
         else get_meshtastic_serial_port()
 
     try:
-        # Import Meshtastic components here, so the module can load without them
         import meshtastic.serial_interface
-        from meshtastic import MeshtasticError, NoDeviceError
-
         log_port_info = f' on port {serial_port_to_use}' \
             if serial_port_to_use else ' (auto-detect)'
         server_logger.info(
             f"Attempting to initialize Meshtastic interface{log_port_info}..."
         )
-
-        iface = (
-            meshtastic.serial_interface.SerialInterface(
-                devPath=serial_port_to_use
+        try:
+            iface = (
+                meshtastic.serial_interface.SerialInterface(
+                    devPath=serial_port_to_use
+                )
+                if serial_port_to_use
+                else meshtastic.serial_interface.SerialInterface()
             )
-            if serial_port_to_use
-            else meshtastic.serial_interface.SerialInterface()
-        )
+        except FileNotFoundError as e:
+            server_logger.error(
+                f"Could not open serial device '{serial_port_to_use}': {e}. "
+                "Attempting auto-detect."
+            )
+            try:
+                iface = meshtastic.serial_interface.SerialInterface()
+            except Exception as e2:
+                server_logger.error(
+                    f"Auto-detect failed: {e2}. Please check your Meshtastic device connection."
+                )
+                return None
+        except Exception as e:
+            server_logger.error(
+                f"Unexpected error initializing Meshtastic interface: {e}"
+            )
+            return None
 
         node_num_display = "Unknown Node Num"
         if hasattr(iface, 'myInfo') and \
            iface.myInfo and \
            hasattr(iface.myInfo, 'my_node_num'):
-            # Use the same robust formatting for display
             formatted_node_id = _format_node_id(iface.myInfo.my_node_num)
             if formatted_node_id:
                 node_num_display = formatted_node_id
-            elif iface.myInfo.my_node_num is not None:  # If formatting failed
-                # Fallback to raw string or int
+            elif iface.myInfo.my_node_num is not None:
                 node_num_display = str(iface.myInfo.my_node_num)
 
         server_logger.info(
             f"Meshtastic interface initialized successfully. "
-            f"Device: {iface.devicePath}, My Node Num: {node_num_display}"
+            f"Device: {getattr(iface, 'devPath', '?')}, My Node Num: {node_num_display}"
         )
         return iface
-    except ImportError:
+    except ImportError as e:
         server_logger.error(
-            "Meshtastic library not found. Please install it "
-            "(e.g., pip install meshtastic)."
-        )
-        return None
-    except NoDeviceError:
-        server_logger.error(
-            "No Meshtastic device found. Ensure it is connected and "
-            "drivers are installed."
-        )
-        return None
-    except MeshtasticError as e:
-        server_logger.error(
-            f"Meshtastic library error during initialization: {e}"
+            f"Meshtastic library not found. Please install it (e.g., pip install meshtastic). Exception: {e}"
         )
         return None
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         server_logger.error(
-            f"An unexpected error occurred during Meshtastic "
-            f"initialization: {e}",
+            f"An unexpected error occurred during Meshtastic initialization: {e}\nTraceback:\n{tb}",
             exc_info=True
         )
         return None
@@ -500,118 +567,128 @@ def main() -> None:
     global transaction_reassembler
     server_logger.info("Starting BTC Mesh Relay Server...")
 
-    # --- Story 5.2: Load reassembly timeout from config ---
-    timeout_seconds, timeout_source = load_reassembly_timeout()
-    transaction_reassembler = TransactionReassembler(timeout_seconds=timeout_seconds)
-    server_logger.info(f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})")
-    # --- End Story 5.2 integration ---
-
-    # --- Story 4.2: Connect to Bitcoin RPC ---
+    tor_process = None
+    tor_data_dir = None
     try:
-        rpc_config = load_bitcoin_rpc_config()
-        global bitcoin_rpc
-        bitcoin_rpc = connect_bitcoin_rpc(rpc_config)
-        server_logger.info("Connected to Bitcoin Core RPC node successfully.")
-    except Exception as e:
-        bitcoin_rpc = None
-        server_logger.error(f"Failed to connect to Bitcoin Core RPC node: {e}. Continuing without RPC connection.")
-    # Store bitcoin_rpc for later use (e.g., as a global or pass to handlers)
-    # --- End Story 4.2 integration ---
+        # --- Story 5.2: Load reassembly timeout from config ---
+        timeout_seconds, timeout_source = load_reassembly_timeout()
+        transaction_reassembler = TransactionReassembler(timeout_seconds=timeout_seconds)
+        server_logger.info(f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})")
+        # --- End Story 5.2 integration ---
 
-    # initialize_meshtastic_interface will now use the config loader by default
-    meshtastic_iface = initialize_meshtastic_interface()
+        # --- Story 4.2: Connect to Bitcoin RPC ---
+        try:
+            rpc_config = load_bitcoin_rpc_config()
+            global bitcoin_rpc
+            # Tor integration: if host is .onion, start Tor and set proxy
+            rpc_host = rpc_config.get('host', '')
+            if is_onion_address(rpc_host):
+                server_logger.info(f"Bitcoin RPC host {rpc_host} is a .onion address. Starting Tor...")
+                tor_process, tor_data_dir = start_tor()
+                proxy_url = f'socks5h://localhost:{TOR_SOCKS_PORT}'
+                rpc_config['proxy'] = proxy_url
+                server_logger.info(f"Tor started. Using SOCKS proxy at {proxy_url} for Bitcoin RPC.")
+            bitcoin_rpc = connect_bitcoin_rpc(rpc_config)
+            server_logger.info("Connected to Bitcoin Core RPC node successfully.")
+        except Exception as e:
+            bitcoin_rpc = None
+            server_logger.error(f"Failed to connect to Bitcoin Core RPC node: {e}. Continuing without RPC connection.")
+        # Store bitcoin_rpc for later use (e.g., as a global or pass to handlers)
+        # --- End Story 4.2 integration ---
 
-    if not meshtastic_iface:
-        server_logger.error(
-            "Failed to initialize Meshtastic interface. Exiting."
-        )
-        return
+        # initialize_meshtastic_interface will now use the config loader by default
+        meshtastic_iface = initialize_meshtastic_interface()
 
-    try:
-        # Import pubsub here as it's part of meshtastic
-        from pubsub import pub  # PubSub library used by meshtastic
+        if not meshtastic_iface:
+            server_logger.error(
+                "Failed to initialize Meshtastic interface. Exiting."
+            )
+            return
 
-        # Register the callback for text messages
-        # The callback signature for pub.subscribe("meshtastic.receive")
-        # is typically `def callback(packet, interface)`
-        # meshtastic-python's PubSub wrapper sends `interface`
-        # as a keyword argument or second positional.
-        pub.subscribe(on_receive_text_message, "meshtastic.receive")
-        server_logger.info(
-            "Registered Meshtastic message handler. Waiting for messages..."
-        )
+        try:
+            # Import pubsub here as it's part of meshtastic
+            from pubsub import pub  # PubSub library used by meshtastic
 
-    except ImportError:
-        server_logger.error(
-            "PubSub library not found. Please install it (e.g., pip install "
-            "pypubsub). This is a dependency for Meshtastic event handling."
-        )
-        if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
-            meshtastic_iface.close()
-        return
-    except Exception as e:
-        server_logger.error(
-            f"Failed to subscribe to Meshtastic messages: {e}", exc_info=True
-        )
-        if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
-            meshtastic_iface.close()
-        return
+            # Register the callback for text messages
+            pub.subscribe(on_receive_text_message, "meshtastic.receive")
+            server_logger.info(
+                "Registered Meshtastic message handler. Waiting for messages..."
+            )
 
-    try:
-        cleanup_interval = 10  # seconds, same as sleep
-        last_cleanup_time = time.time()
+        except ImportError:
+            server_logger.error(
+                "PubSub library not found. Please install it (e.g., pip install "
+                "pypubsub). This is a dependency for Meshtastic event handling."
+            )
+            if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
+                meshtastic_iface.close()
+            return
+        except Exception as e:
+            server_logger.error(
+                f"Failed to subscribe to Meshtastic messages: {e}", exc_info=True
+            )
+            if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
+                meshtastic_iface.close()
+            return
 
-        while True:
-            current_time = time.time()
-            if current_time - last_cleanup_time >= cleanup_interval:
-                server_logger.debug("Running periodic cleanup of stale reassembly sessions...")
-                timed_out_sessions = transaction_reassembler.cleanup_stale_sessions()
-                for session_info in timed_out_sessions:
-                    nack_message = (
-                        f"BTC_NACK|{session_info['tx_session_id']}|ERROR|"
-                        f"{session_info['error_message']}"
-                    )
-                    max_nack_len = 200 # Arbitrary safe length
-                    if len(nack_message) > max_nack_len:
-                        nack_message = nack_message[:max_nack_len-3] + "..."
+        try:
+            cleanup_interval = 10  # seconds, same as sleep
+            last_cleanup_time = time.time()
 
-                    server_logger.info(
-                        f"[Sender: {session_info['sender_id_str']}, Session: {session_info['tx_session_id']}] "
-                        f"Session timed out. Sending NACK: {nack_message}"
-                    )
-                    # Ensure global instance is used here if iface is not available otherwise
-                    if meshtastic_interface_instance: 
-                        send_meshtastic_reply(
-                            meshtastic_interface_instance,
-                            session_info['sender_id_str'],
-                            nack_message,
-                            session_info['tx_session_id']
+            while True:
+                current_time = time.time()
+                if current_time - last_cleanup_time >= cleanup_interval:
+                    server_logger.debug("Running periodic cleanup of stale reassembly sessions...")
+                    timed_out_sessions = transaction_reassembler.cleanup_stale_sessions()
+                    for session_info in timed_out_sessions:
+                        nack_message = (
+                            f"BTC_NACK|{session_info['tx_session_id']}|ERROR|"
+                            f"{session_info['error_message']}"
                         )
-                    else:
-                        server_logger.error(
+                        max_nack_len = 200 # Arbitrary safe length
+                        if len(nack_message) > max_nack_len:
+                            nack_message = nack_message[:max_nack_len-3] + "..."
+
+                        server_logger.info(
                             f"[Sender: {session_info['sender_id_str']}, Session: {session_info['tx_session_id']}] "
-                            f"Cannot send timeout NACK: Meshtastic interface not available globally."
+                            f"Session timed out. Sending NACK: {nack_message}"
                         )
-                last_cleanup_time = current_time
-            
-            # Sleep for a short duration to allow other operations and not busy-wait
-            # The effective sleep will be cleanup_interval because of the check above.
-            # If more frequent checks are needed for other things, sleep less.
-            time.sleep(1.0) # Check for cleanup every second, actual cleanup every 10s.
+                        # Ensure global instance is used here if iface is not available otherwise
+                        if meshtastic_interface_instance: 
+                            send_meshtastic_reply(
+                                meshtastic_interface_instance,
+                                session_info['sender_id_str'],
+                                nack_message,
+                                session_info['tx_session_id']
+                            )
+                        else:
+                            server_logger.error(
+                                f"[Sender: {session_info['sender_id_str']}, Session: {session_info['tx_session_id']}] "
+                                f"Cannot send timeout NACK: Meshtastic interface not available globally."
+                            )
+                    last_cleanup_time = current_time
+                time.sleep(1.0) # Check for cleanup every second, actual cleanup every 10s.
+        except KeyboardInterrupt:
+            server_logger.info(
+                "Server shutting down by user request (Ctrl+C)."
+            )
+        except Exception as e:
+            server_logger.error(
+                f"Unhandled exception in main loop: {e}", exc_info=True
+            )
+        finally:
+            if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
+                server_logger.info("Closing Meshtastic interface...")
+                meshtastic_iface.close()
+            if tor_process:
+                server_logger.info("Stopping Tor process...")
+                stop_tor(tor_process, tor_data_dir)
+            server_logger.info("BTC Mesh Relay Server stopped.")
 
-    except KeyboardInterrupt:
-        server_logger.info(
-            "Server shutting down by user request (Ctrl+C)."
-        )
     except Exception as e:
         server_logger.error(
-            f"Unhandled exception in main loop: {e}", exc_info=True
+            f"Unhandled exception in main function: {e}", exc_info=True
         )
-    finally:
-        if meshtastic_iface and hasattr(meshtastic_iface, 'close'):
-            server_logger.info("Closing Meshtastic interface...")
-            meshtastic_iface.close()
-        server_logger.info("BTC Mesh Relay Server stopped.")
 
 
 if __name__ == "__main__":

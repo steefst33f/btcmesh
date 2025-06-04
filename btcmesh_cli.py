@@ -6,6 +6,7 @@ import uuid
 import os
 from core.config_loader import get_meshtastic_serial_port
 from core.logger_setup import setup_logger
+import time
 
 def is_valid_hex(s):
     try:
@@ -14,7 +15,7 @@ def is_valid_hex(s):
     except Exception:
         return False
 
-CHUNK_SIZE = 200  # hex chars (100 bytes)
+CHUNK_SIZE = 170  # hex chars (100 bytes)
 
 def chunk_transaction(tx_hex, chunk_size):
     return [tx_hex[i:i+chunk_size] for i in range(0, len(tx_hex), chunk_size)]
@@ -43,7 +44,6 @@ def initialize_meshtastic_interface_cli(port=None):
     serial_port_to_use = port if port is not None else get_meshtastic_serial_port()
     try:
         import meshtastic.serial_interface
-        from meshtastic import MeshtasticError, NoDeviceError
         log_port_info = f' on port {serial_port_to_use}' if serial_port_to_use else ' (auto-detect)'
         cli_logger.info(f"Attempting to initialize Meshtastic interface{log_port_info}...")
         iface = (
@@ -53,27 +53,16 @@ def initialize_meshtastic_interface_cli(port=None):
         node_num_display = "Unknown Node Num"
         if hasattr(iface, 'myInfo') and iface.myInfo and hasattr(iface.myInfo, 'my_node_num'):
             node_num_display = str(iface.myInfo.my_node_num)
-        cli_logger.info(f"Meshtastic interface initialized successfully. Device: {getattr(iface, 'devicePath', '?')}, My Node Num: {node_num_display}")
+        cli_logger.info(f"Meshtastic interface initialized successfully. Device: {getattr(iface, 'devPath', '?')}, My Node Num: {node_num_display}")
         return iface
     except ImportError:
         cli_logger.error("Meshtastic library not found. Please install it (e.g., pip install meshtastic).")
         return None
     except Exception as e:
-        # Try to distinguish NoDeviceError and MeshtasticError if possible
-        try:
-            from meshtastic import NoDeviceError, MeshtasticError
-            if isinstance(e, NoDeviceError):
-                cli_logger.error("No Meshtastic device found. Ensure it is connected and drivers are installed.")
-                return None
-            if isinstance(e, MeshtasticError):
-                cli_logger.error(f"Meshtastic library error during initialization: {e}")
-                return None
-        except Exception:
-            pass
         cli_logger.error(f"An unexpected error occurred during Meshtastic initialization: {e}", exc_info=True)
         return None
 
-def cli_main(args=None, injected_iface=None, injected_logger=None):
+def cli_main(args=None, injected_iface=None, injected_logger=None, injected_message_receiver=None):
     import argparse
     import sys
     import re
@@ -92,7 +81,7 @@ def cli_main(args=None, injected_iface=None, injected_logger=None):
         print(f"Arguments parsed successfully:")
         print(f"  Destination: {args.destination}")
         print(f"  Raw TX Hex: {args.tx}")
-        session_id = generate_session_id()
+        session_id = getattr(args, 'session_id', None) or generate_session_id()
         chunks = chunk_transaction(tx_hex, CHUNK_SIZE)
         total_chunks = len(chunks)
         for i, payload in enumerate(chunks, 1):
@@ -102,7 +91,7 @@ def cli_main(args=None, injected_iface=None, injected_logger=None):
     if iface is None:
         print("Failed to initialize Meshtastic interface. See logs for details.", file=sys.stderr)
         raise RuntimeError('Failed to initialize Meshtastic interface')
-    session_id = generate_session_id()
+    session_id = getattr(args, 'session_id', None) or generate_session_id()
     chunks = chunk_transaction(tx_hex, CHUNK_SIZE)
     total_chunks = len(chunks)
     for i, payload in enumerate(chunks, 1):
@@ -111,6 +100,8 @@ def cli_main(args=None, injected_iface=None, injected_logger=None):
             iface.sendText(text=msg, destinationId=args.destination)
             print(f"Sent chunk {i}/{total_chunks} for session {session_id}")
             logger.info(f"Sent chunk {i}/{total_chunks} for session {session_id} to {args.destination}")
+            if i != total_chunks:
+                time.sleep(5)
         except Exception as e:
             err_msg = f"Error sending chunk {i}/{total_chunks} for session {session_id}: {e}"
             print(err_msg, file=sys.stderr)
@@ -118,6 +109,24 @@ def cli_main(args=None, injected_iface=None, injected_logger=None):
             raise
     print(f"All transaction chunks sent for session {session_id}.")
     logger.info(f"All transaction chunks sent for session {session_id} to {args.destination}.")
+    # --- Story 6.4: Listen for ACK/NACK (minimal, testable) ---
+    if injected_message_receiver is not None:
+        for msg in injected_message_receiver(timeout=120, session_id=session_id):
+            if msg.startswith(f"BTC_ACK|{session_id}|SUCCESS|TXID:"):
+                logger.info(f"Received ACK for session {session_id}: {msg}")
+                txid = msg.split("TXID:", 1)[-1]
+                print(f"Transaction successfully broadcast by relay. TXID: {txid}")
+                return 0
+            if msg.startswith(f"BTC_NACK|{session_id}|ERROR|"):
+                logger.info(f"Received NACK for session {session_id}: {msg}")
+                error_details = msg.split("ERROR|", 1)[-1]
+                print(f"Relay reported an error: {error_details}")
+                return 1
+            # Optionally log unrelated messages for debugging
+            logger.debug(f"Received unrelated message during ACK/NACK wait: {msg}")
+        logger.warning(f"Timeout waiting for ACK/NACK for session {session_id}")
+        print(f"No acknowledgement received from relay for session {session_id}")
+        return 2
     return 0
 
 def main():
