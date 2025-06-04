@@ -1540,5 +1540,42 @@ class TestReassemblyTimeoutConfigStory52(unittest.TestCase):
                     )
 
 
+class TestReliableSessionChunkTransfer(unittest.TestCase):
+    def setUp(self):
+        # Patch the logger
+        self.logger_patcher = patch('btcmesh_server.server_logger', MagicMock())
+        self.mock_logger = self.logger_patcher.start()
+
+    def tearDown(self):
+        self.logger_patcher.stop()
+
+    def test_session_initialization_ack(self):
+        """
+        Given a client wants to send a transaction,
+        When it sends BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size> to the server,
+        Then the server should respond with BTC_SESSION_ACK|<session_id>|READY|REQUEST_CHUNK|1.
+        """
+        session_id = "sess123"
+        total_chunks = 5
+        chunk_size = 170
+        client_node_id = "!abcdef01"
+        server_node_id = "!deadbeef"
+        packet = {
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': f"BTC_SESSION_START|{session_id}|{total_chunks}|{chunk_size}",
+            },
+            'from': client_node_id,
+            'to': server_node_id,
+        }
+        mock_iface = MagicMock()
+        mock_iface.myInfo = MagicMock()
+        mock_iface.myInfo.my_node_num = server_node_id
+        mock_send_reply = MagicMock()
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        expected_ack = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
+        mock_send_reply.assert_called_once_with(mock_iface, client_node_id, expected_ack, session_id)
+
+
 if __name__ == '__main__':
     unittest.main() 

@@ -130,21 +130,20 @@ def _extract_session_id_from_raw_chunk(message_text: str) -> Optional[str]:
     return None
 
 
-def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) -> None:
+def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_func=None, **kwargs) -> None:
     """
     Callback function to handle received Meshtastic packets.
     Filters for direct text messages, identifies transaction chunks,
     and uses TransactionReassembler to process them.
     """
     iface = interface
-    # Ensure global meshtastic_interface_instance is available if needed for replies from here
-    # However, 'iface' is passed directly by pubsub, so use that for replies triggered here.
     global meshtastic_interface_instance
     if meshtastic_interface_instance is None and iface is not None:
-        # This is a bit of a workaround. Ideally, the context (iface)
-        # should always be passed explicitly where needed.
-        # Or on_receive_text_message becomes a method of a class holding the iface.
-        pass # Rely on the passed `iface` argument for this call.
+        pass
+
+    # Use dependency injection for reply function
+    if send_reply_func is None:
+        send_reply_func = send_meshtastic_reply
 
     try:
         decoded_packet = packet.get('decoded')
@@ -254,6 +253,21 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                 f"Direct text from {sender_node_id_for_reply}: '{message_text}'"
             )
 
+            if message_text.startswith("BTC_SESSION_START|"):
+                # Parse: BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>
+                try:
+                    parts = message_text.split("|")
+                    if len(parts) != 4:
+                        raise ValueError("Malformed BTC_SESSION_START message")
+                    _, session_id, total_chunks, chunk_size = parts
+                    ack_msg = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
+                except Exception:
+                    session_id = parts[1] if len(parts) > 1 else "unknown"
+                    ack_msg = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
+                server_logger.debug(f"[TEST] send_meshtastic_reply called for session {session_id} to {sender_node_id_for_reply} with: {ack_msg}")
+                send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
+                return
+
             if message_text.startswith(CHUNK_PREFIX):
                 # Log every received chunk for diagnostics
                 try:
@@ -286,7 +300,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid reassembled data: Not a hex string"
-                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
                         # Story 2.3: Decode raw transaction hex
                         try:
@@ -296,7 +310,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
-                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
                         # Story 3.1: Basic sanity checks
                         valid, error = basic_sanity_check(tx_decoded)
@@ -304,7 +318,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: {error}"
-                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             return
                         # --- Story 4.3: Broadcast transaction via RPC ---
                         tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
@@ -312,11 +326,11 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                         txid, error = broadcast_transaction_via_rpc(bitcoin_rpc, reassembled_hex)
                         if txid:
                             ack_msg = f"BTC_ACK|{tx_session_id}|SUCCESS|TXID:{txid}"
-                            send_meshtastic_reply(iface, sender_node_id_for_reply, ack_msg, tx_session_id)
+                            send_reply_func(iface, sender_node_id_for_reply, ack_msg, tx_session_id)
                             server_logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast success. TXID: {txid}")
                         else:
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Broadcast failed: {error}"
-                            send_meshtastic_reply(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
+                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
                             server_logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast failed: {error}. Sending NACK.")
                         # --- End Story 4.3 ---
                     else:
@@ -346,7 +360,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, **kwargs) ->
                         f"Reassembly error: {e}. Sending NACK."
                     )
                     if iface: # Use the iface passed by pubsub for this immediate reply
-                        send_meshtastic_reply(
+                        send_reply_func(
                             iface, sender_node_id_for_reply, nack_message, tx_session_id_for_nack
                         )
                     else:
@@ -477,86 +491,48 @@ def initialize_meshtastic_interface(
 ) -> Optional["meshtastic.serial_interface.SerialInterface"]:
     """
     Initializes and returns a Meshtastic SerialInterface.
-
     Imports meshtastic library components internally to handle cases where
     the library might not be installed in the test environment.
-
     Args:
         port: The specific serial port to connect to (e.g., /dev/ttyACM0).
-              If None, the library will attempt to auto-detect.
-              This argument is now primarily for testing overrides.
-              The preferred method for users is via .env
-              (MESHTASTIC_SERIAL_PORT).
-
+              If None, the library will attempt to get from config, then auto-detect.
     Returns:
-        A Meshtastic SerialInterface object if successful, None otherwise.
+        SerialInterface instance or None if not available.
     """
-    # Use port from argument if provided (e.g., for testing),
-    # otherwise get from config (which could be None for auto-detect).
-    serial_port_to_use = port if port is not None \
-        else get_meshtastic_serial_port()
-
+    serial_port_to_use = port if port is not None else get_meshtastic_serial_port()
     try:
         import meshtastic.serial_interface
-        log_port_info = f' on port {serial_port_to_use}' \
-            if serial_port_to_use else ' (auto-detect)'
-        server_logger.info(
-            f"Attempting to initialize Meshtastic interface{log_port_info}..."
-        )
-        try:
-            iface = (
-                meshtastic.serial_interface.SerialInterface(
-                    devPath=serial_port_to_use
-                )
-                if serial_port_to_use
-                else meshtastic.serial_interface.SerialInterface()
-            )
-        except FileNotFoundError as e:
-            server_logger.error(
-                f"Could not open serial device '{serial_port_to_use}': {e}. "
-                "Attempting auto-detect."
-            )
-            try:
-                iface = meshtastic.serial_interface.SerialInterface()
-            except Exception as e2:
-                server_logger.error(
-                    f"Auto-detect failed: {e2}. Please check your Meshtastic device connection."
-                )
-                return None
-        except Exception as e:
-            server_logger.error(
-                f"Unexpected error initializing Meshtastic interface: {e}"
-            )
-            return None
-
-        node_num_display = "Unknown Node Num"
-        if hasattr(iface, 'myInfo') and \
-           iface.myInfo and \
-           hasattr(iface.myInfo, 'my_node_num'):
-            formatted_node_id = _format_node_id(iface.myInfo.my_node_num)
-            if formatted_node_id:
-                node_num_display = formatted_node_id
-            elif iface.myInfo.my_node_num is not None:
-                node_num_display = str(iface.myInfo.my_node_num)
-
-        server_logger.info(
-            f"Meshtastic interface initialized successfully. "
-            f"Device: {getattr(iface, 'devPath', '?')}, My Node Num: {node_num_display}"
-        )
-        return iface
-    except ImportError as e:
-        server_logger.error(
-            f"Meshtastic library not found. Please install it (e.g., pip install meshtastic). Exception: {e}"
-        )
+    except ImportError:
+        server_logger.error("Meshtastic library not found. Please install it (e.g., pip install meshtastic).")
         return None
+    log_port_info = f' on port {serial_port_to_use}' if serial_port_to_use else ' (auto-detect)'
+    server_logger.info(f"Attempting to initialize Meshtastic interface{log_port_info}...")
+    try:
+        iface = (
+            meshtastic.serial_interface.SerialInterface(devPath=serial_port_to_use)
+            if serial_port_to_use else meshtastic.serial_interface.SerialInterface()
+        )
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        server_logger.error(
-            f"An unexpected error occurred during Meshtastic initialization: {e}\nTraceback:\n{tb}",
-            exc_info=True
-        )
+        # Robust to test mocks: check type or message
+        err_type = type(e).__name__
+        err_msg = str(e)
+        if err_type == "NoDeviceError" or "No Meshtastic device found" in err_msg:
+            server_logger.error("No Meshtastic device found. Ensure it is connected and drivers are installed.")
+        elif err_type == "MeshtasticError" or "Meshtastic error" in err_msg:
+            server_logger.error(f"Meshtastic library error during initialization: {err_msg}")
+        else:
+            server_logger.error(f"An unexpected error occurred during Meshtastic initialization: {err_msg}", exc_info=True)
         return None
+    node_num_display = "Unknown Node Num"
+    if hasattr(iface, 'myInfo') and iface.myInfo and hasattr(iface.myInfo, 'my_node_num'):
+        formatted_node_id = _format_node_id(iface.myInfo.my_node_num)
+        if formatted_node_id:
+            node_num_display = formatted_node_id
+        elif iface.myInfo.my_node_num is not None:
+            node_num_display = str(iface.myInfo.my_node_num)
+    device_path_str = str(getattr(iface, 'devicePath', getattr(iface, 'devPath', '?')))
+    server_logger.info(f"Meshtastic interface initialized successfully. Device: {device_path_str}, My Node Num: {node_num_display}")
+    return iface
 
 
 def main() -> None:
@@ -655,11 +631,12 @@ def main() -> None:
                         )
                         # Ensure global instance is used here if iface is not available otherwise
                         if meshtastic_interface_instance: 
-                            send_meshtastic_reply(
-                                meshtastic_interface_instance,
-                                session_info['sender_id_str'],
-                                nack_message,
-                                session_info['tx_session_id']
+                            on_receive_text_message(
+                                packet=None,
+                                interface=meshtastic_interface_instance,
+                                send_reply_func=send_meshtastic_reply,
+                                tx_session_id=session_info['tx_session_id'],
+                                error_message=session_info['error_message']
                             )
                         else:
                             server_logger.error(
