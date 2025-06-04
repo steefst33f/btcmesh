@@ -500,23 +500,30 @@ def send_meshtastic_reply(
         # The sendText method expects the destination node ID.
         # SerialInterface.getNode(nodeId) is used to find the node object.
         # If `destination_id` is `!node_hex_id`, getNode should resolve it.
-        node = iface.getNode(destination_id)
-        if not node:
-            server_logger.error(
-                f"{log_prefix}Node {destination_id} not found in mesh. "
-                f"Cannot send reply: '{message_text}'"
-            )
-            return False
+        # node = iface.getNode(destination_id) # DIAGNOSTIC: Temporarily bypass getNode
+        # if not node:
+        #     server_logger.error(
+        #         f"{log_prefix}Node {destination_id} not found in mesh. "
+        #         f"Cannot send reply: '{message_text}'"
+        #     )
+        #     return False
 
-        # node.sendText() is the preferred way if we have the node object
-        node.sendText(
-            text=message_text,
-            wantAck=False  # Set to True if we want link-layer ACK
-        )
+        # node.sendText( # DIAGNOSTIC: Temporarily bypass getNode
+        #     text=message_text,
+        #     wantAck=False  # Set to True if we want link-layer ACK
+        # )
         # Typically, it queues for sending.
 
+        # DIAGNOSTIC: Use direct sendText with destinationId
+        iface.sendText(
+            text=message_text,
+            destinationId=destination_id, # destination_id should be in '!<hex_id>' format
+            wantAck=False # Set to True if we want link-layer ACK
+        )
+        # End DIAGNOSTIC change
+
         server_logger.info(
-            f"{log_prefix}Successfully sent reply to {destination_id}: "
+            f"{log_prefix}Successfully queued reply to {destination_id}: " # Changed "sent" to "queued"
             f"'{message_text}'"
         )
         return True
