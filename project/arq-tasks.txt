@@ -89,13 +89,14 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
         - [x] *   **Then** it tracks and processes each session independently.
     *   _Note: All protocol and business logic tests for concurrent sessions are passing._
 
-- [ ] **Story 8.6: Chunk Size and Payload Limit**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
-    - [ ] *   **So that** each message fits within the Meshtastic payload size limit.
-        - [ ] *   **Given** a transaction to send,
-        - [ ] *   **When** the client splits it into chunks,
-        - [ ] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
+- [x] **Story 8.6: Chunk Size and Payload Limit**
+    - [x] *   **As a** client,
+    - [x] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
+    - [x] *   **So that** each message fits within the Meshtastic payload size limit.
+        - [x] *   **Given** a transaction to send,
+        - [x] *   **When** the client splits it into chunks,
+        - [x] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
+    *   _Note: All CLI and protocol tests for chunk size enforcement are passing in non-interactive mode._
 
 - [ ] **Story 8.7: ACK/NACK and Error Handling**
     - [ ] *   **As a** server,
