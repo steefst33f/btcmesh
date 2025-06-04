@@ -62,64 +62,41 @@ lora/
         - [x] *   **And** logs the successful initialization.
     *   _Note: Serial port is configurable via `MESHTASTIC_SERIAL_PORT` in `.env` file. Implemented `core/config_loader.py`._
 
-- [x] **Story 1.2: Server requests and receives chunk 1 from client, ACKs, and requests next chunk**
-    - [x] *   **As a** server,
-    - [x] *   **I want** to request chunk 1 after session initialization, receive it, ACK it, and request chunk 2,
-    - [x] *   **So that** the client only sends the next chunk after the previous is received and processed.
-        - [x] *   **Given** a session is initialized and the server has requested chunk 1,
-        - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
-        - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
+- [x] **Story 1.2: Receive and Identify Transaction Chunks (Relay Device - `btcmesh-server.py`)**
+- [x] *   **As a** relay system (`btcmesh-server.py`),
+- [x] *   **I want** to listen for and identify incoming direct messages that are part of a chunked Bitcoin transaction,
+- [x] *   **So that** I can process them for reassembly.
+    - [x] *   **Scenario:** Incoming Meshtastic DM with transaction chunk prefix
+        - [x] *   **Given** the Meshtastic interface is initialized and listening.
+        - [x] *   **When** a direct message starting with "BTC_TX|" is received (and addressed to the server).
+        - [x] *   **Then** the message is identified as a potential transaction chunk.
+        - [x] *   **And** its payload and sender ID are captured for reassembly processing (payload stored in `TRX_CHUNK_BUFFER`).
+        - [x] *   **And** the event is logged.
+    - [x] *   **Scenario:** Incoming standard Meshtastic DM (non-transaction chunk)
+        - [x] *   **Given** the Meshtastic interface is initialized and listening.
+        - [x] *   **When** a direct message *not* starting with "BTC_TX|" is received (and addressed to the server).
+        - [x] *   **Then** the message is processed according to standard Meshtastic DM handling (logged as standard DM).
+    - [x] *   **Scenario:** Non-text message received
+        - [x] *   **Given** the Meshtastic interface is listening.
+        - [x] *   **When** a non-text message (e.g., position update) is received as a DM to the server.
+        - [x] *   **Then** the message is logged as an irrelevant DM type and ignored for transaction processing.
+    *   _Note: Implemented `on_receive_text_message` callback and `TRX_CHUNK_BUFFER` placeholder. Server now only processes direct messages addressed to it._
 
-- [x] **Story 1.3: Timeout and Retries**
-    - [x] *   **As a** client or server,
-    - [x] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
-    - [x] *   **So that** transient losses do not cause session failure.
-        - [x] *   **Given** a message is sent and not acknowledged within 30 seconds,
-        - [x] *   **When** the sender retries up to 3 times,
-        - [x] *   **Then** the session continues if a response is received, or aborts after 3 failures.
-
-- [x] **Story 1.4: Session Abort**
-    - [x] *   **As a** client or server,
-    - [x] *   **I want** to abort a session with a reason,
-    - [x] *   **So that** both sides can clean up and notify the user of failure.
-        - [x] *   **Given** a session is active,
-        - [x] *   **When** either side sends `BTC_SESSION_ABORT|<session_id>|<reason>`,
-        - [x] *   **Then** the other side stops processing and logs the abort.
-    *   _Note: All protocol and business logic tests for abort are passing._
-
-- [ ] **Story 1.5: Multiple Concurrent Sessions**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to handle multiple concurrent sessions from different clients,
-    - [ ] *   **So that** multiple users can upload transactions in parallel.
-        - [ ] *   **Given** multiple clients initiate sessions with unique IDs,
-        - [ ] *   **When** the server receives messages,
-        - [ ] *   **Then** it tracks and processes each session independently.
-
-- [ ] **Story 1.6: Chunk Size and Payload Limit**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
-    - [ ] *   **So that** each message fits within the Meshtastic payload size limit.
-        - [ ] *   **Given** a transaction to send,
-        - [ ] *   **When** the client splits it into chunks,
-        - [ ] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
-
-- [ ] **Story 1.7: ACK/NACK and Error Handling**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to ACK each valid chunk and NACK invalid or duplicate chunks,
-    - [ ] *   **So that** the client can retry or abort as needed.
-        - [ ] *   **Given** a chunk is received,
-        - [ ] *   **When** it is valid and in order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK`.
-        - [ ] *   **When** it is invalid or out of order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_NACK|<session_id>|<chunk_number>|ERROR|<reason>`.
-
-- [ ] **Story 1.8: End-to-End Test (TDD/BDD)**
-    - [ ] *   **As a** developer,
-    - [ ] *   **I want** to verify the full protocol with simulated packet loss and reordering,
-    - [ ] *   **So that** the implementation is robust and reliable.
-        - [ ] *   **Given** a simulated lossy channel,
-        - [ ] *   **When** a client sends a transaction using the protocol,
-        - [ ] *   **Then** the server receives and reassembles the transaction correctly, or aborts with a clear error.
+- [x] **Story 1.3: Send Reply via DM (Relay Device - `btcmesh-server.py`)**
+- [x] *   **As a** relay system (`btcmesh-server.py`),
+- [x] *   **I want** to send a reply message to the original sender via Meshtastic DM,
+- [x] *   **So that** the user (via `btcmesh-cli.py` or directly) receives feedback on their transaction submission.
+    - [x] *   **Scenario:** Sending a success message after broadcast
+        - [x] *   **Given** a `tx_session_id` from a successfully reassembled and broadcasted transaction, the original sender ID, and the Bitcoin transaction TXID.
+        - [x] *   **When** the system needs to send feedback.
+        - [x] *   **Then** a direct message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is sent to the sender ID.
+        - [x] *   **And** the sent message is logged.
+    - [x] *   **Scenario:** Sending an error message (e.g., reassembly failed, validation failed, RPC error)
+        - [x] *   **Given** a `tx_session_id` (if available), sender ID, and a specific error message string.
+        - [x] *   **When** the system needs to send error feedback.
+        - [x] *   **Then** a direct message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is sent to the sender ID.
+        - [x] *   **And** the sent message is logged.
+    *   _Note: Implemented `send_meshtastic_reply(iface, destination_id, message_text, tx_session_id)` in `btcmesh_server.py`. Unit tests cover successful sends, various error conditions (invalid destination, node not found, send exceptions), and logging. Actual invocation points for replies will be added in subsequent stories (transaction processing, RPC interaction)._
 
 ### 2. Transaction Payload Handling (Relay Device - `btcmesh-server.py`)
 
@@ -260,80 +237,3 @@ lora/
 
 ---
 
-# EPIC: Reliable Chunked Transaction Relay Protocol for LoRa/Meshtastic
-
-**Goal:**
-Ensure reliable, in-order, lossless transmission of large Bitcoin transactions over unreliable LoRa/Meshtastic links using a stop-and-wait ARQ protocol.
-
----
-
-## Stories (Current/Ongoing)
-
-### 8. Reliable Session-Based Chunk Transfer
-
-- [x] **Story 8.1: Session Initialization (Client/Server)**
-    - [x] *   **As a** client,
-    - [x] *   **I want** to initiate a session with a unique session ID, total chunk count, and chunk size,
-    - [x] *   **So that** the server can prepare to receive a new transaction in chunks.
-        - [x] *   **Given** the client has a transaction to send,
-        - [x] *   **When** it sends `BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>` to the server,
-        - [x] *   **Then** the server responds with `BTC_SESSION_ACK|<session_id>|READY|REQUEST_CHUNK|1`.
-
-- [x] **Story 8.2: Server requests and receives chunk 1 from client, ACKs, and requests next chunk**
-    - [x] *   **As a** server,
-    - [x] *   **I want** to request chunk 1 after session initialization, receive it, ACK it, and request chunk 2,
-    - [x] *   **So that** the client only sends the next chunk after the previous is received and processed.
-        - [x] *   **Given** a session is initialized and the server has requested chunk 1,
-        - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
-        - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
-
-- [x] **Story 8.3: Timeout and Retries**
-    - [x] *   **As a** client or server,
-    - [x] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
-    - [x] *   **So that** transient losses do not cause session failure.
-        - [x] *   **Given** a message is sent and not acknowledged within 30 seconds,
-        - [x] *   **When** the sender retries up to 3 times,
-        - [x] *   **Then** the session continues if a response is received, or aborts after 3 failures.
-
-- [x] **Story 8.4: Session Abort**
-    - [x] *   **As a** client or server,
-    - [x] *   **I want** to abort a session with a reason,
-    - [x] *   **So that** both sides can clean up and notify the user of failure.
-        - [x] *   **Given** a session is active,
-        - [x] *   **When** either side sends `BTC_SESSION_ABORT|<session_id>|<reason>`,
-        - [x] *   **Then** the other side stops processing and logs the abort.
-    *   _Note: All protocol and business logic tests for abort are passing._
-
-- [ ] **Story 8.5: Multiple Concurrent Sessions**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to handle multiple concurrent sessions from different clients,
-    - [ ] *   **So that** multiple users can upload transactions in parallel.
-        - [ ] *   **Given** multiple clients initiate sessions with unique IDs,
-        - [ ] *   **When** the server receives messages,
-        - [ ] *   **Then** it tracks and processes each session independently.
-
-- [ ] **Story 8.6: Chunk Size and Payload Limit**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
-    - [ ] *   **So that** each message fits within the Meshtastic payload size limit.
-        - [ ] *   **Given** a transaction to send,
-        - [ ] *   **When** the client splits it into chunks,
-        - [ ] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
-
-- [ ] **Story 8.7: ACK/NACK and Error Handling**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to ACK each valid chunk and NACK invalid or duplicate chunks,
-    - [ ] *   **So that** the client can retry or abort as needed.
-        - [ ] *   **Given** a chunk is received,
-        - [ ] *   **When** it is valid and in order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK`.
-        - [ ] *   **When** it is invalid or out of order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_NACK|<session_id>|<chunk_number>|ERROR|<reason>`.
-
-- [ ] **Story 8.8: End-to-End Test (TDD/BDD)**
-    - [ ] *   **As a** developer,
-    - [ ] *   **I want** to verify the full protocol with simulated packet loss and reordering,
-    - [ ] *   **So that** the implementation is robust and reliable.
-        - [ ] *   **Given** a simulated lossy channel,
-        - [ ] *   **When** a client sends a transaction using the protocol,
-        - [ ] *   **Then** the server receives and reassembles the transaction correctly, or aborts with a clear error.

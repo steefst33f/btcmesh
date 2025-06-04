@@ -106,10 +106,10 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
         - [x] *   **Given** an invalid or duplicate chunk, **When** received, **Then** NACK is sent with error details.
     *   _Note: All ACK/NACK and error handling protocol tests are passing._
 
-- [ ] **Story 8.8: End-to-End Integration Test**
-    - [ ] *   **As a** developer,
-    - [ ] *   **I want** an end-to-end test covering the full chunked relay flow,
-    - [ ] *   **So that** I can verify the protocol works in practice.
+- [x] **Story 8.8: End-to-End Integration Test**
+    - [x] *   **As a** developer,
+    - [x] *   **I want** an end-to-end test covering the full chunked relay flow,
+    - [x] *   **So that** I can verify the protocol works in practice.
 
 ### 8A. CLI Stop-and-Wait ARQ Refactor
 
@@ -138,7 +138,7 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
     - [x] *   **I want** clear feedback and logs for each chunk sent, ACK/NACK received, retries, and aborts,
     - [x] *   **So that** I can understand the session progress and diagnose issues.
 
-- [ ] **Story 8A.5: End-to-End Protocol Compliance Test Harness**
-    - [ ] *   **As a** developer,
-    - [ ] *   **I want** an end-to-end test harness for the CLI and server,
-    - [ ] *   **So that** I can verify protocol compliance in real and simulated environments.
+- [x] **Story 8A.5: End-to-End Protocol Compliance Test Harness**
+    - [x] *   **As a** developer,
+    - [x] *   **I want** an end-to-end test harness for the CLI and server,
+    - [x] *   **So that** I can verify protocol compliance in real and simulated environments.
