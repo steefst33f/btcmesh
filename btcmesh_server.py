@@ -268,6 +268,26 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                 send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
                 return
 
+            if message_text.startswith("BTC_CHUNK|"):
+                # Parse: BTC_CHUNK|<session_id>|<chunk_number>/<total_chunks>|<hex_payload>
+                try:
+                    parts = message_text.split("|", 3)
+                    if len(parts) != 4:
+                        raise ValueError("Malformed BTC_CHUNK message")
+                    _, session_id, chunk_info, hex_payload = parts
+                    chunk_number, total_chunks = chunk_info.split("/")
+                    chunk_number = int(chunk_number)
+                    total_chunks = int(total_chunks)
+                    # Always format sender node ID for reply
+                    sender_node_id_for_reply = _format_node_id(packet.get('from') or packet.get('fromId'))
+                    if chunk_number == 1:
+                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+                        send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
+                        return
+                except Exception as e:
+                    server_logger.error(f"Failed to parse BTC_CHUNK message: {e}")
+                    return
+
             if message_text.startswith(CHUNK_PREFIX):
                 # Log every received chunk for diagnostics
                 try:

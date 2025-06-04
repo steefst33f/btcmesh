@@ -60,41 +60,63 @@ lora/
         - [x] *   **And** logs the successful initialization.
     *   _Note: Serial port is configurable via `MESHTASTIC_SERIAL_PORT` in `.env` file. Implemented `core/config_loader.py`._
 
-- [x] **Story 1.2: Receive and Identify Transaction Chunks (Relay Device - `btcmesh-server.py`)**
-- [x] *   **As a** relay system (`btcmesh-server.py`),
-- [x] *   **I want** to listen for and identify incoming direct messages that are part of a chunked Bitcoin transaction,
-- [x] *   **So that** I can process them for reassembly.
-    - [x] *   **Scenario:** Incoming Meshtastic DM with transaction chunk prefix
-        - [x] *   **Given** the Meshtastic interface is initialized and listening.
-        - [x] *   **When** a direct message starting with "BTC_TX|" is received (and addressed to the server).
-        - [x] *   **Then** the message is identified as a potential transaction chunk.
-        - [x] *   **And** its payload and sender ID are captured for reassembly processing (payload stored in `TRX_CHUNK_BUFFER`).
-        - [x] *   **And** the event is logged.
-    - [x] *   **Scenario:** Incoming standard Meshtastic DM (non-transaction chunk)
-        - [x] *   **Given** the Meshtastic interface is initialized and listening.
-        - [x] *   **When** a direct message *not* starting with "BTC_TX|" is received (and addressed to the server).
-        - [x] *   **Then** the message is processed according to standard Meshtastic DM handling (logged as standard DM).
-    - [x] *   **Scenario:** Non-text message received
-        - [x] *   **Given** the Meshtastic interface is listening.
-        - [x] *   **When** a non-text message (e.g., position update) is received as a DM to the server.
-        - [x] *   **Then** the message is logged as an irrelevant DM type and ignored for transaction processing.
-    *   _Note: Implemented `on_receive_text_message` callback and `TRX_CHUNK_BUFFER` placeholder. Server now only processes direct messages addressed to it._
+- [x] **Story 1.2: Server requests and receives chunk 1 from client, ACKs, and requests next chunk**
+    - [x] *   **As a** server,
+    - [x] *   **I want** to request chunk 1 after session initialization, receive it, ACK it, and request chunk 2,
+    - [x] *   **So that** the client only sends the next chunk after the previous is received and processed.
+        - [x] *   **Given** a session is initialized and the server has requested chunk 1,
+        - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
+        - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
 
-- [x] **Story 1.3: Send Reply via DM (Relay Device - `btcmesh-server.py`)**
-- [x] *   **As a** relay system (`btcmesh-server.py`),
-- [x] *   **I want** to send a reply message to the original sender via Meshtastic DM,
-- [x] *   **So that** the user (via `btcmesh-cli.py` or directly) receives feedback on their transaction submission.
-    - [x] *   **Scenario:** Sending a success message after broadcast
-        - [x] *   **Given** a `tx_session_id` from a successfully reassembled and broadcasted transaction, the original sender ID, and the Bitcoin transaction TXID.
-        - [x] *   **When** the system needs to send feedback.
-        - [x] *   **Then** a direct message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is sent to the sender ID.
-        - [x] *   **And** the sent message is logged.
-    - [x] *   **Scenario:** Sending an error message (e.g., reassembly failed, validation failed, RPC error)
-        - [x] *   **Given** a `tx_session_id` (if available), sender ID, and a specific error message string.
-        - [x] *   **When** the system needs to send error feedback.
-        - [x] *   **Then** a direct message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is sent to the sender ID.
-        - [x] *   **And** the sent message is logged.
-    *   _Note: Implemented `send_meshtastic_reply(iface, destination_id, message_text, tx_session_id)` in `btcmesh_server.py`. Unit tests cover successful sends, various error conditions (invalid destination, node not found, send exceptions), and logging. Actual invocation points for replies will be added in subsequent stories (transaction processing, RPC interaction)._
+- [ ] **Story 1.3: Timeout and Retries**
+    - [ ] *   **As a** client or server,
+    - [ ] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
+    - [ ] *   **So that** transient losses do not cause session failure.
+        - [ ] *   **Given** a message is sent and not acknowledged within 30 seconds,
+        - [ ] *   **When** the sender retries up to 3 times,
+        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+
+- [ ] **Story 1.4: Session Abort**
+    - [ ] *   **As a** client or server,
+    - [ ] *   **I want** to abort a session with a reason,
+    - [ ] *   **So that** both sides can clean up and notify the user of failure.
+        - [ ] *   **Given** a session is active,
+        - [ ] *   **When** either side sends `BTC_SESSION_ABORT|<session_id>|<reason>`,
+        - [ ] *   **Then** the other side stops processing and logs the abort.
+
+- [ ] **Story 1.5: Multiple Concurrent Sessions**
+    - [ ] *   **As a** server,
+    - [ ] *   **I want** to handle multiple concurrent sessions from different clients,
+    - [ ] *   **So that** multiple users can upload transactions in parallel.
+        - [ ] *   **Given** multiple clients initiate sessions with unique IDs,
+        - [ ] *   **When** the server receives messages,
+        - [ ] *   **Then** it tracks and processes each session independently.
+
+- [ ] **Story 1.6: Chunk Size and Payload Limit**
+    - [ ] *   **As a** client,
+    - [ ] *   **I want** to use a fixed chunk size of 170 bytes (hex payload),
+    - [ ] *   **So that** each message fits within the Meshtastic payload size limit.
+        - [ ] *   **Given** a transaction to send,
+        - [ ] *   **When** the client splits it into chunks,
+        - [ ] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
+
+- [ ] **Story 1.7: ACK/NACK and Error Handling**
+    - [ ] *   **As a** server,
+    - [ ] *   **I want** to ACK each valid chunk and NACK invalid or duplicate chunks,
+    - [ ] *   **So that** the client can retry or abort as needed.
+        - [ ] *   **Given** a chunk is received,
+        - [ ] *   **When** it is valid and in order,
+        - [ ] *   **Then** the server sends `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK`.
+        - [ ] *   **When** it is invalid or out of order,
+        - [ ] *   **Then** the server sends `BTC_CHUNK_NACK|<session_id>|<chunk_number>|ERROR|<reason>`.
+
+- [ ] **Story 1.8: End-to-End Test (TDD/BDD)**
+    - [ ] *   **As a** developer,
+    - [ ] *   **I want** to verify the full protocol with simulated packet loss and reordering,
+    - [ ] *   **So that** the implementation is robust and reliable.
+        - [ ] *   **Given** a simulated lossy channel,
+        - [ ] *   **When** a client sends a transaction using the protocol,
+        - [ ] *   **Then** the server receives and reassembles the transaction correctly, or aborts with a clear error.
 
 ### 2. Transaction Payload Handling (Relay Device - `btcmesh-server.py`)
 
@@ -191,47 +213,47 @@ lora/
     - [x] Handles and logs errors on sendText failure, aborts as needed.
     - [x] All TDD/BDD scenarios for multi-chunk, single-chunk, error, and logging are covered and passing.
 
-- [ ] **Story 6.4: Listen for Acknowledgement (`btcmesh-cli.py`) (Optional Enhancement)**
-- [ ] *   **As a** user of `btcmesh-cli.py`,
-- [ ] *   **I want** the script to listen for a confirmation message from the relay,
-- [ ] *   **So that** I know if the transaction was successfully processed or if an error occurred.
-    - [ ] *   **Scenario:** Relay sends SUCCESS acknowledgement
-        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
-        - [ ] *   **When** a message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is received from the relay.
-        - [ ] *   **Then** `btcmesh-cli.py` prints "Transaction successfully broadcast by relay. TXID: [actual_txid]" and exits.
-    - [ ] *   **Scenario:** Relay sends ERROR acknowledgement
-        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
-        - [ ] *   **When** a message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is received from the relay.
-        - [ ] *   **Then** `btcmesh-cli.py` prints "Relay reported an error: [error_details]" and exits.
-    - [ ] *   **Scenario:** Timeout waiting for acknowledgement
-        - [ ] *   **Given** `btcmesh-cli.py` has sent all chunks.
-        - [ ] *   **And** no BTC_ACK/BTC_NACK is received within a timeout period (e.g., 2 minutes).
-        - [ ] *   **When** the timeout occurs.
-        - [ ] *   **Then** `btcmesh-cli.py` prints "No acknowledgement received from relay for session <tx_session_id>" and exits.
+- [x] **Story 6.4: Listen for Acknowledgement (`btcmesh-cli.py`) (Optional Enhancement)**
+- [x] *   **As a** user of `btcmesh-cli.py`,
+- [x] *   **I want** the script to listen for a confirmation message from the relay,
+- [x] *   **So that** I know if the transaction was successfully processed or if an error occurred.
+    - [x] *   **Scenario:** Relay sends SUCCESS acknowledgement
+        - [x] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
+        - [x] *   **When** a message "BTC_ACK|<tx_session_id>|SUCCESS|TXID:[actual_txid]" is received from the relay.
+        - [x] *   **Then** `btcmesh-cli.py` prints "Transaction successfully broadcast by relay. TXID: [actual_txid]" and exits.
+    - [x] *   **Scenario:** Relay sends ERROR acknowledgement
+        - [x] *   **Given** `btcmesh-cli.py` has sent all chunks for `tx_session_id`.
+        - [x] *   **When** a message "BTC_NACK|<tx_session_id>|ERROR|[error_details]" is received from the relay.
+        - [x] *   **Then** `btcmesh-cli.py` prints "Relay reported an error: [error_details]" and exits.
+    - [x] *   **Scenario:** Timeout waiting for acknowledgement
+        - [x] *   **Given** `btcmesh-cli.py` has sent all chunks.
+        - [x] *   **And** no BTC_ACK/BTC_NACK is received within a timeout period (e.g., 2 minutes).
+        - [x] *   **When** the timeout occurs.
+        - [x] *   **Then** `btcmesh-cli.py` prints "No acknowledgement received from relay for session <tx_session_id>" and exits.
 
 ### 7. End-to-End Flow (With Chunking)
 
-- [ ] **Story 7.1: Successful End-to-End Transaction Relay (Chunked)**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to use `btcmesh-cli.py` to send a valid raw Bitcoin transaction hex,
-- [ ] *   **So that** it gets chunked, sent, reassembled by the relay, broadcasted to the Bitcoin network, and I receive a confirmation with the TXID via `btcmesh-cli.py`.
-    - [ ] *   **Scenario:** User runs `btcmesh-cli.py` with a valid raw tx
-        - [ ] *   **Given** the relay device (`btcmesh-server.py`) is running and configured correctly.
-        - [ ] *   **And** the user has `btcmesh-cli.py` and a valid raw Bitcoin transaction hex.
-        - [ ] *   **When** the user executes `btcmesh-cli.py -d <relay_node_id> -tx <raw_tx_hex>`.
-        - [ ] *   **Then** `btcmesh-cli.py` connects to its Meshtastic device.
-        - [ ] *   **And** generates a `tx_session_id`.
-        - [ ] *   **And** chunks the transaction hex and sends each chunk (e.g., `BTC_TX|sess123|1/2|...`, `BTC_TX|sess123|2/2|...`) to the relay.
-        - [ ] *   **And** the relay device (`btcmesh-server.py`) receives these chunks.
-        - [ ] *   **And** the relay reassembles the complete hex string for `sess123` successfully.
-        - [ ] *   **And** the relay decodes the hex string successfully.
-        - [ ] *   **And** the relay validates the transaction structure successfully.
-        - [ ] *   **And** the relay connects to the Bitcoin RPC node.
-        - [ ] *   **And** the relay broadcasts the transaction successfully using `sendrawtransaction`.
-        - [ ] *   **And** the relay receives a TXID from the RPC node.
-        - [ ] *   **And** the relay sends a DM "BTC_ACK|sess123|SUCCESS|TXID:[actual_txid]" back to the `btcmesh-cli.py` sender's node ID.
-        - [ ] *   **And** (if Story 6.4 implemented) `btcmesh-cli.py` receives this ACK and prints the success message with TXID.
-        - [ ] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`)
+- [x] **Story 7.1: Successful End-to-End Transaction Relay (Chunked)**
+- [x] *   **As a** user,
+- [x] *   **I want** to use `btcmesh-cli.py` to send a valid raw Bitcoin transaction hex,
+- [x] *   **So that** it gets chunked, sent, reassembled by the relay, broadcasted to the Bitcoin network, and I receive a confirmation with the TXID via `btcmesh-cli.py`.
+    - [x] *   **Scenario:** User runs `btcmesh-cli.py` with a valid raw tx
+        - [x] *   **Given** the relay device (`btcmesh-server.py`) is running and configured correctly.
+        - [x] *   **And** the user has `btcmesh-cli.py` and a valid raw Bitcoin transaction hex.
+        - [x] *   **When** the user executes `btcmesh-cli.py -d <relay_node_id> -tx <raw_tx_hex>`.
+        - [x] *   **Then** `btcmesh-cli.py` connects to its Meshtastic device.
+        - [x] *   **And** generates a `tx_session_id`.
+        - [x] *   **And** chunks the transaction hex and sends each chunk (e.g., `BTC_TX|sess123|1/2|...`, `BTC_TX|sess123|2/2|...`) to the relay.
+        - [x] *   **And** the relay device (`btcmesh-server.py`) receives these chunks.
+        - [x] *   **And** the relay reassembles the complete hex string for `sess123` successfully.
+        - [x] *   **And** the relay decodes the hex string successfully.
+        - [x] *   **And** the relay validates the transaction structure successfully.
+        - [x] *   **And** the relay connects to the Bitcoin RPC node.
+        - [x] *   **And** the relay broadcasts the transaction successfully using `sendrawtransaction`.
+        - [x] *   **And** the relay receives a TXID from the RPC node.
+        - [x] *   **And** the relay sends a DM "BTC_ACK|sess123|SUCCESS|TXID:[actual_txid]" back to the `btcmesh-cli.py` sender's node ID.
+        - [x] *   **And** (if Story 6.4 implemented) `btcmesh-cli.py` receives this ACK and prints the success message with TXID.
+        - [x] *   **And** all relevant steps are logged by both `btcmesh-cli.py` and the relay device (`btcmesh-server.py`)
 
 ---
 
@@ -246,22 +268,21 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
 
 ### 1. Reliable Session-Based Chunk Transfer
 
-- [ ] **Story 1.1: Session Initialization (Client/Server)**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to initiate a session with a unique session ID, total chunk count, and chunk size,
-    - [ ] *   **So that** the server can prepare to receive a new transaction in chunks.
-        - [ ] *   **Given** the client has a transaction to send,
-        - [ ] *   **When** it sends `BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>` to the server,
-        - [ ] *   **Then** the server responds with `BTC_SESSION_ACK|<session_id>|READY|REQUEST_CHUNK|1`.
+- [x] **Story 1.1: Session Initialization (Client/Server)**
+    - [x] *   **As a** client,
+    - [x] *   **I want** to initiate a session with a unique session ID, total chunk count, and chunk size,
+    - [x] *   **So that** the server can prepare to receive a new transaction in chunks.
+        - [x] *   **Given** the client has a transaction to send,
+        - [x] *   **When** it sends `BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>` to the server,
+        - [x] *   **Then** the server responds with `BTC_SESSION_ACK|<session_id>|READY|REQUEST_CHUNK|1`.
 
-- [ ] **Story 1.2: Chunk Request and Transfer (Stop-and-Wait)**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to request each chunk in order and only after the previous chunk is received and processed,
-    - [ ] *   **So that** I can ensure reliable, in-order delivery.
-        - [ ] *   **Given** a session is active,
-        - [ ] *   **When** the server sends `BTC_CHUNK_REQUEST|<session_id>|<chunk_number>`,
-        - [ ] *   **And** the client responds with `BTC_CHUNK|<session_id>|<chunk_number>/<total_chunks>|<hex_payload>`,
-        - [ ] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK` and requests the next chunk.
+- [x] **Story 1.2: Server requests and receives chunk 1 from client, ACKs, and requests next chunk**
+    - [x] *   **As a** server,
+    - [x] *   **I want** to request chunk 1 after session initialization, receive it, ACK it, and request chunk 2,
+    - [x] *   **So that** the client only sends the next chunk after the previous is received and processed.
+        - [x] *   **Given** a session is initialized and the server has requested chunk 1,
+        - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
+        - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
 
 - [ ] **Story 1.3: Timeout and Retries**
     - [ ] *   **As a** client or server,

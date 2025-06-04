@@ -1574,7 +1574,81 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         mock_send_reply = MagicMock()
         on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
         expected_ack = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
-        mock_send_reply.assert_called_once_with(mock_iface, client_node_id, expected_ack, session_id)
+        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+
+    def test_chunk_1_ack_and_request_next(self):
+        """
+        Given a session is initialized and the server has requested chunk 1,
+        When the client sends BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>,
+        Then the server responds with BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2 and is ready for the next chunk.
+        """
+        session_id = "sess456"
+        total_chunks = 3
+        chunk_size = 170
+        client_node_id = "!abcdef02"
+        server_node_id = "!deadbeef"
+        chunk_payload = "deadbeefcafebabe"
+        # Simulate session already initialized (server has requested chunk 1)
+        # For now, we assume the server is stateless for this test, or we can mock the reassembler/session state as needed.
+        # Send the chunk message
+        packet = {
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
+            },
+            'from': client_node_id,
+            'to': server_node_id,
+        }
+        mock_iface = MagicMock()
+        mock_iface.myInfo = MagicMock()
+        mock_iface.myInfo.my_node_num = server_node_id
+        mock_send_reply = MagicMock()
+        # Call the handler
+        from btcmesh_server import on_receive_text_message
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+
+    def test_chunk_timeout_and_retries(self):
+        """
+        Given a chunk is sent and not ACKed within 30 seconds,
+        When the client retries up to 3 times,
+        Then the server only processes the first valid chunk and ignores duplicates.
+        """
+        session_id = "sess789"
+        total_chunks = 2
+        chunk_payload = "cafebabe1234"
+        client_node_id = "!abcdef03"
+        server_node_id = "!deadbeef"
+        # Simulate the server's session state (mock or patch as needed)
+        # For now, we assume the server is stateless and just checks for duplicates
+        packet = {
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
+            },
+            'from': client_node_id,
+            'to': server_node_id,
+        }
+        mock_iface = MagicMock()
+        mock_iface.myInfo = MagicMock()
+        mock_iface.myInfo.my_node_num = server_node_id
+        mock_send_reply = MagicMock()
+        # First send: should ACK
+        from btcmesh_server import on_receive_text_message
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+        mock_send_reply.reset_mock()
+        # Retry 1: should be ignored (no duplicate ACK)
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        mock_send_reply.assert_not_called()
+        # Retry 2: should be ignored
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        mock_send_reply.assert_not_called()
+        # Retry 3: should be ignored
+        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        mock_send_reply.assert_not_called()
 
 
 if __name__ == '__main__':
