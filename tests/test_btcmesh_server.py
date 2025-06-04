@@ -1670,13 +1670,96 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         mock_iface.myInfo.my_node_num = server_node_id
         mock_send_reply = MagicMock()
         with patch('btcmesh_server.server_logger') as mock_logger:
-            on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+            on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply, logger=mock_logger)
             # Should log the abort reason
             mock_logger.info.assert_any_call(
                 f"Session {session_id} aborted by {client_node_id}: {abort_reason}"
             )
             # Should not send any reply
             mock_send_reply.assert_not_called()
+
+
+class TestMultipleConcurrentSessions(unittest.TestCase):
+    def setUp(self):
+        # Patch the logger
+        self.patcher_logger = patch('btcmesh_server.server_logger', MagicMock())
+        self.mock_logger = self.patcher_logger.start()
+
+        # Patch the transaction reassembler instance that is used in btcmesh_server
+        self.patcher_reassembler = patch(
+            'btcmesh_server.transaction_reassembler', autospec=True
+        )
+        self.mock_reassembler = self.patcher_reassembler.start()
+        self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX
+
+        # Patch send_meshtastic_reply
+        self.patcher_send_reply = patch(
+            'btcmesh_server.send_meshtastic_reply', autospec=True
+        )
+        self.mock_send_reply = self.patcher_send_reply.start()
+
+        # Patch _extract_session_id_from_raw_chunk
+        self.patcher_extract_id = patch(
+            'btcmesh_server._extract_session_id_from_raw_chunk', autospec=True
+        )
+        self.mock_extract_id = self.patcher_extract_id.start()
+
+        # Create a mock Meshtastic interface instance
+        self.mock_iface = MagicMock()
+        self.mock_iface.myInfo = MagicMock()
+        self.mock_iface.myInfo.my_node_num = 0xabcdef  # Server's node number
+
+    def tearDown(self):
+        self.patcher_logger.stop()
+        self.patcher_reassembler.stop()
+        self.patcher_send_reply.stop()
+        self.patcher_extract_id.stop()
+
+    def test_multiple_sessions_are_independent(self):
+        """Test that the server tracks and reassembles multiple sessions independently."""
+        # Simulate two clients with different session IDs
+        client1_id = 0x111111
+        client2_id = 0x222222
+        session1 = "sessA"
+        session2 = "sessB"
+        chunk1a = f"{CHUNK_PREFIX}{session1}|1/2|AAA"
+        chunk1b = f"{CHUNK_PREFIX}{session1}|2/2|BBB"
+        chunk2a = f"{CHUNK_PREFIX}{session2}|1/2|XXX"
+        chunk2b = f"{CHUNK_PREFIX}{session2}|2/2|YYY"
+        # Set up the reassembler to return None for first chunk, and a hex string for the second
+        self.mock_reassembler.add_chunk.side_effect = [
+            None,  # client1, chunk1
+            None,  # client2, chunk1
+            "AAABBB",  # client1, chunk2 (reassembled)
+            "XXYYYY"   # client2, chunk2 (reassembled)
+        ]
+        # Patch _extract_session_id_from_raw_chunk to return the correct session
+        self.mock_extract_id.side_effect = [session1, session2]
+        # Interleave chunks: client1 chunk1, client2 chunk1, client1 chunk2, client2 chunk2
+        packets = [
+            {'from': client1_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk1a}, 'id': 'p1a', 'channel': 0},
+            {'from': client2_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk2a}, 'id': 'p2a', 'channel': 0},
+            {'from': client1_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk1b}, 'id': 'p1b', 'channel': 0},
+            {'from': client2_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk2b}, 'id': 'p2b', 'channel': 0},
+        ]
+        from btcmesh_server import on_receive_text_message
+        for packet in packets:
+            on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        # Assert add_chunk was called with correct sender/session for each chunk
+        expected_calls = [
+            call(client1_id, chunk1a),
+            call(client2_id, chunk2a),
+            call(client1_id, chunk1b),
+            call(client2_id, chunk2b),
+        ]
+        self.mock_reassembler.add_chunk.assert_has_calls(expected_calls)
+        # Assert that both sessions were reassembled independently (i.e., both reassembled_hex returned)
+        # The reply function should be called for each reassembly (simulate NACK for no RPC, as in other tests)
+        self.assertGreaterEqual(self.mock_send_reply.call_count, 2)
+        # Optionally, check that the correct session IDs were used in replies
+        reply_session_ids = [args[3] for args, _ in self.mock_send_reply.call_args_list]
+        self.assertIn(session1, reply_session_ids)
+        self.assertIn(session2, reply_session_ids)
 
 
 if __name__ == '__main__':
