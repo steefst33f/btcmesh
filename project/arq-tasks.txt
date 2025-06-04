@@ -119,10 +119,11 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
     - [x] *   **So that** the protocol is reliable and in-order.
     *   _Note: CLI now passes the stop-and-wait ARQ test._
 
-- [ ] **Story 8A.2: Handle NACKs and aborts, retrying or aborting as needed**
-    - [ ] *   **As a** client,
-    - [ ] *   **I want** to handle NACKs and aborts from the server, retrying or aborting as needed,
-    - [ ] *   **So that** the client can recover from errors or abort cleanly.
+- [x] **Story 8A.2: Handle NACKs and aborts, retrying or aborting as needed**
+    - [x] *   **As a** client,
+    - [x] *   **I want** to handle NACKs and aborts from the server, retrying or aborting as needed,
+    - [x] *   **So that** the client can recover from errors or abort cleanly.
+    *   _Note: CLI now passes all NACK/abort handling tests._
 
 - [ ] **Story 8A.3: Timeout and Retries on No ACK**
     - [ ] *   **As a** client,

@@ -367,5 +367,48 @@ class TestCliStopAndWaitARQ(unittest.TestCase):
         self.assertTrue(self.sent_chunks[1][0].startswith(f"BTC_TX|{self.session_id}|2/2|"))
         self.assertEqual(result, 0)
 
+class TestCliNackAndAbortHandling(unittest.TestCase):
+    def setUp(self):
+        from btcmesh_cli import cli_main
+        self.cli_main = cli_main
+        self.dest = '!abcdef12'
+        self.tx_hex = 'a' * 340  # 2 chunks of 170
+        self.session_id = 'testsession456'
+        self.sent_chunks = []
+        self.mock_iface = type('MockIface', (), {'sendText': self.mock_sendText})()
+        self.nack_msg = f"BTC_NACK|{self.session_id}|1|ERROR|Invalid chunk"
+        self.abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason"
+        self.ack_msg = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
+        self.ack2_msg = f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        self.retry_count = 0
+    def mock_sendText(self, text, destinationId):
+        self.sent_chunks.append((text, destinationId))
+    def test_nack_retries_and_aborts(self):
+        # Simulate NACK for chunk 1, 3 times, then abort
+        def message_receiver(timeout, session_id):
+            for _ in range(3):
+                yield self.nack_msg
+            yield self.abort_msg
+        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
+        with self.assertRaises(SystemExit) as cm:
+            self.cli_main(
+                args=Args,
+                injected_iface=self.mock_iface,
+                injected_message_receiver=message_receiver
+            )
+        self.assertEqual(len(self.sent_chunks), 3)  # 3 retries
+    def test_abort_message_aborts_immediately(self):
+        # Simulate abort message after first chunk
+        def message_receiver(timeout, session_id):
+            yield self.abort_msg
+        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
+        with self.assertRaises(SystemExit) as cm:
+            self.cli_main(
+                args=Args,
+                injected_iface=self.mock_iface,
+                injected_message_receiver=message_receiver
+            )
+        self.assertEqual(len(self.sent_chunks), 1)  # Only first chunk sent
+
 if __name__ == '__main__':
     unittest.main() 
