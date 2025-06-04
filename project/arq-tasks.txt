@@ -110,3 +110,34 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
     - [ ] *   **As a** developer,
     - [ ] *   **I want** an end-to-end test covering the full chunked relay flow,
     - [ ] *   **So that** I can verify the protocol works in practice.
+
+### 8A. CLI Stop-and-Wait ARQ Refactor
+
+- [x] **Story 8A.1: Send Next Chunk Only After ACK/REQUEST_CHUNK**
+    - [x] *   **As a** client,
+    - [x] *   **I want** to send the next chunk only after receiving the correct ACK/REQUEST_CHUNK from the server,
+    - [x] *   **So that** the protocol is reliable and in-order.
+    *   _Note: CLI now passes the stop-and-wait ARQ test._
+
+- [ ] **Story 8A.2: Handle NACKs and aborts, retrying or aborting as needed**
+    - [ ] *   **As a** client,
+    - [ ] *   **I want** to handle NACKs and aborts from the server, retrying or aborting as needed,
+    - [ ] *   **So that** the client can recover from errors or abort cleanly.
+
+- [ ] **Story 8A.3: Timeout and Retries on No ACK**
+    - [ ] *   **As a** client,
+    - [ ] *   **I want** to retry sending a chunk up to 3 times if no ACK is received within 30 seconds,
+    - [ ] *   **So that** transient losses do not cause session failure.
+        - [ ] *   **Given** a chunk is sent and not acknowledged within 30 seconds,
+        - [ ] *   **When** the client retries up to 3 times,
+        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+
+- [ ] **Story 8A.4: User Feedback and Logging**
+    - [ ] *   **As a** user,
+    - [ ] *   **I want** clear feedback and logs for each chunk sent, ACK/NACK received, retries, and aborts,
+    - [ ] *   **So that** I can understand the session progress and diagnose issues.
+
+- [ ] **Story 8A.5: End-to-End Protocol Compliance Test Harness**
+    - [ ] *   **As a** developer,
+    - [ ] *   **I want** an end-to-end test harness for the CLI and server,
+    - [ ] *   **So that** I can verify protocol compliance in real and simulated environments.

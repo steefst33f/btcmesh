@@ -94,21 +94,53 @@ def cli_main(args=None, injected_iface=None, injected_logger=None, injected_mess
     session_id = getattr(args, 'session_id', None) or generate_session_id()
     chunks = chunk_transaction(tx_hex, CHUNK_SIZE)
     total_chunks = len(chunks)
-    for i, payload in enumerate(chunks, 1):
-        msg = f"BTC_TX|{session_id}|{i}/{total_chunks}|{payload}"
-        try:
-            iface.sendText(text=msg, destinationId=args.destination)
-            print(f"Sent chunk {i}/{total_chunks} for session {session_id}")
-            logger.info(f"Sent chunk {i}/{total_chunks} for session {session_id} to {args.destination}")
-            if i != total_chunks:
-                time.sleep(5)
-        except Exception as e:
-            err_msg = f"Error sending chunk {i}/{total_chunks} for session {session_id}: {e}"
-            print(err_msg, file=sys.stderr)
-            logger.error(f"Error sending chunk {i}/{total_chunks} for session {session_id}", exc_info=True)
-            raise
-    print(f"All transaction chunks sent for session {session_id}.")
-    logger.info(f"All transaction chunks sent for session {session_id} to {args.destination}.")
+    if injected_message_receiver is not None and not args.dry_run:
+        # Stop-and-wait ARQ: use a single generator for all chunks
+        message_gen = injected_message_receiver(timeout=120, session_id=session_id)
+        i = 0
+        while i < total_chunks:
+            chunk_num = i + 1
+            payload = chunks[i]
+            msg = f"BTC_TX|{session_id}|{chunk_num}/{total_chunks}|{payload}"
+            try:
+                iface.sendText(text=msg, destinationId=args.destination)
+                print(f"Sent chunk {chunk_num}/{total_chunks} for session {session_id}")
+                logger.info(f"Sent chunk {chunk_num}/{total_chunks} for session {session_id} to {args.destination}")
+            except Exception as e:
+                err_msg = f"Error sending chunk {chunk_num}/{total_chunks} for session {session_id}: {e}"
+                print(err_msg, file=sys.stderr)
+                logger.error(f"Error sending chunk {chunk_num}/{total_chunks} for session {session_id}", exc_info=True)
+                raise
+            # Wait for ACK/REQUEST_CHUNK before sending next
+            try:
+                msg = next(message_gen)
+            except StopIteration:
+                print(f"Timeout or no ACK for chunk {chunk_num} of session {session_id}")
+                logger.warning(f"Timeout or no ACK for chunk {chunk_num} of session {session_id}")
+                return 2
+            print(f"[DEBUG] Received message in ARQ loop: {msg}")  # DEBUG
+            logger.debug(f"[ARQ] Received message: {msg}")
+            if msg.startswith(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|OK|REQUEST_CHUNK|"):
+                parts = msg.split("|")
+                if len(parts) >= 7 and parts[6].isdigit():
+                    next_chunk = int(parts[6])
+                    if next_chunk == chunk_num + 1:
+                        pass  # Valid ACK, proceed to next chunk
+                elif len(parts) >= 7 and parts[6] == "ALL_CHUNKS_RECEIVED":
+                    print(f"All transaction chunks sent for session {session_id}.")
+                    logger.info(f"All transaction chunks sent for session {session_id} to {args.destination}.")
+                    return 0
+            elif msg.startswith(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|OK|ALL_CHUNKS_RECEIVED"):
+                print(f"All transaction chunks sent for session {session_id}.")
+                logger.info(f"All transaction chunks sent for session {session_id} to {args.destination}.")
+                return 0
+            elif msg.startswith(f"BTC_NACK|{session_id}|{chunk_num}|ERROR|"):
+                print(f"Received NACK for chunk {chunk_num} of session {session_id}: {msg}")
+                logger.error(f"Received NACK for chunk {chunk_num} of session {session_id}: {msg}")
+                return 1
+            else:
+                logger.debug(f"Received unrelated message during chunk send: {msg}")
+            i += 1
     # --- Story 6.4: Listen for ACK/NACK (minimal, testable) ---
     if injected_message_receiver is not None:
         for msg in injected_message_receiver(timeout=120, session_id=session_id):

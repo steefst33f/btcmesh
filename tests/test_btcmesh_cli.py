@@ -333,5 +333,39 @@ class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
         # Should log all received ACK/NACK and timeouts
         pass
 
+class TestCliStopAndWaitARQ(unittest.TestCase):
+    def setUp(self):
+        from btcmesh_cli import cli_main
+        self.cli_main = cli_main
+        self.dest = '!abcdef12'
+        self.tx_hex = 'a' * 340  # 2 chunks of 170
+        self.session_id = 'testsession123'
+        self.sent_chunks = []
+        self.mock_iface = type('MockIface', (), {'sendText': self.mock_sendText})()
+        self.acks_to_send = [
+            f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2",
+            f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        ]
+        self.ack_index = 0
+    def mock_sendText(self, text, destinationId):
+        self.sent_chunks.append((text, destinationId))
+    def mock_message_receiver(self, timeout, session_id):
+        # Simulate server sending ACKs in order, one per chunk
+        while self.ack_index < len(self.acks_to_send):
+            yield self.acks_to_send[self.ack_index]
+            self.ack_index += 1
+    def test_cli_stop_and_wait_sends_chunks_in_order(self):
+        Args = type('Args', (), {'destination': self.dest, 'tx': self.tx_hex, 'session_id': self.session_id, 'dry_run': False})
+        result = self.cli_main(
+            args=Args,
+            injected_iface=self.mock_iface,
+            injected_message_receiver=self.mock_message_receiver
+        )
+        # Should send exactly 2 chunks, in order, waiting for each ACK
+        self.assertEqual(len(self.sent_chunks), 2)
+        self.assertTrue(self.sent_chunks[0][0].startswith(f"BTC_TX|{self.session_id}|1/2|"))
+        self.assertTrue(self.sent_chunks[1][0].startswith(f"BTC_TX|{self.session_id}|2/2|"))
+        self.assertEqual(result, 0)
+
 if __name__ == '__main__':
     unittest.main() 
