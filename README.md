@@ -15,6 +15,7 @@ This project is currently under development.
 *   **Bitcoin RPC Integration**: Connects to a Bitcoin Core RPC node to broadcast the validated raw transaction.
 *   **Logging**: Comprehensive logging for both server and client operations.
 *   **Client Script (`btcmesh_cli.py`)**: Implemented command-line tool (`btcmesh_cli.py`) for users to send raw transactions.
+*   **TOR**: Optionally relay the transaction to a node running inside Tor network. (.onion server)
 
 ## Project Structure
 
