@@ -143,3 +143,14 @@ python -m unittest discover -s tests -p 'test_*.py'
 ## Contributing
 
 Contributions are welcome! Please refer to the project's issue tracker and development plan in `project/tasks.txt`. Follow TDD/BDD principles when adding new features or fixing bugs. 
+
+## License
+
+This project is licensed under the MIT License.
+
+## Buy me a coffee
+Did you like it? [Buy me a coffee](https://www.buymeacoffee.com/eddieoz)
+
+[![Buy me a coffee](https://ipfs.io/ipfs/QmR6W4L3XiozMQc3EjfFeqSkcbu3cWnhZBn38z2W2FuTMZ?filename=buymeacoffee.webp)](https://www.buymeacoffee.com/eddieoz)
+
+Or drop me a tip through Lightning Network: ⚡ [zbd.gg/eddieoz](https://zbd.gg/eddieoz)
