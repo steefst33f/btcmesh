@@ -347,48 +347,21 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                     if reassembled_hex:
                         logger.info(
                             f"[Sender: {sender_node_id_for_reply}] Successfully reassembled transaction: "
-                            f"{reassembled_hex[:50]}... (len: {len(reassembled_hex)})"
+                            f"{reassembled_hex[:80]}{'...' if len(reassembled_hex) > 80 else ''} (len: {len(reassembled_hex)})"
                         )
-                        # Story 2.2: Validate hex string
-                        try:
-                            int(reassembled_hex, 16)
-                        except ValueError:
-                            logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
-                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
-                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid reassembled data: Not a hex string"
-                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
-                            return
-                        # Story 2.3: Decode raw transaction hex
-                        try:
-                            from core.transaction_parser import decode_raw_transaction_hex, basic_sanity_check
-                            tx_decoded = decode_raw_transaction_hex(reassembled_hex)
-                        except Exception as e:
-                            logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
-                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
-                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
-                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
-                            return
-                        # Story 3.1: Basic sanity checks
-                        valid, error = basic_sanity_check(tx_decoded)
-                        if not valid:
-                            logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
-                            tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
-                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: {error}"
-                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
-                            return
-                        # --- Story 4.3: Broadcast transaction via RPC ---
-                        tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
-                        global bitcoin_rpc
+
+                        # Log the full raw transaction hex before broadcasting
+                        logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Attempting to broadcast raw TX: {reassembled_hex}")
+
                         txid, error = broadcast_transaction_via_rpc(bitcoin_rpc, reassembled_hex)
                         if txid:
-                            ack_msg = f"BTC_ACK|{tx_session_id}|SUCCESS|TXID:{txid}"
-                            send_reply_func(iface, sender_node_id_for_reply, ack_msg, tx_session_id)
-                            logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast success. TXID: {txid}")
+                            ack_msg = f"BTC_ACK|{session_id}|SUCCESS|TXID:{txid}"
+                            send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
+                            logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Broadcast success. TXID: {txid}")
                         else:
-                            nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Broadcast failed: {error}"
-                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
-                            logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast failed: {error}. Sending NACK.")
-                        # --- End Story 4.3 ---
+                            nack_msg = f"BTC_NACK|{session_id}|ERROR|Broadcast failed: {error}"
+                            send_reply_func(iface, sender_node_id_for_reply, nack_msg, session_id)
+                            logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Broadcast failed: {error}. Sending NACK.")
                     else:
                         # ACK valid chunk and request next
                         if chunk_number < total_chunks:

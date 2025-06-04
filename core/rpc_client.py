@@ -63,8 +63,10 @@ class RequestsBitcoinRPC:
     def getblockchaininfo(self):
         return self._call('getblockchaininfo')
 
-    def sendrawtransaction(self, raw_tx_hex):
-        return self._call('sendrawtransaction', [raw_tx_hex])
+    def sendrawtransaction(self, raw_tx_hex, max_fee_rate=0.0):
+        # Bitcoin Core RPC sendrawtransaction takes an optional maxfeerate.
+        # Setting to 0.0 means no limit.
+        return self._call('sendrawtransaction', [raw_tx_hex, max_fee_rate])
 
 def broadcast_transaction_via_rpc(rpc, raw_tx_hex: str):
     """
@@ -75,7 +77,12 @@ def broadcast_transaction_via_rpc(rpc, raw_tx_hex: str):
     if rpc is None:
         return None, "No RPC connection"
     try:
-        txid = rpc.sendrawtransaction(raw_tx_hex)
+        # For AuthServiceProxy, python-bitcoinrpc supports maxfeerate as a keyword or positional.
+        # For RequestsBitcoinRPC, we've modified its sendrawtransaction to accept it.
+        if isinstance(rpc, RequestsBitcoinRPC):
+            txid = rpc.sendrawtransaction(raw_tx_hex, 0.0) # Pass 0.0 for no feerate limit
+        else: # AuthServiceProxy
+            txid = rpc.sendrawtransaction(raw_tx_hex, 0.0) # Pass 0.0 for no feerate limit
         return txid, None
     except JSONRPCException as e:
         msg = e.error.get('message', str(e))
