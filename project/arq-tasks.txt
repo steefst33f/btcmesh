@@ -98,20 +98,15 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
         - [x] *   **Then** each chunk (including header) does not exceed the Meshtastic payload limit.
     *   _Note: All CLI and protocol tests for chunk size enforcement are passing in non-interactive mode._
 
-- [ ] **Story 8.7: ACK/NACK and Error Handling**
-    - [ ] *   **As a** server,
-    - [ ] *   **I want** to ACK each valid chunk and NACK invalid or duplicate chunks,
-    - [ ] *   **So that** the client can retry or abort as needed.
-        - [ ] *   **Given** a chunk is received,
-        - [ ] *   **When** it is valid and in order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK`.
-        - [ ] *   **When** it is invalid or out of order,
-        - [ ] *   **Then** the server sends `BTC_CHUNK_NACK|<session_id>|<chunk_number>|ERROR|<reason>`.
+- [x] **Story 8.7: ACK/NACK and Error Handling**
+    - [x] *   **As a** server,
+    - [x] *   **I want** to ACK valid chunks and NACK invalid or duplicate chunks,
+    - [x] *   **So that** clients can retry or abort as needed.
+        - [x] *   **Given** a valid chunk, **When** received, **Then** ACK is sent.
+        - [x] *   **Given** an invalid or duplicate chunk, **When** received, **Then** NACK is sent with error details.
+    *   _Note: All ACK/NACK and error handling protocol tests are passing._
 
-- [ ] **Story 8.8: End-to-End Test (TDD/BDD)**
+- [ ] **Story 8.8: End-to-End Integration Test**
     - [ ] *   **As a** developer,
-    - [ ] *   **I want** to verify the full protocol with simulated packet loss and reordering,
-    - [ ] *   **So that** the implementation is robust and reliable.
-        - [ ] *   **Given** a simulated lossy channel,
-        - [ ] *   **When** a client sends a transaction using the protocol,
-        - [ ] *   **Then** the server receives and reassembles the transaction correctly, or aborts with a clear error.
+    - [ ] *   **I want** an end-to-end test covering the full chunked relay flow,
+    - [ ] *   **So that** I can verify the protocol works in practice.

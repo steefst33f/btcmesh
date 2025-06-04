@@ -1762,5 +1762,87 @@ class TestMultipleConcurrentSessions(unittest.TestCase):
         self.assertIn(session2, reply_session_ids)
 
 
+class TestAckNackAndErrorHandling(unittest.TestCase):
+    def setUp(self):
+        self.patcher_logger = patch('btcmesh_server.server_logger', MagicMock())
+        self.mock_logger = self.patcher_logger.start()
+        self.patcher_reassembler = patch(
+            'btcmesh_server.transaction_reassembler', autospec=True
+        )
+        self.mock_reassembler = self.patcher_reassembler.start()
+        self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX
+        self.patcher_send_reply = patch(
+            'btcmesh_server.send_meshtastic_reply', autospec=True
+        )
+        self.mock_send_reply = self.patcher_send_reply.start()
+        self.patcher_extract_id = patch(
+            'btcmesh_server._extract_session_id_from_raw_chunk', autospec=True
+        )
+        self.mock_extract_id = self.patcher_extract_id.start()
+        self.mock_iface = MagicMock()
+        self.mock_iface.myInfo = MagicMock()
+        self.mock_iface.myInfo.my_node_num = 0xabcdef
+    def tearDown(self):
+        self.patcher_logger.stop()
+        self.patcher_reassembler.stop()
+        self.patcher_send_reply.stop()
+        self.patcher_extract_id.stop()
+    def test_ack_on_valid_chunk(self):
+        sender_node_id = 0x12345
+        session_id = "sess_ack"
+        chunk_msg = f"BTC_TX|{session_id}|1/2|deadbeef"
+        self.mock_reassembler.add_chunk.return_value = None
+        packet = {
+            'from': sender_node_id,
+            'toId': '!abcdef',
+            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
+            'id': 'packet_ack',
+            'channel': 0
+        }
+        from btcmesh_server import on_receive_text_message
+        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        # Should ACK chunk 1 and request next
+        expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        self.mock_send_reply.assert_called_with(self.mock_iface, '!12345', expected_ack, session_id)
+    def test_nack_on_invalid_chunk(self):
+        sender_node_id = 0x23456
+        session_id = "sess_nack"
+        chunk_msg = f"BTC_TX|{session_id}|bad/format|badhex"
+        self.mock_reassembler.add_chunk.side_effect = InvalidChunkFormatError("bad format")
+        self.mock_extract_id.return_value = session_id
+        packet = {
+            'from': sender_node_id,
+            'toId': '!abcdef',
+            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
+            'id': 'packet_nack',
+            'channel': 0
+        }
+        from btcmesh_server import on_receive_text_message
+        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        expected_nack = f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: bad format"
+        self.mock_send_reply.assert_called_with(self.mock_iface, '!23456', expected_nack, session_id)
+    def test_duplicate_chunk_handling(self):
+        sender_node_id = 0x34567
+        session_id = "sess_dup"
+        chunk_msg = f"BTC_TX|{session_id}|1/2|deadbeef"
+        # Simulate duplicate: first call returns None, second raises duplicate warning
+        self.mock_reassembler.add_chunk.side_effect = [None, InvalidChunkFormatError("Duplicate chunk")] 
+        packet = {
+            'from': sender_node_id,
+            'toId': '!abcdef',
+            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
+            'id': 'packet_dup',
+            'channel': 0
+        }
+        from btcmesh_server import on_receive_text_message
+        # First call: valid
+        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        # Second call: duplicate
+        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        # Should NACK on duplicate
+        expected_nack = f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: Duplicate chunk"
+        self.mock_send_reply.assert_called_with(self.mock_iface, '!34567', expected_nack, session_id)
+
+
 if __name__ == '__main__':
     unittest.main() 

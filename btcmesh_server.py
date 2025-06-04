@@ -59,6 +59,9 @@ TOR_BINARY_PATH = os.path.join(os.path.dirname(__file__), 'tor', 'tor')
 TOR_SOCKS_PORT = 19050  # You can randomize or make configurable
 TOR_CONTROL_PORT = 9051  # Not strictly needed unless you want to control Tor
 
+# --- Reliable Chunked Protocol: Deduplication state ---
+PROCESSED_CHUNKS = set()  # Set of (session_id, chunk_number) tuples
+
 def is_onion_address(host):
     return host.endswith('.onion')
 
@@ -130,7 +133,7 @@ def _extract_session_id_from_raw_chunk(message_text: str) -> Optional[str]:
     return None
 
 
-def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_func=None, **kwargs) -> None:
+def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_func=None, logger=None, **kwargs) -> None:
     """
     Callback function to handle received Meshtastic packets.
     Filters for direct text messages, identifies transaction chunks,
@@ -144,11 +147,14 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
     # Use dependency injection for reply function
     if send_reply_func is None:
         send_reply_func = send_meshtastic_reply
+    # Use dependency injection for logger
+    if logger is None:
+        logger = server_logger
 
     try:
         decoded_packet = packet.get('decoded')
         if not decoded_packet:
-            server_logger.debug(
+            logger.debug(
                 f"Received packet without 'decoded' content: "
                 f"{packet.get('id', 'N/A')}"
             )
@@ -176,7 +182,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                     text_preview += "..."
             
             # For self-messages, From and To are the same (our ID)
-            server_logger.debug(
+            logger.debug(
                 f"Ignoring DM from self. From: {my_node_id}, To: {my_node_id}, "
                 f"Text: '{text_preview}'"
             )
@@ -190,7 +196,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
         destination_node_id = _format_node_id(dest_val)
 
         if not my_node_id:
-            server_logger.warning(
+            logger.warning(
                 "Could not determine or format my node ID from interface."
             )
             return
@@ -208,7 +214,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                         packet.get('from') or packet.get('fromId')
                     ) or 'UnknownSender'
                 )
-                server_logger.debug(
+                logger.debug(
                     f"Received message not for this node. To: "
                     f"{destination_node_id}, MyID: {my_node_id}, "
                     f"From: {from_node_display}"
@@ -229,7 +235,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
         sender_node_id_for_reply = _format_node_id(packet.get('from') or packet.get('fromId'))
 
         if not sender_node_id_for_reply:
-            server_logger.warning(
+            logger.warning(
                 f"Could not determine a valid sender node ID for reply from packet: {packet}. Ignoring DM."
             )
             return
@@ -241,15 +247,15 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                 try:
                     message_text = decoded_packet['payload'].decode('utf-8')
                 except Exception as e:
-                    server_logger.error(f"Failed to decode payload as UTF-8: {e}")
+                    logger.error(f"Failed to decode payload as UTF-8: {e}")
                     message_text = None
             if not message_text:
-                server_logger.debug(
+                logger.debug(
                     f"Direct text message with no text from {sender_node_id_for_reply}: {packet.get('id', 'N/A')}"
                 )
                 return
 
-            server_logger.info(
+            logger.info(
                 f"Direct text from {sender_node_id_for_reply}: '{message_text}'"
             )
 
@@ -264,8 +270,22 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                 except Exception:
                     session_id = parts[1] if len(parts) > 1 else "unknown"
                     ack_msg = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
-                server_logger.debug(f"[TEST] send_meshtastic_reply called for session {session_id} to {sender_node_id_for_reply} with: {ack_msg}")
+                logger.debug(f"[TEST] send_meshtastic_reply called for session {session_id} to {sender_node_id_for_reply} with: {ack_msg}")
                 send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
+                return
+
+            if message_text.startswith("BTC_SESSION_ABORT|"):
+                # Parse: BTC_SESSION_ABORT|<session_id>|<reason>
+                try:
+                    parts = message_text.split("|", 2)
+                    if len(parts) < 3:
+                        session_id = parts[1] if len(parts) > 1 else "unknown"
+                        reason = "No reason provided"
+                    else:
+                        _, session_id, reason = parts
+                    logger.info(f"Session {session_id} aborted by {sender_node_id_for_reply}: {reason}")
+                except Exception as e:
+                    logger.error(f"Failed to parse BTC_SESSION_ABORT message: {e}")
                 return
 
             if message_text.startswith("BTC_CHUNK|"):
@@ -278,38 +298,54 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                     chunk_number, total_chunks = chunk_info.split("/")
                     chunk_number = int(chunk_number)
                     total_chunks = int(total_chunks)
-                    # Always format sender node ID for reply
                     sender_node_id_for_reply = _format_node_id(packet.get('from') or packet.get('fromId'))
+                    # Deduplication: only process first time
+                    global PROCESSED_CHUNKS
+                    chunk_key = (session_id, chunk_number)
+                    if chunk_key in PROCESSED_CHUNKS:
+                        return  # Ignore duplicate
+                    PROCESSED_CHUNKS.add(chunk_key)
                     if chunk_number == 1:
                         ack_msg = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
                         send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
                         return
                 except Exception as e:
-                    server_logger.error(f"Failed to parse BTC_CHUNK message: {e}")
+                    logger.error(f"Failed to parse BTC_CHUNK message: {e}")
                     return
 
             if message_text.startswith(CHUNK_PREFIX):
                 # Log every received chunk for diagnostics
                 try:
+                    # Always parse session_id and chunk_info for NACK, even if add_chunk fails
                     parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
                     session_id = parts[0] if len(parts) > 0 else 'UNKNOWN'
                     chunk_info = parts[1] if len(parts) > 1 else 'UNKNOWN'
-                    server_logger.debug(
-                        f"Received BTC_TX chunk: session_id={session_id}, chunk={chunk_info}, from={sender_node_id_for_reply}"
-                    )
-                except Exception as e:
-                    server_logger.debug(f"Failed to parse chunk info for logging: {e}")
-                server_logger.info(
+                except Exception:
+                    session_id = 'UNKNOWN'
+                    chunk_info = 'UNKNOWN'
+                logger.debug(
+                    f"Received BTC_TX chunk: session_id={session_id}, chunk={chunk_info}, from={sender_node_id_for_reply}"
+                )
+                logger.info(
                     f"Potential BTC transaction chunk from {sender_node_id_for_reply}. Processing..."
                 )
                 try:
+                    chunk_number = 1
+                    total_chunks = 1
+                    try:
+                        if chunk_info and '/' in chunk_info:
+                            chunk_number, total_chunks = chunk_info.split('/')
+                            chunk_number = int(chunk_number)
+                            total_chunks = int(total_chunks)
+                    except Exception:
+                        # If chunk_info is invalid, leave chunk_number/total_chunks as 1
+                        pass
                     reassembled_hex = transaction_reassembler.add_chunk(
                         sender_raw_key_for_reassembler,
                         message_text
                     )
-
                     if reassembled_hex:
-                        server_logger.info(
+                        logger.info(
                             f"[Sender: {sender_node_id_for_reply}] Successfully reassembled transaction: "
                             f"{reassembled_hex[:50]}... (len: {len(reassembled_hex)})"
                         )
@@ -317,7 +353,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                         try:
                             int(reassembled_hex, 16)
                         except ValueError:
-                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
+                            logger.error(f"[Sender: {sender_node_id_for_reply}] Invalid reassembled data: Not a hex string. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid reassembled data: Not a hex string"
                             send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
@@ -327,7 +363,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                             from core.transaction_parser import decode_raw_transaction_hex, basic_sanity_check
                             tx_decoded = decode_raw_transaction_hex(reassembled_hex)
                         except Exception as e:
-                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
+                            logger.error(f"[Sender: {sender_node_id_for_reply}] Decoding failed: {e}. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: Decoding failed on reassembled data"
                             send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
@@ -335,7 +371,7 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                         # Story 3.1: Basic sanity checks
                         valid, error = basic_sanity_check(tx_decoded)
                         if not valid:
-                            server_logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
+                            logger.error(f"[Sender: {sender_node_id_for_reply}] Transaction failed sanity check: {error}. Sending NACK.")
                             tx_session_id = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Invalid transaction: {error}"
                             send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
@@ -347,39 +383,37 @@ def on_receive_text_message(packet: Dict[str, Any], interface=None, send_reply_f
                         if txid:
                             ack_msg = f"BTC_ACK|{tx_session_id}|SUCCESS|TXID:{txid}"
                             send_reply_func(iface, sender_node_id_for_reply, ack_msg, tx_session_id)
-                            server_logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast success. TXID: {txid}")
+                            logger.info(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast success. TXID: {txid}")
                         else:
                             nack_msg = f"BTC_NACK|{tx_session_id}|ERROR|Broadcast failed: {error}"
                             send_reply_func(iface, sender_node_id_for_reply, nack_msg, tx_session_id)
-                            server_logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast failed: {error}. Sending NACK.")
+                            logger.error(f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id}] Broadcast failed: {error}. Sending NACK.")
                         # --- End Story 4.3 ---
                     else:
-                        server_logger.info(
-                            f"Std direct text from {sender_node_id_for_reply} (not BTC_TX): '{message_text}'"
-                        )
+                        # ACK valid chunk and request next
+                        if chunk_number < total_chunks:
+                            ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|OK|REQUEST_CHUNK|{chunk_number+1}"
+                        else:
+                            ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|OK|ALL_CHUNKS_RECEIVED"
+                        send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
                 except (InvalidChunkFormatError, MismatchedTotalChunksError) as e:
+                    tx_session_id_for_nack = session_id or _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                     error_type_str = type(e).__name__.replace("Error", "").replace("Invalid", "Invalid ")
-                    
-                    tx_session_id_for_nack = _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                     nack_message_detail = f"{error_type_str}: {str(e)}"
                     nack_message = f"BTC_NACK|{tx_session_id_for_nack}|ERROR|{nack_message_detail}"
-                    
-                    max_nack_len = 200 
+                    max_nack_len = 200
                     if len(nack_message) > max_nack_len:
-                        # Truncate the detail part if overall message is too long
                         available_len_for_detail = max_nack_len - len(f"BTC_NACK|{tx_session_id_for_nack}|ERROR|...e")
                         if available_len_for_detail > 0:
                             nack_message_detail = nack_message_detail[:available_len_for_detail] + "..."
-                        else: # Fallback if even prefix is too long (unlikely)
+                        else:
                             nack_message_detail = "Error detail too long"
                         nack_message = f"BTC_NACK|{tx_session_id_for_nack}|ERROR|{nack_message_detail}"
-
-
-                    server_logger.error(
+                    logger.error(
                         f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id_for_nack}] "
-                        f"Reassembly error: {e}. Sending NACK."
+                        f"Reassembly error: {str(e)}. Sending NACK."
                     )
-                    if iface: # Use the iface passed by pubsub for this immediate reply
+                    if iface:
                         send_reply_func(
                             iface, sender_node_id_for_reply, nack_message, tx_session_id_for_nack
                         )
