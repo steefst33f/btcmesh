@@ -54,6 +54,11 @@ btcmesh/
     conda create -n btcmesh python=3.11
     conda activate btcmesh
     ```
+    Or use venv
+    ```bash
+    python -m venv env
+    source env/bin/activate
+    ```
 
 3.  **Install Dependencies**:
     ```bash
@@ -111,7 +116,6 @@ Key settings configurable in `.env`:
 Once set up and configured, you can run the BTC Mesh Relay server:
 
 ```bash
-conda activate btcmesh
 python btcmesh_server.py
 ```
 
@@ -122,7 +126,6 @@ The server will initialize the Meshtastic interface, connect to the Bitcoin RPC 
 The client script is used to send a raw Bitcoin transaction to a relay server.
 
 ```bash
-conda activate btcmesh
 python btcmesh_cli.py --destination <SERVER_NODE_ID> --tx <RAW_TRANSACTION_HEX>
 ```
 Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `btcmesh_server.py` (e.g., `!abcdef12`) and `<RAW_TRANSACTION_HEX>` with the full raw transaction hex string you intend to broadcast.
@@ -134,7 +137,6 @@ Use `python btcmesh_cli.py --help` for more options, such as `--dry-run` to simu
 To run the automated tests:
 
 ```bash
-conda activate btcmesh
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 

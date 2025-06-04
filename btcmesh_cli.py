@@ -542,62 +542,25 @@ def cli_main(
 
                     # Handle BTC_NACK
                     elif (
-                        msg_type == "BTC_NACK" and len(msg_parts) >= 4
-                    ):  # Check session already done by onReceive or earlier logic
-                        try:
-                            # For NACKs related to chunks, msg_parts[2] might be chunk_num. For general session NACKs, it might not.
-                            # Server should ideally send NACK for specific chunk if applicable.
-                            # Example format: BTC_NACK|session_id|chunk_num_if_applicable|ERROR|Detail
-                            # For this example, let's assume NACK means retry the current chunk.
-                            # More sophisticated NACKs (e.g., session level) could be handled.
-
-                            # Check if NACK is for the current chunk
-                            nack_applies_to_current_chunk = False
-                            if msg_parts[2].isdigit():
-                                msg_chunk_num_int = int(msg_parts[2])
-                                if msg_chunk_num_int == chunk_num:
-                                    nack_applies_to_current_chunk = True
-
-                            # Get error details
-                            error_detail = "|".join(
-                                msg_parts[2:]
-                            )  # Grab all parts after session_id as detail.
-                            print(
-                                f"Received NACK for session {_current_session_id} (applies to chunk {chunk_num}): {error_detail}"
+                        msg_type == "BTC_NACK" # Session ID implicitly checked by onReceive or earlier
+                    ):
+                        # Server NACKs are expected in the format: BTC_NACK|session_id|ERROR|details
+                        if len(msg_parts) >= 4 and msg_parts[2] == "ERROR":
+                            error_details_parts = msg_parts[3:]
+                            error_details = "|".join(error_details_parts)
+                            
+                            print(f"Session {_current_session_id} failed. Server NACK: {error_details}")
+                            logger.error(
+                                f"Session {_current_session_id} terminated by server NACK: {error_details}. Original message: {received_msg_text}"
                             )
+                            raise SystemExit(3) # Exit code 3 for session failure due to server NACK
+                        else:
+                            # This NACK format is unexpected from the current server implementation.
                             logger.warning(
-                                f"Received NACK for session {_current_session_id} (chunk {chunk_num}): {error_detail}. Message: {received_msg_text}"
+                                f"Malformed or unexpected BTC_NACK received in session {_current_session_id}: '{received_msg_text}'. Treating as unrecognized response."
                             )
-
-                            # If this is a broadcast NACK (after all chunks were sent), treat it as final
-                            if i >= total_chunks:
-                                logger.error(
-                                    f"Transaction broadcast failed for session {_current_session_id}: {error_detail}"
-                                )
-                                raise SystemExit(3)  # Specific exit code for broadcast failure
-
-                            # Otherwise, treat as a chunk-level NACK and retry
-                            current_retries += 1
-                            if current_retries < MAX_RETRIES:
-                                print(
-                                    f"Retrying chunk {chunk_num}/{total_chunks} (attempt {current_retries + 1} of {MAX_RETRIES}) due to NACK."
-                                )
-                                logger.warning(
-                                    f"Retrying chunk {chunk_num}/{total_chunks} (attempt {current_retries + 1} of {MAX_RETRIES}) for session {_current_session_id} due to NACK."
-                                )
-                                time.sleep(RETRY_TIMEOUT)  # Wait a bit before retrying
-                                continue  # Retry sending the same chunk
-                            else:
-                                errmsg = f"Aborting session {_current_session_id} after {MAX_RETRIES} NACKs/retries for chunk {chunk_num}/{total_chunks}."
-                                print(errmsg)
-                                logger.error(errmsg)
-                                raise SystemExit(2)  # Abort session
-                        except (ValueError, IndexError) as e:
-                            logger.warning(
-                                f"Malformed BTC_NACK received in session {_current_session_id}: '{received_msg_text}', Error: {e}"
-                            )
-                            # Treat as unrecognized, fall through to retry logic below for unrecognized.
-
+                            # Allow to fall through to the general 'unrecognized message' handling block, which will retry.
+                            pass
                     # Handle BTC_SESSION_ABORT from server
                     elif msg_type == "BTC_SESSION_ABORT":  # Session ID already checked
                         abort_reason = (
