@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Optional, Tuple, List, Any
 
-from core.logger_setup import server_logger # Assuming a logger is available
+from core.logger_setup import server_logger  # Assuming a logger is available
 
 # Constants for chunk parsing
 CHUNK_PREFIX = "BTC_TX|"
@@ -13,20 +13,28 @@ CHUNK_INDEX_TOTAL_DELIMITER = "/"
 # Default timeout for reassembly sessions in seconds
 DEFAULT_REASSEMBLY_TIMEOUT_SECONDS = 5 * 60  # 5 minutes
 
+
 class ReassemblyError(Exception):
     """Custom exception for reassembly errors."""
+
     pass
+
 
 class MismatchedTotalChunksError(ReassemblyError):
     """Raised when total_chunks differs for the same session."""
+
     pass
+
 
 class DuplicateChunkError(ReassemblyError):
     """Raised when a duplicate chunk is received."""
+
     pass
+
 
 class InvalidChunkFormatError(ReassemblyError):
     """Raised when a chunk format is invalid."""
+
     pass
 
 
@@ -34,6 +42,7 @@ class TransactionReassembler:
     """
     Manages the reassembly of chunked Bitcoin transaction messages received via Meshtastic.
     """
+
     def __init__(self, timeout_seconds: int = DEFAULT_REASSEMBLY_TIMEOUT_SECONDS):
         """
         Initializes the TransactionReassembler.
@@ -44,7 +53,7 @@ class TransactionReassembler:
         """
         self.timeout_seconds = timeout_seconds
         # Structure for active_sessions:
-        # { 
+        # {
         #   sender_id_tuple_key: {
         #       tx_session_id: {
         #           "chunks": {chunk_num: hex_payload_part},
@@ -79,7 +88,7 @@ class TransactionReassembler:
         if not message_text.startswith(CHUNK_PREFIX):
             raise InvalidChunkFormatError(f"Message does not start with {CHUNK_PREFIX}")
 
-        parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
+        parts = message_text[len(CHUNK_PREFIX) :].split(CHUNK_PARTS_DELIMITER)
         if len(parts) != 3:
             raise InvalidChunkFormatError(
                 f"Message does not have 3 parts after prefix: {parts}"
@@ -91,13 +100,19 @@ class TransactionReassembler:
 
         if not tx_session_id:
             raise InvalidChunkFormatError("tx_session_id is empty.")
-        if not hex_payload_part: # Allow empty payload for last chunk if needed by protocol?
-                                # For now, assume payload must exist. Consider if it needs to be optional.
-            server_logger.warning(f"[Session: {tx_session_id}] Received chunk with empty payload part.")
+        if (
+            not hex_payload_part
+        ):  # Allow empty payload for last chunk if needed by protocol?
+            # For now, assume payload must exist. Consider if it needs to be optional.
+            server_logger.warning(
+                f"[Session: {tx_session_id}] Received chunk with empty payload part."
+            )
             # Depending on strictness, could raise InvalidChunkFormatError here.
 
         try:
-            chunk_num_str, total_chunks_str = chunk_index_part.split(CHUNK_INDEX_TOTAL_DELIMITER)
+            chunk_num_str, total_chunks_str = chunk_index_part.split(
+                CHUNK_INDEX_TOTAL_DELIMITER
+            )
             chunk_num = int(chunk_num_str)
             total_chunks = int(total_chunks_str)
         except ValueError:
@@ -127,7 +142,7 @@ class TransactionReassembler:
         Returns:
             The reassembled hexadecimal transaction string if complete, otherwise None.
             Can also return None if an error occurs during processing the chunk (logged).
-        
+
         Raises:
             ReassemblyError (or its subclasses) for specific, potentially recoverable errors
             that the caller might want to handle (e.g., to send a NACK).
@@ -143,8 +158,8 @@ class TransactionReassembler:
         session_key = sender_id
 
         try:
-            tx_session_id, chunk_num, total_chunks, hex_payload_part = self._parse_chunk(
-                message_text
+            tx_session_id, chunk_num, total_chunks, hex_payload_part = (
+                self._parse_chunk(message_text)
             )
         except InvalidChunkFormatError as e:
             server_logger.error(
@@ -152,7 +167,7 @@ class TransactionReassembler:
             )
             # Potentially raise e here if the caller should handle it for NACK.
             # For now, just logging and returning None, or let the caller handle.
-            raise # Reraise for the caller to potentially NACK.
+            raise  # Reraise for the caller to potentially NACK.
 
         log_ctx = f"[Sender: {sender_id}, Session: {tx_session_id}]"
 
@@ -169,9 +184,9 @@ class TransactionReassembler:
                 "chunks": {},
                 "total_chunks": total_chunks,
                 "last_update_time": current_time,
-                "sender_id_str": str(sender_id) # Store original sender_id for replies
+                "sender_id_str": str(sender_id),  # Store original sender_id for replies
             }
-        
+
         session_data = sender_sessions[tx_session_id]
 
         # Check for consistency in total_chunks
@@ -194,7 +209,7 @@ class TransactionReassembler:
             )
             # Not raising DuplicateChunkError as per story requirement to ignore.
             # If strict error handling is needed for duplicates (e.g. NACK), raise here.
-            return None # Or raise DuplicateChunkError if caller should be aware
+            return None  # Or raise DuplicateChunkError if caller should be aware
 
         session_data["chunks"][chunk_num] = hex_payload_part
         session_data["last_update_time"] = current_time
@@ -216,19 +231,19 @@ class TransactionReassembler:
                     # but as a safeguard:
                     error_msg = f"{log_ctx} Reassembly failed: Missing chunk {i} despite expected completion."
                     server_logger.error(error_msg)
-                    del sender_sessions[tx_session_id] # Clean up inconsistent session
-                    raise ReassemblyError(error_msg) # Should be a specific error type
-                
+                    del sender_sessions[tx_session_id]  # Clean up inconsistent session
+                    raise ReassemblyError(error_msg)  # Should be a specific error type
+
                 reassembled_hex += session_data["chunks"][i]
-            
+
             server_logger.info(f"{log_ctx} Reassembly successful.")
             # Clean up completed session
             del sender_sessions[tx_session_id]
-            if not sender_sessions: # If no more sessions for this sender
+            if not sender_sessions:  # If no more sessions for this sender
                 del self.active_sessions[session_key]
             return reassembled_hex
 
-        return None # Not all chunks received yet
+        return None  # Not all chunks received yet
 
     def cleanup_stale_sessions(self) -> List[Dict[str, str]]:
         """
@@ -251,9 +266,12 @@ class TransactionReassembler:
 
             for tx_session_id in active_tx_ids:
                 session_data = sender_sessions[tx_session_id]
-                if current_time - session_data["last_update_time"] > self.timeout_seconds:
+                if (
+                    current_time - session_data["last_update_time"]
+                    > self.timeout_seconds
+                ):
                     original_sender_id_str = session_data.get(
-                        "sender_id_str", str(session_key) # Fallback
+                        "sender_id_str", str(session_key)  # Fallback
                     )
                     error_detail = (
                         f"Reassembly timeout after {self.timeout_seconds}s. "
@@ -264,20 +282,28 @@ class TransactionReassembler:
                         f"[Sender: {original_sender_id_str}, Session: {tx_session_id}] "
                         f"{error_detail} Discarding."
                     )
-                    timed_out_sessions_for_nack.append({
-                        "sender_id_str": original_sender_id_str,
-                        "tx_session_id": tx_session_id,
-                        "error_message": "Reassembly timeout"
-                    })
-                    stale_sender_tx_session_pairs_to_remove.append((session_key, tx_session_id))
-            
+                    timed_out_sessions_for_nack.append(
+                        {
+                            "sender_id_str": original_sender_id_str,
+                            "tx_session_id": tx_session_id,
+                            "error_message": "Reassembly timeout",
+                        }
+                    )
+                    stale_sender_tx_session_pairs_to_remove.append(
+                        (session_key, tx_session_id)
+                    )
+
         for session_key, tx_session_id in stale_sender_tx_session_pairs_to_remove:
-            if session_key in self.active_sessions and \
-               tx_session_id in self.active_sessions[session_key]:
+            if (
+                session_key in self.active_sessions
+                and tx_session_id in self.active_sessions[session_key]
+            ):
                 del self.active_sessions[session_key][tx_session_id]
-                if not self.active_sessions[session_key]: # If this sender has no more sessions
+                if not self.active_sessions[
+                    session_key
+                ]:  # If this sender has no more sessions
                     del self.active_sessions[session_key]
-        
+
         if timed_out_sessions_for_nack:
             server_logger.info(
                 f"Identified {len(timed_out_sessions_for_nack)} stale reassembly sessions for cleanup and NACK."
@@ -285,9 +311,13 @@ class TransactionReassembler:
         return timed_out_sessions_for_nack
 
     # Placeholder for a method that might be needed to get session details for NACKs
-    def get_session_sender_id_str(self, session_key: Any, tx_session_id: str) -> Optional[str]:
+    def get_session_sender_id_str(
+        self, session_key: Any, tx_session_id: str
+    ) -> Optional[str]:
         """Retrieves the original sender ID string for a session, if active."""
-        if session_key in self.active_sessions and \
-           tx_session_id in self.active_sessions[session_key]:
+        if (
+            session_key in self.active_sessions
+            and tx_session_id in self.active_sessions[session_key]
+        ):
             return self.active_sessions[session_key][tx_session_id].get("sender_id_str")
-        return None 
+        return None

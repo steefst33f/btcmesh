@@ -1,13 +1,17 @@
 import unittest
 from unittest.mock import MagicMock, call, patch, Mock
+
 # import logging # Unused
 import sys
 
 # Import the function to be tested
 from btcmesh_server import (
-    initialize_meshtastic_interface, on_receive_text_message,
-    send_meshtastic_reply, _format_node_id
+    initialize_meshtastic_interface,
+    on_receive_text_message,
+    send_meshtastic_reply,
+    _format_node_id,
 )
+
 # server_logger will be patched using its path in btcmesh_server
 
 from core.reassembler import (
@@ -15,7 +19,7 @@ from core.reassembler import (
     MismatchedTotalChunksError,
     ReassemblyError,
     CHUNK_PREFIX,  # Import CHUNK_PREFIX directly
-    TransactionReassembler
+    TransactionReassembler,
 )
 
 # Import the module to be tested AFTER mocks are in sys.modules
@@ -58,13 +62,11 @@ class TestMeshtasticInitialization(unittest.TestCase):
             self.MockMeshtasticSerialInterfaceClass
         )
 
-        self.mock_meshtastic_module.serial_interface = (
-            self.mock_serial_interface_module
-        )
+        self.mock_meshtastic_module.serial_interface = self.mock_serial_interface_module
 
         # Define mock exceptions that will be imported by the function under test
-        self.MockNoDeviceError = type('NoDeviceError', (Exception,), {})
-        self.MockMeshtasticError = type('MeshtasticError', (Exception,), {})
+        self.MockNoDeviceError = type("NoDeviceError", (Exception,), {})
+        self.MockMeshtasticError = type("MeshtasticError", (Exception,), {})
         self.mock_meshtastic_module.NoDeviceError = self.MockNoDeviceError
         self.mock_meshtastic_module.MeshtasticError = self.MockMeshtasticError
 
@@ -80,19 +82,20 @@ class TestMeshtasticInitialization(unittest.TestCase):
 
         # Patch sys.modules so that 'import meshtastic' and its sub-imports
         # get our mocks
-        self.sys_modules_patcher = patch.dict(sys.modules, {
-            'meshtastic': self.mock_meshtastic_module,
-            'meshtastic.serial_interface': self.mock_serial_interface_module,
-            'meshtastic.mesh_pb2': self.mock_mesh_pb2_module,  # For PortNum
-            'pubsub': MagicMock(),  # Mock pubsub as it's imported in main
-            'dotenv': MagicMock()  # Mock dotenv used by config_loader
-        })
+        self.sys_modules_patcher = patch.dict(
+            sys.modules,
+            {
+                "meshtastic": self.mock_meshtastic_module,
+                "meshtastic.serial_interface": self.mock_serial_interface_module,
+                "meshtastic.mesh_pb2": self.mock_mesh_pb2_module,  # For PortNum
+                "pubsub": MagicMock(),  # Mock pubsub as it's imported in main
+                "dotenv": MagicMock(),  # Mock dotenv used by config_loader
+            },
+        )
         self.sys_modules_patcher.start()
 
         # Patch the logger used within btcmesh_server
-        self.logger_patcher = patch(
-            'btcmesh_server.server_logger', MagicMock()
-        )
+        self.logger_patcher = patch("btcmesh_server.server_logger", MagicMock())
         self.mock_logger = self.logger_patcher.start()
 
         # If btcmesh_server.server_logger was used directly (it is),
@@ -100,9 +103,7 @@ class TestMeshtasticInitialization(unittest.TestCase):
         # For these tests, we mostly care about asserting calls on mock_logger.
 
         # Patch the config loader used by initialize_meshtastic_interface
-        self.config_loader_patcher = patch(
-            'btcmesh_server.get_meshtastic_serial_port'
-        )
+        self.config_loader_patcher = patch("btcmesh_server.get_meshtastic_serial_port")
         self.mock_get_serial_port_config = self.config_loader_patcher.start()
         # Default behavior: no port configured, so auto-detect is attempted
         self.mock_get_serial_port_config.return_value = None
@@ -110,12 +111,12 @@ class TestMeshtasticInitialization(unittest.TestCase):
         # Patch load_app_config in btcmesh_server module scope if called there
         # and also in core.config_loader if tests directly/indirectly call it.
         self.load_config_patcher_server = patch(
-            'btcmesh_server.load_app_config', MagicMock()
+            "btcmesh_server.load_app_config", MagicMock()
         )
         self.load_config_patcher_server.start()
 
         self.load_config_patcher_core = patch(
-            'core.config_loader.load_app_config', MagicMock()
+            "core.config_loader.load_app_config", MagicMock()
         )
         self.load_config_patcher_core.start()
 
@@ -130,12 +131,10 @@ class TestMeshtasticInitialization(unittest.TestCase):
         """Test successful init when no port is specified (arg/config) -> auto."""
         # Explicitly ensure config returns None
         self.mock_get_serial_port_config.return_value = None
-        mock_iface_instance = (
-            self.MockMeshtasticSerialInterfaceClass.return_value
-        )
-        mock_iface_instance.devicePath = '/dev/ttyUSB0'  # Example path
+        mock_iface_instance = self.MockMeshtasticSerialInterfaceClass.return_value
+        mock_iface_instance.devicePath = "/dev/ttyUSB0"  # Example path
         mock_iface_instance.myInfo = MagicMock()
-        mock_iface_instance.myInfo.my_node_num = 0xdeadbeef
+        mock_iface_instance.myInfo.my_node_num = 0xDEADBEEF
 
         iface = initialize_meshtastic_interface()  # No port argument
 
@@ -144,26 +143,22 @@ class TestMeshtasticInitialization(unittest.TestCase):
         self.MockMeshtasticSerialInterfaceClass.assert_called_once_with()
         self.mock_get_serial_port_config.assert_called_once()  # Check config
         expected_log_calls = [
+            call.info("Attempting to initialize Meshtastic interface (auto-detect)..."),
             call.info(
-                'Attempting to initialize Meshtastic interface (auto-detect)...'),
-            call.info(
-                f'Meshtastic interface initialized successfully. Device: '
-                f'{mock_iface_instance.devicePath}, My Node Num: !deadbeef')
+                f"Meshtastic interface initialized successfully. Device: "
+                f"{mock_iface_instance.devicePath}, My Node Num: !deadbeef"
+            ),
         ]
-        self.mock_logger.info.assert_has_calls(
-            expected_log_calls, any_order=False
-        )
+        self.mock_logger.info.assert_has_calls(expected_log_calls, any_order=False)
 
     def test_initialize_meshtastic_successful_with_config_port(self):
         """Test successful init when port is provided by .env config."""
-        configured_port = '/dev/ttyS0'
+        configured_port = "/dev/ttyS0"
         self.mock_get_serial_port_config.return_value = configured_port
-        mock_iface_instance = (
-            self.MockMeshtasticSerialInterfaceClass.return_value
-        )
+        mock_iface_instance = self.MockMeshtasticSerialInterfaceClass.return_value
         mock_iface_instance.devicePath = configured_port
         mock_iface_instance.myInfo = MagicMock()
-        mock_iface_instance.myInfo.my_node_num = '!configPortNode'
+        mock_iface_instance.myInfo.my_node_num = "!configPortNode"
 
         iface = initialize_meshtastic_interface()  # No port arg, use config
 
@@ -174,28 +169,26 @@ class TestMeshtasticInitialization(unittest.TestCase):
         self.mock_get_serial_port_config.assert_called_once()
         expected_log_calls = [
             call.info(
-                f'Attempting to initialize Meshtastic interface on port '
-                f'{configured_port}...'),
+                f"Attempting to initialize Meshtastic interface on port "
+                f"{configured_port}..."
+            ),
             call.info(
-                f'Meshtastic interface initialized successfully. Device: '
-                f'{mock_iface_instance.devicePath}, My Node Num: !configPortNode')
+                f"Meshtastic interface initialized successfully. Device: "
+                f"{mock_iface_instance.devicePath}, My Node Num: !configPortNode"
+            ),
         ]
-        self.mock_logger.info.assert_has_calls(
-            expected_log_calls, any_order=False
-        )
+        self.mock_logger.info.assert_has_calls(expected_log_calls, any_order=False)
 
     def test_initialize_meshtastic_successful_with_override_port(self):
         """Test successful init when port is provided by arg (overrides config)."""
-        override_port = '/dev/ttyACM1'
+        override_port = "/dev/ttyACM1"
         # Simulate a different configured port
-        self.mock_get_serial_port_config.return_value = '/dev/ttyS0'
+        self.mock_get_serial_port_config.return_value = "/dev/ttyS0"
 
-        mock_iface_instance = (
-            self.MockMeshtasticSerialInterfaceClass.return_value
-        )
+        mock_iface_instance = self.MockMeshtasticSerialInterfaceClass.return_value
         mock_iface_instance.devicePath = override_port
         mock_iface_instance.myInfo = MagicMock()
-        mock_iface_instance.myInfo.my_node_num = '!overrideNode'
+        mock_iface_instance.myInfo.my_node_num = "!overrideNode"
 
         # Port argument overrides config
         iface = initialize_meshtastic_interface(port=override_port)
@@ -208,46 +201,42 @@ class TestMeshtasticInitialization(unittest.TestCase):
         self.mock_get_serial_port_config.assert_not_called()
         expected_log_calls = [
             call.info(
-                f'Attempting to initialize Meshtastic interface on port '
-                f'{override_port}...'),
+                f"Attempting to initialize Meshtastic interface on port "
+                f"{override_port}..."
+            ),
             call.info(
-                f'Meshtastic interface initialized successfully. Device: '
-                f'{mock_iface_instance.devicePath}, My Node Num: !overrideNode')
+                f"Meshtastic interface initialized successfully. Device: "
+                f"{mock_iface_instance.devicePath}, My Node Num: !overrideNode"
+            ),
         ]
-        self.mock_logger.info.assert_has_calls(
-            expected_log_calls, any_order=False
-        )
+        self.mock_logger.info.assert_has_calls(expected_log_calls, any_order=False)
 
     def test_initialize_meshtastic_successful_with_str_node_id(self):
         """Test init when my_node_num is str like !<hex> (auto-detect path)."""
         self.mock_get_serial_port_config.return_value = None  # Auto-detect
-        mock_iface_instance = (
-            self.MockMeshtasticSerialInterfaceClass.return_value
-        )
-        mock_iface_instance.devicePath = '/dev/ttyUSB1'
+        mock_iface_instance = self.MockMeshtasticSerialInterfaceClass.return_value
+        mock_iface_instance.devicePath = "/dev/ttyUSB1"
         mock_iface_instance.myInfo = MagicMock()
         # Example string node ID
-        mock_iface_instance.myInfo.my_node_num = '!abcdef12'
+        mock_iface_instance.myInfo.my_node_num = "!abcdef12"
 
         iface = initialize_meshtastic_interface()
         self.assertIsNotNone(iface)
         self.MockMeshtasticSerialInterfaceClass.assert_called_once_with()  # Auto
         self.mock_get_serial_port_config.assert_called_once()
         expected_log_calls = [
+            call.info("Attempting to initialize Meshtastic interface (auto-detect)..."),
             call.info(
-                'Attempting to initialize Meshtastic interface (auto-detect)...'),
-            call.info(
-                f'Meshtastic interface initialized successfully. Device: '
-                f'{mock_iface_instance.devicePath}, My Node Num: !abcdef12')
+                f"Meshtastic interface initialized successfully. Device: "
+                f"{mock_iface_instance.devicePath}, My Node Num: !abcdef12"
+            ),
         ]
-        self.mock_logger.info.assert_has_calls(
-            expected_log_calls, any_order=False
-        )
+        self.mock_logger.info.assert_has_calls(expected_log_calls, any_order=False)
 
     def test_initialize_meshtastic_no_device_error_autodetect(self):
         self.mock_get_serial_port_config.return_value = None  # Auto-detect
-        self.MockMeshtasticSerialInterfaceClass.side_effect = (
-            self.MockNoDeviceError("No Meshtastic device found mock")
+        self.MockMeshtasticSerialInterfaceClass.side_effect = self.MockNoDeviceError(
+            "No Meshtastic device found mock"
         )
         iface = initialize_meshtastic_interface()
         self.assertIsNone(iface)
@@ -258,13 +247,14 @@ class TestMeshtasticInitialization(unittest.TestCase):
             "drivers are installed."
         )
         self.mock_logger.info.assert_called_with(
-            'Attempting to initialize Meshtastic interface (auto-detect)...')
+            "Attempting to initialize Meshtastic interface (auto-detect)..."
+        )
 
     def test_initialize_meshtastic_no_device_error_with_config_port(self):
-        configured_port = '/dev/ttyFAIL'
+        configured_port = "/dev/ttyFAIL"
         self.mock_get_serial_port_config.return_value = configured_port
-        self.MockMeshtasticSerialInterfaceClass.side_effect = (
-            self.MockNoDeviceError("No Meshtastic device found mock")
+        self.MockMeshtasticSerialInterfaceClass.side_effect = self.MockNoDeviceError(
+            "No Meshtastic device found mock"
         )
         iface = initialize_meshtastic_interface()
         self.assertIsNone(iface)
@@ -277,14 +267,15 @@ class TestMeshtasticInitialization(unittest.TestCase):
             "drivers are installed."
         )
         self.mock_logger.info.assert_called_with(
-            f'Attempting to initialize Meshtastic interface on port '
-            f'{configured_port}...')
+            f"Attempting to initialize Meshtastic interface on port "
+            f"{configured_port}..."
+        )
 
     def test_initialize_meshtastic_generic_meshtastic_error(self):
         # This will use auto-detect path due to setUp
         error_message = "A generic Meshtastic error mock"
-        self.MockMeshtasticSerialInterfaceClass.side_effect = (
-            self.MockMeshtasticError(error_message)
+        self.MockMeshtasticSerialInterfaceClass.side_effect = self.MockMeshtasticError(
+            error_message
         )
         iface = initialize_meshtastic_interface()
         self.assertIsNone(iface)
@@ -294,33 +285,33 @@ class TestMeshtasticInitialization(unittest.TestCase):
             f"Meshtastic library error during initialization: {error_message}"
         )
         self.mock_logger.info.assert_called_with(
-            'Attempting to initialize Meshtastic interface (auto-detect)...')
+            "Attempting to initialize Meshtastic interface (auto-detect)..."
+        )
 
     def test_initialize_meshtastic_unexpected_error(self):
         # This will use auto-detect path
         error_message = "An unexpected issue mock"
-        self.MockMeshtasticSerialInterfaceClass.side_effect = Exception(
-            error_message
-        )
+        self.MockMeshtasticSerialInterfaceClass.side_effect = Exception(error_message)
         iface = initialize_meshtastic_interface()
         self.assertIsNone(iface)
         self.MockMeshtasticSerialInterfaceClass.assert_called_once_with()
         self.mock_get_serial_port_config.assert_called_once()
         self.mock_logger.error.assert_any_call(
             f"An unexpected error occurred during Meshtastic "
-            f"initialization: {error_message}", exc_info=True
+            f"initialization: {error_message}",
+            exc_info=True,
         )
         self.mock_logger.info.assert_called_with(
-            'Attempting to initialize Meshtastic interface (auto-detect)...')
+            "Attempting to initialize Meshtastic interface (auto-detect)..."
+        )
 
     def test_initialize_meshtastic_import_error(self):
         # Manipulate sys.modules so config loader won't affect it directly
         # regarding meshtastic import
         self.sys_modules_patcher.stop()
         temp_sys_modules_patch = patch.dict(
-            sys.modules, 
-            {k: v for k, v in sys.modules.items() 
-             if not k.startswith('meshtastic')}
+            sys.modules,
+            {k: v for k, v in sys.modules.items() if not k.startswith("meshtastic")},
         )
         temp_sys_modules_patch.start()
 
@@ -341,34 +332,34 @@ class TestMeshtasticInitialization(unittest.TestCase):
 class TestMessageHandling(unittest.TestCase):
     def setUp(self):
         # Patch the logger
-        self.patcher_logger = patch('btcmesh_server.server_logger', MagicMock())
+        self.patcher_logger = patch("btcmesh_server.server_logger", MagicMock())
         self.mock_logger = self.patcher_logger.start()
 
         # Patch the transaction reassembler instance that is used in btcmesh_server
         self.patcher_reassembler = patch(
-            'btcmesh_server.transaction_reassembler', autospec=True
+            "btcmesh_server.transaction_reassembler", autospec=True
         )
         self.mock_reassembler = self.patcher_reassembler.start()
-        # Set CHUNK_PREFIX on the mock reassembler instance. 
+        # Set CHUNK_PREFIX on the mock reassembler instance.
         # This is NOT used by the SUT's startswith() check, which uses a direct import.
-        self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX 
+        self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX
 
         # Patch send_meshtastic_reply
         self.patcher_send_reply = patch(
-            'btcmesh_server.send_meshtastic_reply', autospec=True
+            "btcmesh_server.send_meshtastic_reply", autospec=True
         )
         self.mock_send_reply = self.patcher_send_reply.start()
 
         # Patch _extract_session_id_from_raw_chunk
         self.patcher_extract_id = patch(
-            'btcmesh_server._extract_session_id_from_raw_chunk', autospec=True
+            "btcmesh_server._extract_session_id_from_raw_chunk", autospec=True
         )
         self.mock_extract_id = self.patcher_extract_id.start()
 
         # Create a mock Meshtastic interface instance
         self.mock_iface = MagicMock()
         self.mock_iface.myInfo = MagicMock()
-        self.mock_iface.myInfo.my_node_num = 0xabcdef # Server's node number
+        self.mock_iface.myInfo.my_node_num = 0xABCDEF  # Server's node number
 
     def tearDown(self):
         self.patcher_logger.stop()
@@ -378,25 +369,27 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_standard_text_message_for_server(self):
         """Test receiving a standard (non-BTC_TX) text message for the server."""
-        sender_node_id_int = 0xfeedface
-        sender_node_id_str_formatted = _format_node_id(sender_node_id_int) # "!feedface"
-        
-        server_node_id_str_formatted = "!abcdef" # Our server's ID, string formatted
+        sender_node_id_int = 0xFEEDFACE
+        sender_node_id_str_formatted = _format_node_id(
+            sender_node_id_int
+        )  # "!feedface"
+
+        server_node_id_str_formatted = "!abcdef"  # Our server's ID, string formatted
 
         message_text = "Hello from Meshtastic!"
-        
+
         # Packet construction for a direct message to the server
         # Using top-level 'toId' (string) which on_receive_text_message checks first.
         packet = {
-            'from': sender_node_id_int, 
-            'toId': server_node_id_str_formatted, # String formatted node ID
-            'decoded': {
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,  # String formatted node ID
+            "decoded": {
                 # 'to': server_node_id_int, # Not strictly needed if toId is present and used first
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": message_text,
             },
-            'id': 'packet_std_text',
-            'channel': 0 # Indicates a direct message
+            "id": "packet_std_text",
+            "channel": 0,  # Indicates a direct message
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -409,8 +402,8 @@ class TestMessageHandling(unittest.TestCase):
         """Test receiving a BTC_TX chunk that is part of a larger transaction (no full reassembly yet)."""
         sender_node_id_int = 0x54321
         # sender_node_id_str_formatted = _format_node_id(sender_node_id_int) # For logging, if used
-        
-        server_node_id_str_formatted = "!abcdef" # Our server's ID
+
+        server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id = "sess2_partial"
         message_text = f"{CHUNK_PREFIX}{session_id}|1/2|partial_payload_data"
@@ -419,14 +412,11 @@ class TestMessageHandling(unittest.TestCase):
         self.mock_reassembler.add_chunk.return_value = None
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted, # Message for our server
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_btc_partial',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,  # Message for our server
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_btc_partial",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -435,10 +425,9 @@ class TestMessageHandling(unittest.TestCase):
         # 1. add_chunk should be called with the correct sender ID and message text.
         #    The sender_id passed to add_chunk by on_receive_text_message is the raw integer packet['from'].
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int, 
-            message_text
+            sender_node_id_int, message_text
         )
-        
+
         # 2. No reply should be sent for a partial (non-error) chunk reception.
         self.mock_send_reply.assert_not_called()
 
@@ -451,13 +440,13 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_btc_tx_chunk_success_reassembly(self):
         """Test receiving a BTC_TX chunk that leads to successful reassembly and triggers broadcast logic."""
-        sender_node_id_int = 0x12345 # Example sender
-        server_node_id_str_formatted = "!abcdef" # Our server's ID
+        sender_node_id_int = 0x12345  # Example sender
+        server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id = "sess_success_reassembly"
         # Simulate a single chunk transaction for simplicity, or the last chunk
         message_text = f"{CHUNK_PREFIX}{session_id}|1/1|deadbeefcafebabe"
-        reassembled_hex_payload = "deadbeefcafebabe" # Expected result from reassembler
+        reassembled_hex_payload = "deadbeefcafebabe"  # Expected result from reassembler
 
         # Configure the mock reassembler to return the complete payload
         self.mock_reassembler.add_chunk.return_value = reassembled_hex_payload
@@ -465,31 +454,26 @@ class TestMessageHandling(unittest.TestCase):
         self.mock_extract_id.return_value = session_id
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_btc_success',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_btc_success",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         # 1. add_chunk should be called correctly.
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int,
-            message_text
+            sender_node_id_int, message_text
         )
 
         # 2. Since there is no RPC connection, a NACK should be sent for broadcast failure.
-        expected_nack_msg = f"BTC_NACK|{session_id}|ERROR|Broadcast failed: No RPC connection"
+        expected_nack_msg = (
+            f"BTC_NACK|{session_id}|ERROR|Broadcast failed: No RPC connection"
+        )
         self.mock_send_reply.assert_called_once_with(
-            self.mock_iface,
-            '!12345',
-            expected_nack_msg,
-            session_id
+            self.mock_iface, "!12345", expected_nack_msg, session_id
         )
 
         # 3. Assert the log message for successful reassembly (optional, for completeness).
@@ -502,37 +486,39 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_btc_tx_chunk_invalid_format_sends_nack(self):
         """Test that InvalidChunkFormatError from add_chunk results in a NACK."""
-        sender_node_id_int = 0x67890 # Example sender
-        server_node_id_str_formatted = "!abcdef" # Our server's ID
+        sender_node_id_int = 0x67890  # Example sender
+        server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id_for_nack = "sess_invalid_fmt"
         # This message format might be parsable up to a point by add_chunk before it determines the error
         # or _parse_chunk within add_chunk might raise it.
         # For this test, we assume add_chunk itself is the source of the exception due to internal parsing.
-        malformed_message_text = f"{CHUNK_PREFIX}{session_id_for_nack}|bad_chunk_format|payload"
+        malformed_message_text = (
+            f"{CHUNK_PREFIX}{session_id_for_nack}|bad_chunk_format|payload"
+        )
         exception_message = "Test: Invalid chunk format detected by reassembler"
 
         # Configure mocks
-        self.mock_reassembler.add_chunk.side_effect = InvalidChunkFormatError(exception_message)
-        self.mock_extract_id.return_value = session_id_for_nack # Used for NACK message construction
+        self.mock_reassembler.add_chunk.side_effect = InvalidChunkFormatError(
+            exception_message
+        )
+        self.mock_extract_id.return_value = (
+            session_id_for_nack  # Used for NACK message construction
+        )
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': malformed_message_text
-            },
-            'id': 'packet_btc_invalid_format',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": malformed_message_text},
+            "id": "packet_btc_invalid_format",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         # 1. add_chunk should be called.
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int,
-            malformed_message_text
+            sender_node_id_int, malformed_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for the NACK.
@@ -543,13 +529,15 @@ class TestMessageHandling(unittest.TestCase):
         # NACK format: BTC_NACK|<tx_session_id>|ERROR|<ErrorTypeString>: <exception_details>
         # ErrorTypeString for InvalidChunkFormatError is "Invalid ChunkFormat"
         expected_nack_detail = f"Invalid ChunkFormat: {exception_message}"
-        expected_nack_message = f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
-        
+        expected_nack_message = (
+            f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
+        )
+
         self.mock_send_reply.assert_called_once_with(
-            self.mock_iface, 
+            self.mock_iface,
             sender_id_str_for_reply,
             expected_nack_message,
-            session_id_for_nack
+            session_id_for_nack,
         )
 
         # 4. Assert the error log.
@@ -561,35 +549,35 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_btc_tx_chunk_mismatched_total_sends_nack(self):
         """Test that MismatchedTotalChunksError from add_chunk results in a NACK."""
-        sender_node_id_int = 0xabcde # Example sender
-        server_node_id_str_formatted = "!abcdef" # Our server's ID
+        sender_node_id_int = 0xABCDE  # Example sender
+        server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id_for_nack = "sess_mismatch_total"
         # A valid-looking chunk message; the error comes from reassembler's state
-        chunk_message_text = f"{CHUNK_PREFIX}{session_id_for_nack}|1/3|payload_part_for_mismatch"
+        chunk_message_text = (
+            f"{CHUNK_PREFIX}{session_id_for_nack}|1/3|payload_part_for_mismatch"
+        )
         exception_message = "Test: Mismatched total chunks detected by reassembler"
 
         # Configure mocks
-        self.mock_reassembler.add_chunk.side_effect = MismatchedTotalChunksError(exception_message)
-        self.mock_extract_id.return_value = session_id_for_nack # Used for NACK
+        self.mock_reassembler.add_chunk.side_effect = MismatchedTotalChunksError(
+            exception_message
+        )
+        self.mock_extract_id.return_value = session_id_for_nack  # Used for NACK
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': chunk_message_text
-            },
-            'id': 'packet_btc_mismatch_total',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_message_text},
+            "id": "packet_btc_mismatch_total",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         # 1. add_chunk should be called.
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int,
-            chunk_message_text
+            sender_node_id_int, chunk_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for the NACK.
@@ -599,13 +587,15 @@ class TestMessageHandling(unittest.TestCase):
         sender_id_str_for_reply = _format_node_id(sender_node_id_int)
         # ErrorTypeString for MismatchedTotalChunksError is "MismatchedTotalChunks"
         expected_nack_detail = f"MismatchedTotalChunks: {exception_message}"
-        expected_nack_message = f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
-        
+        expected_nack_message = (
+            f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
+        )
+
         self.mock_send_reply.assert_called_once_with(
-            self.mock_iface, 
+            self.mock_iface,
             sender_id_str_for_reply,
             expected_nack_message,
-            session_id_for_nack
+            session_id_for_nack,
         )
 
         # 4. Assert the error log.
@@ -617,36 +607,36 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_btc_tx_chunk_other_reassembly_error_no_nack_by_default(self):
         """Test that a generic ReassemblyError from add_chunk does NOT send a NACK by default."""
-        sender_node_id_int = 0xfedcb  # Example sender
+        sender_node_id_int = 0xFEDCB  # Example sender
         server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id_for_log = "sess_other_err"
-        chunk_message_text = f"{CHUNK_PREFIX}{session_id_for_log}|1/1|payload_for_other_error"
+        chunk_message_text = (
+            f"{CHUNK_PREFIX}{session_id_for_log}|1/1|payload_for_other_error"
+        )
         exception_message = "Test: Generic reassembly problem"
 
         # Configure mocks
         # Ensure the correct ReassemblyError is imported for this test to be meaningful
         # from core.reassembler import ReassemblyError # Already imported at top of file
         self.mock_reassembler.add_chunk.side_effect = ReassemblyError(exception_message)
-        self.mock_extract_id.return_value = session_id_for_log  # Used for logging context
+        self.mock_extract_id.return_value = (
+            session_id_for_log  # Used for logging context
+        )
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': chunk_message_text
-            },
-            'id': 'packet_btc_other_error',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_message_text},
+            "id": "packet_btc_other_error",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         # 1. add_chunk should be called.
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int,
-            chunk_message_text
+            sender_node_id_int, chunk_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for logging context.
@@ -670,31 +660,31 @@ class TestMessageHandling(unittest.TestCase):
         server_node_id_str_formatted = "!abcdef"  # Our server's ID
 
         session_id_for_log = "sess_unexpected_err"
-        chunk_message_text = f"{CHUNK_PREFIX}{session_id_for_log}|1/1|payload_for_unexpected_error"
+        chunk_message_text = (
+            f"{CHUNK_PREFIX}{session_id_for_log}|1/1|payload_for_unexpected_error"
+        )
         exception_message = "Test: Totally unexpected problem during add_chunk"
         test_exception = Exception(exception_message)
 
         # Configure mocks
         self.mock_reassembler.add_chunk.side_effect = test_exception
-        self.mock_extract_id.return_value = session_id_for_log  # Used for logging context
+        self.mock_extract_id.return_value = (
+            session_id_for_log  # Used for logging context
+        )
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_str_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': chunk_message_text
-            },
-            'id': 'packet_btc_unexpected_error',
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_str_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_message_text},
+            "id": "packet_btc_unexpected_error",
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         # 1. add_chunk should be called.
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int,
-            chunk_message_text
+            sender_node_id_int, chunk_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for logging context.
@@ -707,43 +697,46 @@ class TestMessageHandling(unittest.TestCase):
         sender_id_str_for_log = _format_node_id(sender_node_id_int)
         expected_error_log_message = (
             f"[Sender: {sender_id_str_for_log}, Session: {session_id_for_log}] "
-            f"Unexpected error processing chunk: {exception_message}. " # Note: str(test_exception) is exception_message
+            f"Unexpected error processing chunk: {exception_message}. "  # Note: str(test_exception) is exception_message
             f"Not NACKing automatically."
         )
-        
+
         # Check if any error log call matches the message and has exc_info=True
         found_log_with_exc_info = False
         for call_args_item in self.mock_logger.error.call_args_list:
             args, kwargs = call_args_item
-            if args and args[0] == expected_error_log_message and kwargs.get('exc_info') is True:
+            if (
+                args
+                and args[0] == expected_error_log_message
+                and kwargs.get("exc_info") is True
+            ):
                 found_log_with_exc_info = True
                 break
         self.assertTrue(
             found_log_with_exc_info,
             f"Expected error log '{expected_error_log_message}' with exc_info=True not found. "
-            f"Actual calls: {self.mock_logger.error.call_args_list}"
+            f"Actual calls: {self.mock_logger.error.call_args_list}",
         )
 
     def test_receive_btc_tx_chunk_not_for_server(self):
         """Test that a BTC_TX chunk not addressed to the server is ignored by reassembler."""
         sender_node_id_int = 0x112233
         # server_node_id_int = self.mock_iface.myInfo.my_node_num # 0xabcdef
-        server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num) # "!abcdef"
-        
-        other_node_id_str = "!feedbeef" # Message addressed to this node
+        server_node_id_formatted = _format_node_id(
+            self.mock_iface.myInfo.my_node_num
+        )  # "!abcdef"
+
+        other_node_id_str = "!feedbeef"  # Message addressed to this node
 
         session_id = "sess_not_for_us"
         message_text = f"{CHUNK_PREFIX}{session_id}|1/1|some_payload"
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': other_node_id_str,  # Key: Addressed to another node
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_btc_not_for_server',
-            'channel': 0 # Direct message
+            "from": sender_node_id_int,
+            "toId": other_node_id_str,  # Key: Addressed to another node
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_btc_not_for_server",
+            "channel": 0,  # Direct message
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -763,20 +756,19 @@ class TestMessageHandling(unittest.TestCase):
     def test_receive_standard_text_message_not_for_server(self):
         """Test that a standard text message not for the server is ignored."""
         sender_node_id_int = 0x445566
-        server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num) # "!abcdef"
-        
-        other_node_id_str = "!anotherNodeStd" # Message addressed to this node
+        server_node_id_formatted = _format_node_id(
+            self.mock_iface.myInfo.my_node_num
+        )  # "!abcdef"
+
+        other_node_id_str = "!anotherNodeStd"  # Message addressed to this node
         message_text = "This is a standard message for someone else."
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': other_node_id_str,  # Addressed to another node
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_std_not_for_server',
-            'channel': 0 # Direct message
+            "from": sender_node_id_int,
+            "toId": other_node_id_str,  # Addressed to another node
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_std_not_for_server",
+            "channel": 0,  # Direct message
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -793,20 +785,22 @@ class TestMessageHandling(unittest.TestCase):
         """Test receiving a non-text (e.g., position) direct message for the server."""
         sender_node_id_int = 0x778899
         sender_node_id_formatted = _format_node_id(sender_node_id_int)
-        server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num) # "!abcdef"
-        
-        portnum_for_test = 'POSITION_APP' # Example non-text portnum
-        packet_id = 'packet_non_text'
+        server_node_id_formatted = _format_node_id(
+            self.mock_iface.myInfo.my_node_num
+        )  # "!abcdef"
+
+        portnum_for_test = "POSITION_APP"  # Example non-text portnum
+        packet_id = "packet_non_text"
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_formatted,  # Addressed to our server
-            'decoded': {
-                'portnum': portnum_for_test, 
+            "from": sender_node_id_int,
+            "toId": server_node_id_formatted,  # Addressed to our server
+            "decoded": {
+                "portnum": portnum_for_test,
                 # No 'text' field for many non-text messages
             },
-            'id': packet_id,
-            'channel': 0 # Direct message
+            "id": packet_id,
+            "channel": 0,  # Direct message
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -827,15 +821,15 @@ class TestMessageHandling(unittest.TestCase):
         """Test receiving a packet that is missing the 'decoded' field."""
         sender_node_id_int = 0x121212
         server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num)
-        packet_id = 'packet_no_decoded'
+        packet_id = "packet_no_decoded"
 
         # Packet is missing the 'decoded' key entirely
         packet = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_formatted, # Still a DM to us
+            "from": sender_node_id_int,
+            "toId": server_node_id_formatted,  # Still a DM to us
             # 'decoded': { ... } -> MISSING
-            'id': packet_id,
-            'channel': 0 
+            "id": packet_id,
+            "channel": 0,
         }
 
         on_receive_text_message(packet, self.mock_iface)
@@ -853,18 +847,18 @@ class TestMessageHandling(unittest.TestCase):
         sender_node_id_int = 0xABABAB
         sender_node_id_formatted = _format_node_id(sender_node_id_int)
         server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num)
-        packet_id = 'packet_no_text_field'
+        packet_id = "packet_no_text_field"
 
         # Scenario 1: 'text' field is missing
         packet_missing_text = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
+            "from": sender_node_id_int,
+            "toId": server_node_id_formatted,
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
                 # 'text': ... -> MISSING
             },
-            'id': packet_id + "_missing",
-            'channel': 0
+            "id": packet_id + "_missing",
+            "channel": 0,
         }
 
         on_receive_text_message(packet_missing_text, self.mock_iface)
@@ -872,20 +866,17 @@ class TestMessageHandling(unittest.TestCase):
         self.mock_send_reply.assert_not_called()
         expected_log_missing = f"Direct text message with no text from {sender_node_id_formatted}: {packet_missing_text.get('id')}"
         self.mock_logger.debug.assert_any_call(expected_log_missing)
-        self.mock_logger.reset_mock() # Reset for next scenario
+        self.mock_logger.reset_mock()  # Reset for next scenario
         self.mock_reassembler.reset_mock()
         self.mock_send_reply.reset_mock()
 
         # Scenario 2: 'text' field is None
         packet_text_is_none = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': None
-            },
-            'id': packet_id + "_none",
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": None},
+            "id": packet_id + "_none",
+            "channel": 0,
         }
         on_receive_text_message(packet_text_is_none, self.mock_iface)
         self.mock_reassembler.add_chunk.assert_not_called()
@@ -898,14 +889,11 @@ class TestMessageHandling(unittest.TestCase):
 
         # Scenario 3: 'text' field is empty string
         packet_text_is_empty = {
-            'from': sender_node_id_int,
-            'toId': server_node_id_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': ""
-            },
-            'id': packet_id + "_empty",
-            'channel': 0
+            "from": sender_node_id_int,
+            "toId": server_node_id_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": ""},
+            "id": packet_id + "_empty",
+            "channel": 0,
         }
         on_receive_text_message(packet_text_is_empty, self.mock_iface)
         self.mock_reassembler.add_chunk.assert_not_called()
@@ -915,31 +903,35 @@ class TestMessageHandling(unittest.TestCase):
 
     def test_receive_packet_from_self(self):
         """Test that packets sent from the server to itself are ignored."""
-        server_node_id_int = self.mock_iface.myInfo.my_node_num # 0xabcdef
-        server_node_id_formatted = _format_node_id(server_node_id_int) # "!abcdef"
-        packet_id_base = 'packet_from_self'
+        server_node_id_int = self.mock_iface.myInfo.my_node_num  # 0xabcdef
+        server_node_id_formatted = _format_node_id(server_node_id_int)  # "!abcdef"
+        packet_id_base = "packet_from_self"
 
         # Scenario 1: BTC_TX chunk from self to self
         btc_tx_message_from_self = f"{CHUNK_PREFIX}self_sess|1/1|payload_from_self"
         packet_btc_from_self = {
-            'from': server_node_id_int,
-            'toId': server_node_id_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': btc_tx_message_from_self
+            "from": server_node_id_int,
+            "toId": server_node_id_formatted,
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": btc_tx_message_from_self,
             },
-            'id': packet_id_base + "_btc",
-            'channel': 0
+            "id": packet_id_base + "_btc",
+            "channel": 0,
         }
 
         on_receive_text_message(packet_btc_from_self, self.mock_iface)
         self.mock_reassembler.add_chunk.assert_not_called()
         self.mock_send_reply.assert_not_called()
         # This log assumes a new log message is added to SUT for ignoring self-messages
-        expected_log_text_btc = btc_tx_message_from_self[:30] + "..." if len(btc_tx_message_from_self) > 30 else btc_tx_message_from_self
+        expected_log_text_btc = (
+            btc_tx_message_from_self[:30] + "..."
+            if len(btc_tx_message_from_self) > 30
+            else btc_tx_message_from_self
+        )
         expected_log_self_btc = f"Ignoring DM from self. From: {server_node_id_formatted}, To: {server_node_id_formatted}, Text: '{expected_log_text_btc}'"
         self.mock_logger.debug.assert_any_call(expected_log_self_btc)
-        
+
         self.mock_logger.reset_mock()
         self.mock_reassembler.reset_mock()
         self.mock_send_reply.reset_mock()
@@ -947,29 +939,30 @@ class TestMessageHandling(unittest.TestCase):
         # Scenario 2: Standard text message from self to self
         std_text_from_self = "Hello me!"
         packet_std_from_self = {
-            'from': server_node_id_int,
-            'toId': server_node_id_formatted,
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': std_text_from_self
-            },
-            'id': packet_id_base + "_std",
-            'channel': 0
+            "from": server_node_id_int,
+            "toId": server_node_id_formatted,
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": std_text_from_self},
+            "id": packet_id_base + "_std",
+            "channel": 0,
         }
         on_receive_text_message(packet_std_from_self, self.mock_iface)
         self.mock_reassembler.add_chunk.assert_not_called()
         self.mock_send_reply.assert_not_called()
-        expected_log_text_std = std_text_from_self[:30] + "..." if len(std_text_from_self) > 30 else std_text_from_self
+        expected_log_text_std = (
+            std_text_from_self[:30] + "..."
+            if len(std_text_from_self) > 30
+            else std_text_from_self
+        )
         expected_log_self_std = f"Ignoring DM from self. From: {server_node_id_formatted}, To: {server_node_id_formatted}, Text: '{expected_log_text_std}'"
         self.mock_logger.debug.assert_any_call(expected_log_self_std)
 
     def test_receive_broadcast_btc_tx_chunk_ignored(self):
         """Test that a BTC_TX chunk sent as a broadcast is ignored."""
-        sender_node_id_int = 0xb20adc57 # Example sender (valid hex)
+        sender_node_id_int = 0xB20ADC57  # Example sender (valid hex)
         sender_node_id_formatted = _format_node_id(sender_node_id_int)
         server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num)
-        
-        broadcast_dest_id_str = "!ffffffff" # Meshtastic broadcast address
+
+        broadcast_dest_id_str = "!ffffffff"  # Meshtastic broadcast address
 
         session_id = "sess_broadcast_btc"
         message_text = f"{CHUNK_PREFIX}{session_id}|1/1|broadcast_payload"
@@ -978,14 +971,11 @@ class TestMessageHandling(unittest.TestCase):
         # or by setting channel > 0 (though on_receive_text_message may not be called by pubsub then)
         # For this test, we rely on the toId check in on_receive_text_message
         packet = {
-            'from': sender_node_id_int,
-            'toId': broadcast_dest_id_str, # Addressed to broadcast
+            "from": sender_node_id_int,
+            "toId": broadcast_dest_id_str,  # Addressed to broadcast
             # 'channel': 1, # Alternatively, a non-zero channel indicates broadcast
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_broadcast_btc'
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_broadcast_btc",
             # channel: 0 is implied if not present for DMs, pubsub might filter based on channel already
         }
 
@@ -993,35 +983,34 @@ class TestMessageHandling(unittest.TestCase):
 
         self.mock_reassembler.add_chunk.assert_not_called()
         self.mock_send_reply.assert_not_called()
-        
+
         # Expect a log that it was not for this node
         expected_log = f"Received message not for this node. To: {broadcast_dest_id_str}, MyID: {server_node_id_formatted}, From: {sender_node_id_formatted}"
         self.mock_logger.debug.assert_any_call(expected_log)
 
     def test_receive_broadcast_standard_text_ignored(self):
         """Test that a standard text message sent as a broadcast is ignored."""
-        sender_node_id_int = 0xb20adc57 # Example sender (same as other broadcast test for consistency)
+        sender_node_id_int = (
+            0xB20ADC57  # Example sender (same as other broadcast test for consistency)
+        )
         sender_node_id_formatted = _format_node_id(sender_node_id_int)
         server_node_id_formatted = _format_node_id(self.mock_iface.myInfo.my_node_num)
-        
-        broadcast_dest_id_str = "!ffffffff" # Meshtastic broadcast address
+
+        broadcast_dest_id_str = "!ffffffff"  # Meshtastic broadcast address
         message_text = "This is a standard broadcast message."
 
         packet = {
-            'from': sender_node_id_int,
-            'toId': broadcast_dest_id_str, # Addressed to broadcast
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': message_text
-            },
-            'id': 'packet_broadcast_std'
+            "from": sender_node_id_int,
+            "toId": broadcast_dest_id_str,  # Addressed to broadcast
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": message_text},
+            "id": "packet_broadcast_std",
         }
 
         on_receive_text_message(packet, self.mock_iface)
 
         self.mock_reassembler.add_chunk.assert_not_called()
         self.mock_send_reply.assert_not_called()
-        
+
         expected_log = f"Received message not for this node. To: {broadcast_dest_id_str}, MyID: {server_node_id_formatted}, From: {sender_node_id_formatted}"
         self.mock_logger.debug.assert_any_call(expected_log)
 
@@ -1029,7 +1018,7 @@ class TestMessageHandling(unittest.TestCase):
 class TestMeshtasticReplySending(unittest.TestCase):
     def setUp(self):
         # Mock the logger
-        self.patcher_logger = patch('btcmesh_server.server_logger')
+        self.patcher_logger = patch("btcmesh_server.server_logger")
         self.mock_logger = self.patcher_logger.start()
 
         # Mock the Meshtastic interface and node objects
@@ -1048,9 +1037,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         txid = "sampletxid012345"
         message = f"BTC_ACK|{session_id}|SUCCESS|TXID:{txid}"
 
-        result = send_meshtastic_reply(
-            self.mock_iface, dest_id, message, session_id
-        )
+        result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
         self.assertTrue(result)
         self.mock_iface.getNode.assert_called_once_with(dest_id)
@@ -1090,9 +1077,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         message = "BTC_NACK||ERROR|Invalid destination"
         session_id = "sess456"
 
-        result = send_meshtastic_reply(
-            self.mock_iface, dest_id, message, session_id
-        )
+        result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
         self.assertFalse(result)
         self.mock_iface.getNode.assert_not_called()
@@ -1110,9 +1095,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         message = "BTC_NACK||ERROR|Node not found"
         session_id = "sess789"
 
-        result = send_meshtastic_reply(
-            self.mock_iface, dest_id, message, session_id
-        )
+        result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
         self.assertFalse(result)
         self.mock_iface.getNode.assert_called_once_with(dest_id)
@@ -1129,19 +1112,15 @@ class TestMeshtasticReplySending(unittest.TestCase):
         message = "BTC_ACK|sessErr|SUCCESS|TXID:errtxid"
         session_id = "sessErr"
 
-        result = send_meshtastic_reply(
-            self.mock_iface, dest_id, message, session_id
-        )
+        result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
         self.assertFalse(result)
         self.mock_iface.getNode.assert_called_once_with(dest_id)
-        self.mock_node.sendText.assert_called_once_with(
-            text=message, wantAck=False
-        )
+        self.mock_node.sendText.assert_called_once_with(text=message, wantAck=False)
         self.mock_logger.error.assert_called_once_with(
             f"[Session: {session_id}] Failed to send reply to {dest_id}: "
             f"Send failed. Message: '{message}'",
-            exc_info=True
+            exc_info=True,
         )
 
     def test_send_reply_no_interface(self):
@@ -1162,16 +1141,12 @@ class TestMeshtasticReplySending(unittest.TestCase):
 
     def test_send_reply_attribute_error_on_getnode(self):
         """Test AttributeError when calling getNode (iface is misconfigured)."""
-        self.mock_iface.getNode.side_effect = AttributeError(
-            "Fake getnode error"
-        )
+        self.mock_iface.getNode.side_effect = AttributeError("Fake getnode error")
         dest_id = "!attrErrorNode"
         message = "Info message"
         session_id = "attrSess"
 
-        result = send_meshtastic_reply(
-            self.mock_iface, dest_id, message, session_id
-        )
+        result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
         self.assertFalse(result)
         self.mock_iface.getNode.assert_called_once_with(dest_id)
@@ -1179,16 +1154,18 @@ class TestMeshtasticReplySending(unittest.TestCase):
             f"[Session: {session_id}] AttributeError while sending reply to "
             f"{dest_id}: Fake getnode error. Ensure interface and node "
             f"objects are valid. Message: '{message}'",
-            exc_info=True
+            exc_info=True,
         )
 
 
 class TestTransactionReassemblerStory21(unittest.TestCase):
     def setUp(self):
         # Patch logger for log assertions
-        self.logger_patcher = patch('core.reassembler.server_logger', MagicMock())
+        self.logger_patcher = patch("core.reassembler.server_logger", MagicMock())
         self.mock_logger = self.logger_patcher.start()
-        self.reassembler = TransactionReassembler(timeout_seconds=1)  # Short timeout for test
+        self.reassembler = TransactionReassembler(
+            timeout_seconds=1
+        )  # Short timeout for test
         self.sender_id = 12345
         self.session_id = "story21sess"
 
@@ -1231,14 +1208,13 @@ class TestTransactionReassemblerStory21(unittest.TestCase):
         self.mock_logger.info.assert_any_call(
             f"{log_ctx} All 2 chunks received. Attempting reassembly."
         )
-        self.mock_logger.info.assert_any_call(
-            f"{log_ctx} Reassembly successful."
-        )
+        self.mock_logger.info.assert_any_call(f"{log_ctx} Reassembly successful.")
 
     def test_logs_on_timeout(self):
         chunk1 = f"BTC_TX|{self.session_id}|1/2|AAA"
         self.reassembler.add_chunk(self.sender_id, chunk1)
         import time as _time
+
         _time.sleep(1.1)
         self.reassembler.cleanup_stale_sessions()
         log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
@@ -1259,6 +1235,7 @@ class TestTransactionReassemblerStory21(unittest.TestCase):
 class TestHexValidationStory22(unittest.TestCase):
     def setUp(self):
         from core.reassembler import TransactionReassembler
+
         self.reassembler = TransactionReassembler(timeout_seconds=1)
         self.sender_id = 54321
         self.session_id = "hexval22"
@@ -1296,6 +1273,7 @@ class TestHexValidationStory22(unittest.TestCase):
 class TestTransactionDecodeStory23(unittest.TestCase):
     def setUp(self):
         from core.transaction_parser import decode_raw_transaction_hex
+
         self.decode = decode_raw_transaction_hex
 
     def test_valid_raw_transaction_hex(self):
@@ -1309,18 +1287,22 @@ class TestTransactionDecodeStory23(unittest.TestCase):
         # 00 (script len)
         # 00000000 (locktime)
         raw_hex = (
-            "01000000" +
-            "01" +
-            "00"*32 + "00000000" + "00" + "ffffffff" +
-            "01" +
-            "00e1f50500000000" + "00" +
-            "00000000"
+            "01000000"
+            + "01"
+            + "00" * 32
+            + "00000000"
+            + "00"
+            + "ffffffff"
+            + "01"
+            + "00e1f50500000000"
+            + "00"
+            + "00000000"
         )
         result = self.decode(raw_hex)
         self.assertIsInstance(result, dict)
-        self.assertEqual(result['version'], 1)
-        self.assertEqual(result['input_count'], 1)
-        self.assertEqual(result['locktime'], 0)
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(result["input_count"], 1)
+        self.assertEqual(result["locktime"], 0)
         # output_count is None (placeholder)
 
     def test_malformed_raw_transaction_hex(self):
@@ -1334,28 +1316,29 @@ class TestTransactionSanityChecksStory31(unittest.TestCase):
     def setUp(self):
         # Minimal stub for validation logic, to be replaced by actual import
         self.valid_tx = {
-            'version': 1,
-            'input_count': 1,
-            'output_count': 1,
-            'locktime': 0
+            "version": 1,
+            "input_count": 1,
+            "output_count": 1,
+            "locktime": 0,
         }
         self.no_inputs_tx = {
-            'version': 1,
-            'input_count': 0,
-            'output_count': 1,
-            'locktime': 0
+            "version": 1,
+            "input_count": 0,
+            "output_count": 1,
+            "locktime": 0,
         }
         self.no_outputs_tx = {
-            'version': 1,
-            'input_count': 1,
-            'output_count': 0,
-            'locktime': 0
+            "version": 1,
+            "input_count": 1,
+            "output_count": 0,
+            "locktime": 0,
         }
         # The actual validation function will be implemented in core.transaction_parser
 
     def test_no_inputs_fails_validation(self):
         """Given a decoded transaction with zero inputs, When validated, Then it fails and NACK is prepared."""
         from core.transaction_parser import basic_sanity_check
+
         valid, error = basic_sanity_check(self.no_inputs_tx)
         self.assertFalse(valid)
         self.assertIn("No inputs", error)
@@ -1363,6 +1346,7 @@ class TestTransactionSanityChecksStory31(unittest.TestCase):
     def test_no_outputs_fails_validation(self):
         """Given a decoded transaction with zero outputs, When validated, Then it fails and NACK is prepared."""
         from core.transaction_parser import basic_sanity_check
+
         valid, error = basic_sanity_check(self.no_outputs_tx)
         self.assertFalse(valid)
         self.assertIn("No outputs", error)
@@ -1370,6 +1354,7 @@ class TestTransactionSanityChecksStory31(unittest.TestCase):
     def test_valid_tx_passes_validation(self):
         """Given a decoded transaction with at least one input and one output, When validated, Then it passes."""
         from core.transaction_parser import basic_sanity_check
+
         valid, error = basic_sanity_check(self.valid_tx)
         self.assertTrue(valid)
         self.assertIsNone(error)
@@ -1378,42 +1363,48 @@ class TestTransactionSanityChecksStory31(unittest.TestCase):
 class TestBitcoinRpcConfigStory41(unittest.TestCase):
     def setUp(self):
         self.env_keys = [
-            'BITCOIN_RPC_HOST', 'BITCOIN_RPC_PORT', 'BITCOIN_RPC_USER', 'BITCOIN_RPC_PASSWORD'
+            "BITCOIN_RPC_HOST",
+            "BITCOIN_RPC_PORT",
+            "BITCOIN_RPC_USER",
+            "BITCOIN_RPC_PASSWORD",
         ]
         self.default_env = {
-            'BITCOIN_RPC_HOST': '127.0.0.1',
-            'BITCOIN_RPC_PORT': '8332',
-            'BITCOIN_RPC_USER': 'testuser',
-            'BITCOIN_RPC_PASSWORD': 'testpass'
+            "BITCOIN_RPC_HOST": "127.0.0.1",
+            "BITCOIN_RPC_PORT": "8332",
+            "BITCOIN_RPC_USER": "testuser",
+            "BITCOIN_RPC_PASSWORD": "testpass",
         }
 
     def test_all_fields_present_in_env(self):
         """Given all required RPC fields in .env, When loaded, Then config is correct."""
         from core.config_loader import load_bitcoin_rpc_config
-        with unittest.mock.patch.dict('os.environ', self.default_env, clear=True):
+
+        with unittest.mock.patch.dict("os.environ", self.default_env, clear=True):
             config = load_bitcoin_rpc_config()
-            self.assertEqual(config['host'], '127.0.0.1')
-            self.assertEqual(config['port'], 8332)
-            self.assertEqual(config['user'], 'testuser')
-            self.assertEqual(config['password'], 'testpass')
+            self.assertEqual(config["host"], "127.0.0.1")
+            self.assertEqual(config["port"], 8332)
+            self.assertEqual(config["user"], "testuser")
+            self.assertEqual(config["password"], "testpass")
 
     def test_missing_required_field_raises(self):
         """Given missing required RPC fields, When loaded, Then error is raised or logged."""
         from core.config_loader import load_bitcoin_rpc_config
+
         env = self.default_env.copy()
-        del env['BITCOIN_RPC_USER']
-        with unittest.mock.patch.dict('os.environ', env, clear=True):
+        del env["BITCOIN_RPC_USER"]
+        with unittest.mock.patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
                 load_bitcoin_rpc_config()
 
     def test_partial_fields_use_defaults(self):
         """Given only host and port in .env, When loaded, Then user/password missing triggers error."""
         from core.config_loader import load_bitcoin_rpc_config
+
         env = {
-            'BITCOIN_RPC_HOST': '10.0.0.2',
-            'BITCOIN_RPC_PORT': '18443',
+            "BITCOIN_RPC_HOST": "10.0.0.2",
+            "BITCOIN_RPC_PORT": "18443",
         }
-        with unittest.mock.patch.dict('os.environ', env, clear=True):
+        with unittest.mock.patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
                 load_bitcoin_rpc_config()
 
@@ -1421,48 +1412,54 @@ class TestBitcoinRpcConfigStory41(unittest.TestCase):
 class TestBitcoinRpcConnectionStory42(unittest.TestCase):
     def setUp(self):
         self.valid_config = {
-            'host': '127.0.0.1',
-            'port': 8332,
-            'user': 'testuser',
-            'password': 'testpass'
+            "host": "127.0.0.1",
+            "port": 8332,
+            "user": "testuser",
+            "password": "testpass",
         }
 
     def test_valid_config_node_reachable(self):
         """Given valid config and node reachable, When connecting, Then connection is established."""
-        with unittest.mock.patch('core.rpc_client.AuthServiceProxy') as mock_proxy:
+        with unittest.mock.patch("core.rpc_client.AuthServiceProxy") as mock_proxy:
             from core.rpc_client import connect_bitcoin_rpc
-            mock_proxy.return_value.getblockchaininfo.return_value = {'blocks': 100}
+
+            mock_proxy.return_value.getblockchaininfo.return_value = {"blocks": 100}
             rpc = connect_bitcoin_rpc(self.valid_config)
             self.assertIsNotNone(rpc)
             mock_proxy.assert_called_once()
-            self.assertTrue(hasattr(rpc, 'getblockchaininfo'))
+            self.assertTrue(hasattr(rpc, "getblockchaininfo"))
 
     def test_invalid_config_raises(self):
         """Given invalid config, When connecting, Then error is raised."""
         from core.rpc_client import connect_bitcoin_rpc
+
         bad_config = self.valid_config.copy()
-        bad_config['port'] = 'notanint'
+        bad_config["port"] = "notanint"
         with self.assertRaises(Exception):
             connect_bitcoin_rpc(bad_config)
 
     def test_node_unreachable_raises(self):
         """Given valid config but node unreachable, When connecting, Then error is raised."""
-        with unittest.mock.patch('core.rpc_client.AuthServiceProxy', side_effect=ConnectionRefusedError):
+        with unittest.mock.patch(
+            "core.rpc_client.AuthServiceProxy", side_effect=ConnectionRefusedError
+        ):
             from core.rpc_client import connect_bitcoin_rpc
+
             with self.assertRaises(ConnectionRefusedError):
                 connect_bitcoin_rpc(self.valid_config)
 
 
 class TestBitcoinRpcBroadcastStory43(unittest.TestCase):
     def setUp(self):
-        self.valid_hex = '0100000001abcdef...'
-        self.txid = 'deadbeefcafebabe1234567890abcdef1234567890abcdef'
+        self.valid_hex = "0100000001abcdef..."
+        self.txid = "deadbeefcafebabe1234567890abcdef1234567890abcdef"
 
     def test_valid_broadcast_returns_txid(self):
         """Given valid hex and RPC connection, When broadcast, Then TXID is returned."""
         mock_rpc = unittest.mock.Mock()
         mock_rpc.sendrawtransaction.return_value = self.txid
         from core.rpc_client import broadcast_transaction_via_rpc
+
         txid, error = broadcast_transaction_via_rpc(mock_rpc, self.valid_hex)
         self.assertEqual(txid, self.txid)
         self.assertIsNone(error)
@@ -1471,70 +1468,81 @@ class TestBitcoinRpcBroadcastStory43(unittest.TestCase):
         """Given valid hex but RPC error, When broadcast, Then error message is returned."""
         mock_rpc = unittest.mock.Mock()
         from bitcoinrpc.authproxy import JSONRPCException
-        mock_rpc.sendrawtransaction.side_effect = JSONRPCException({'code': -26, 'message': 'txn-mempool-conflict'})
+
+        mock_rpc.sendrawtransaction.side_effect = JSONRPCException(
+            {"code": -26, "message": "txn-mempool-conflict"}
+        )
         from core.rpc_client import broadcast_transaction_via_rpc
+
         txid, error = broadcast_transaction_via_rpc(mock_rpc, self.valid_hex)
         self.assertIsNone(txid)
-        self.assertIn('txn-mempool-conflict', error)
+        self.assertIn("txn-mempool-conflict", error)
 
     def test_no_rpc_connection_returns_error(self):
         """Given no RPC connection, When broadcast, Then error message is returned."""
         from core.rpc_client import broadcast_transaction_via_rpc
+
         txid, error = broadcast_transaction_via_rpc(None, self.valid_hex)
         self.assertIsNone(txid)
-        self.assertIn('No RPC connection', error)
+        self.assertIn("No RPC connection", error)
 
 
 class TestReassemblyTimeoutConfigStory52(unittest.TestCase):
     def setUp(self):
         self.default_timeout = 30
-        self.env_key = 'REASSEMBLY_TIMEOUT_SECONDS'
+        self.env_key = "REASSEMBLY_TIMEOUT_SECONDS"
         self.env = {
-            'BITCOIN_RPC_HOST': '127.0.0.1',
-            'BITCOIN_RPC_PORT': '8332',
-            'BITCOIN_RPC_USER': 'user',
-            'BITCOIN_RPC_PASSWORD': 'pass',
+            "BITCOIN_RPC_HOST": "127.0.0.1",
+            "BITCOIN_RPC_PORT": "8332",
+            "BITCOIN_RPC_USER": "user",
+            "BITCOIN_RPC_PASSWORD": "pass",
         }
 
     def test_timeout_loaded_from_env(self):
         from core.config_loader import load_reassembly_timeout
+
         env = self.env.copy()
-        env[self.env_key] = '42'
-        with unittest.mock.patch.dict('os.environ', env, clear=True):
+        env[self.env_key] = "42"
+        with unittest.mock.patch.dict("os.environ", env, clear=True):
             timeout, source = load_reassembly_timeout()
             self.assertEqual(timeout, 42)
-            self.assertEqual(source, 'env')
+            self.assertEqual(source, "env")
 
     def test_timeout_missing_uses_default(self):
         from core.config_loader import load_reassembly_timeout
-        with unittest.mock.patch.dict('os.environ', self.env, clear=True):
+
+        with unittest.mock.patch.dict("os.environ", self.env, clear=True):
             timeout, source = load_reassembly_timeout()
             self.assertEqual(timeout, self.default_timeout)
-            self.assertEqual(source, 'default')
+            self.assertEqual(source, "default")
 
     def test_timeout_invalid_uses_default_and_logs_warning(self):
         from core.config_loader import load_reassembly_timeout
+
         env = self.env.copy()
-        env[self.env_key] = 'notanint'
-        with unittest.mock.patch.dict('os.environ', env, clear=True):
-            with unittest.mock.patch('core.config_loader.server_logger') as mock_logger:
+        env[self.env_key] = "notanint"
+        with unittest.mock.patch.dict("os.environ", env, clear=True):
+            with unittest.mock.patch("core.config_loader.server_logger") as mock_logger:
                 timeout, source = load_reassembly_timeout()
                 self.assertEqual(timeout, self.default_timeout)
-                self.assertEqual(source, 'default')
+                self.assertEqual(source, "default")
                 mock_logger.warning.assert_any_call(
                     "Invalid REASSEMBLY_TIMEOUT_SECONDS value 'notanint'. Using default: 30s."
                 )
 
     def test_timeout_zero_or_negative_uses_default_and_logs_warning(self):
         from core.config_loader import load_reassembly_timeout
-        for bad_val in ['0', '-5']:
+
+        for bad_val in ["0", "-5"]:
             env = self.env.copy()
             env[self.env_key] = bad_val
-            with unittest.mock.patch.dict('os.environ', env, clear=True):
-                with unittest.mock.patch('core.config_loader.server_logger') as mock_logger:
+            with unittest.mock.patch.dict("os.environ", env, clear=True):
+                with unittest.mock.patch(
+                    "core.config_loader.server_logger"
+                ) as mock_logger:
                     timeout, source = load_reassembly_timeout()
                     self.assertEqual(timeout, self.default_timeout)
-                    self.assertEqual(source, 'default')
+                    self.assertEqual(source, "default")
                     mock_logger.warning.assert_any_call(
                         f"Invalid REASSEMBLY_TIMEOUT_SECONDS value '{bad_val}'. Using default: 30s."
                     )
@@ -1543,7 +1551,7 @@ class TestReassemblyTimeoutConfigStory52(unittest.TestCase):
 class TestReliableSessionChunkTransfer(unittest.TestCase):
     def setUp(self):
         # Patch the logger
-        self.logger_patcher = patch('btcmesh_server.server_logger', MagicMock())
+        self.logger_patcher = patch("btcmesh_server.server_logger", MagicMock())
         self.mock_logger = self.logger_patcher.start()
 
     def tearDown(self):
@@ -1561,20 +1569,24 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         client_node_id = "!abcdef01"
         server_node_id = "!deadbeef"
         packet = {
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': f"BTC_SESSION_START|{session_id}|{total_chunks}|{chunk_size}",
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": f"BTC_SESSION_START|{session_id}|{total_chunks}|{chunk_size}",
             },
-            'from': client_node_id,
-            'to': server_node_id,
+            "from": client_node_id,
+            "to": server_node_id,
         }
         mock_iface = MagicMock()
         mock_iface.myInfo = MagicMock()
         mock_iface.myInfo.my_node_num = server_node_id
         mock_send_reply = MagicMock()
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        on_receive_text_message(
+            packet, interface=mock_iface, send_reply_func=mock_send_reply
+        )
         expected_ack = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
-        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+        mock_send_reply.assert_called_with(
+            mock_iface, client_node_id, expected_ack, session_id
+        )
 
     def test_chunk_1_ack_and_request_next(self):
         """
@@ -1592,12 +1604,12 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         # For now, we assume the server is stateless for this test, or we can mock the reassembler/session state as needed.
         # Send the chunk message
         packet = {
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
             },
-            'from': client_node_id,
-            'to': server_node_id,
+            "from": client_node_id,
+            "to": server_node_id,
         }
         mock_iface = MagicMock()
         mock_iface.myInfo = MagicMock()
@@ -1605,9 +1617,14 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         mock_send_reply = MagicMock()
         # Call the handler
         from btcmesh_server import on_receive_text_message
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+
+        on_receive_text_message(
+            packet, interface=mock_iface, send_reply_func=mock_send_reply
+        )
         expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+        mock_send_reply.assert_called_with(
+            mock_iface, client_node_id, expected_ack, session_id
+        )
 
     def test_chunk_timeout_and_retries(self):
         """
@@ -1623,12 +1640,12 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         # Simulate the server's session state (mock or patch as needed)
         # For now, we assume the server is stateless and just checks for duplicates
         packet = {
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": f"BTC_CHUNK|{session_id}|1/{total_chunks}|{chunk_payload}",
             },
-            'from': client_node_id,
-            'to': server_node_id,
+            "from": client_node_id,
+            "to": server_node_id,
         }
         mock_iface = MagicMock()
         mock_iface.myInfo = MagicMock()
@@ -1636,15 +1653,24 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         mock_send_reply = MagicMock()
         # First send: should ACK
         from btcmesh_server import on_receive_text_message
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+
+        on_receive_text_message(
+            packet, interface=mock_iface, send_reply_func=mock_send_reply
+        )
         expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-        mock_send_reply.assert_called_with(mock_iface, client_node_id, expected_ack, session_id)
+        mock_send_reply.assert_called_with(
+            mock_iface, client_node_id, expected_ack, session_id
+        )
         mock_send_reply.reset_mock()
         # Retry 1: should be ignored (no duplicate ACK)
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        on_receive_text_message(
+            packet, interface=mock_iface, send_reply_func=mock_send_reply
+        )
         mock_send_reply.assert_not_called()
         # Retry 2: should be ignored
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+        on_receive_text_message(
+            packet, interface=mock_iface, send_reply_func=mock_send_reply
+        )
         mock_send_reply.assert_not_called()
 
     def test_session_abort(self):
@@ -1658,19 +1684,24 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         server_node_id = "!deadbeef"
         abort_reason = "User requested abort"
         packet = {
-            'decoded': {
-                'portnum': 'TEXT_MESSAGE_APP',
-                'text': f"BTC_SESSION_ABORT|{session_id}|{abort_reason}"
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "text": f"BTC_SESSION_ABORT|{session_id}|{abort_reason}",
             },
-            'from': client_node_id,
-            'to': server_node_id
+            "from": client_node_id,
+            "to": server_node_id,
         }
         mock_iface = MagicMock()
         mock_iface.myInfo = MagicMock()
         mock_iface.myInfo.my_node_num = server_node_id
         mock_send_reply = MagicMock()
-        with patch('btcmesh_server.server_logger') as mock_logger:
-            on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply, logger=mock_logger)
+        with patch("btcmesh_server.server_logger") as mock_logger:
+            on_receive_text_message(
+                packet,
+                interface=mock_iface,
+                send_reply_func=mock_send_reply,
+                logger=mock_logger,
+            )
             # Should log the abort reason
             mock_logger.info.assert_any_call(
                 f"Session {session_id} aborted by {client_node_id}: {abort_reason}"
@@ -1682,32 +1713,32 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
 class TestMultipleConcurrentSessions(unittest.TestCase):
     def setUp(self):
         # Patch the logger
-        self.patcher_logger = patch('btcmesh_server.server_logger', MagicMock())
+        self.patcher_logger = patch("btcmesh_server.server_logger", MagicMock())
         self.mock_logger = self.patcher_logger.start()
 
         # Patch the transaction reassembler instance that is used in btcmesh_server
         self.patcher_reassembler = patch(
-            'btcmesh_server.transaction_reassembler', autospec=True
+            "btcmesh_server.transaction_reassembler", autospec=True
         )
         self.mock_reassembler = self.patcher_reassembler.start()
         self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX
 
         # Patch send_meshtastic_reply
         self.patcher_send_reply = patch(
-            'btcmesh_server.send_meshtastic_reply', autospec=True
+            "btcmesh_server.send_meshtastic_reply", autospec=True
         )
         self.mock_send_reply = self.patcher_send_reply.start()
 
         # Patch _extract_session_id_from_raw_chunk
         self.patcher_extract_id = patch(
-            'btcmesh_server._extract_session_id_from_raw_chunk', autospec=True
+            "btcmesh_server._extract_session_id_from_raw_chunk", autospec=True
         )
         self.mock_extract_id = self.patcher_extract_id.start()
 
         # Create a mock Meshtastic interface instance
         self.mock_iface = MagicMock()
         self.mock_iface.myInfo = MagicMock()
-        self.mock_iface.myInfo.my_node_num = 0xabcdef  # Server's node number
+        self.mock_iface.myInfo.my_node_num = 0xABCDEF  # Server's node number
 
     def tearDown(self):
         self.patcher_logger.stop()
@@ -1731,20 +1762,47 @@ class TestMultipleConcurrentSessions(unittest.TestCase):
             None,  # client1, chunk1
             None,  # client2, chunk1
             "AAABBB",  # client1, chunk2 (reassembled)
-            "XXYYYY"   # client2, chunk2 (reassembled)
+            "XXYYYY",  # client2, chunk2 (reassembled)
         ]
         # Patch _extract_session_id_from_raw_chunk to return the correct session
         self.mock_extract_id.side_effect = [session1, session2]
         # Interleave chunks: client1 chunk1, client2 chunk1, client1 chunk2, client2 chunk2
         packets = [
-            {'from': client1_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk1a}, 'id': 'p1a', 'channel': 0},
-            {'from': client2_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk2a}, 'id': 'p2a', 'channel': 0},
-            {'from': client1_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk1b}, 'id': 'p1b', 'channel': 0},
-            {'from': client2_id, 'toId': '!abcdef', 'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk2b}, 'id': 'p2b', 'channel': 0},
+            {
+                "from": client1_id,
+                "toId": "!abcdef",
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk1a},
+                "id": "p1a",
+                "channel": 0,
+            },
+            {
+                "from": client2_id,
+                "toId": "!abcdef",
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk2a},
+                "id": "p2a",
+                "channel": 0,
+            },
+            {
+                "from": client1_id,
+                "toId": "!abcdef",
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk1b},
+                "id": "p1b",
+                "channel": 0,
+            },
+            {
+                "from": client2_id,
+                "toId": "!abcdef",
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk2b},
+                "id": "p2b",
+                "channel": 0,
+            },
         ]
         from btcmesh_server import on_receive_text_message
+
         for packet in packets:
-            on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+            on_receive_text_message(
+                packet, self.mock_iface, send_reply_func=self.mock_send_reply
+            )
         # Assert add_chunk was called with correct sender/session for each chunk
         expected_calls = [
             call(client1_id, chunk1a),
@@ -1764,85 +1822,113 @@ class TestMultipleConcurrentSessions(unittest.TestCase):
 
 class TestAckNackAndErrorHandling(unittest.TestCase):
     def setUp(self):
-        self.patcher_logger = patch('btcmesh_server.server_logger', MagicMock())
+        self.patcher_logger = patch("btcmesh_server.server_logger", MagicMock())
         self.mock_logger = self.patcher_logger.start()
         self.patcher_reassembler = patch(
-            'btcmesh_server.transaction_reassembler', autospec=True
+            "btcmesh_server.transaction_reassembler", autospec=True
         )
         self.mock_reassembler = self.patcher_reassembler.start()
         self.mock_reassembler.CHUNK_PREFIX = CHUNK_PREFIX
         self.patcher_send_reply = patch(
-            'btcmesh_server.send_meshtastic_reply', autospec=True
+            "btcmesh_server.send_meshtastic_reply", autospec=True
         )
         self.mock_send_reply = self.patcher_send_reply.start()
         self.patcher_extract_id = patch(
-            'btcmesh_server._extract_session_id_from_raw_chunk', autospec=True
+            "btcmesh_server._extract_session_id_from_raw_chunk", autospec=True
         )
         self.mock_extract_id = self.patcher_extract_id.start()
         self.mock_iface = MagicMock()
         self.mock_iface.myInfo = MagicMock()
-        self.mock_iface.myInfo.my_node_num = 0xabcdef
+        self.mock_iface.myInfo.my_node_num = 0xABCDEF
+
     def tearDown(self):
         self.patcher_logger.stop()
         self.patcher_reassembler.stop()
         self.patcher_send_reply.stop()
         self.patcher_extract_id.stop()
+
     def test_ack_on_valid_chunk(self):
         sender_node_id = 0x12345
         session_id = "sess_ack"
         chunk_msg = f"BTC_TX|{session_id}|1/2|deadbeef"
         self.mock_reassembler.add_chunk.return_value = None
         packet = {
-            'from': sender_node_id,
-            'toId': '!abcdef',
-            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
-            'id': 'packet_ack',
-            'channel': 0
+            "from": sender_node_id,
+            "toId": "!abcdef",
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_msg},
+            "id": "packet_ack",
+            "channel": 0,
         }
         from btcmesh_server import on_receive_text_message
-        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+
+        on_receive_text_message(
+            packet, self.mock_iface, send_reply_func=self.mock_send_reply
+        )
         # Should ACK chunk 1 and request next
         expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-        self.mock_send_reply.assert_called_with(self.mock_iface, '!12345', expected_ack, session_id)
+        self.mock_send_reply.assert_called_with(
+            self.mock_iface, "!12345", expected_ack, session_id
+        )
+
     def test_nack_on_invalid_chunk(self):
         sender_node_id = 0x23456
         session_id = "sess_nack"
         chunk_msg = f"BTC_TX|{session_id}|bad/format|badhex"
-        self.mock_reassembler.add_chunk.side_effect = InvalidChunkFormatError("bad format")
+        self.mock_reassembler.add_chunk.side_effect = InvalidChunkFormatError(
+            "bad format"
+        )
         self.mock_extract_id.return_value = session_id
         packet = {
-            'from': sender_node_id,
-            'toId': '!abcdef',
-            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
-            'id': 'packet_nack',
-            'channel': 0
+            "from": sender_node_id,
+            "toId": "!abcdef",
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_msg},
+            "id": "packet_nack",
+            "channel": 0,
         }
         from btcmesh_server import on_receive_text_message
-        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+
+        on_receive_text_message(
+            packet, self.mock_iface, send_reply_func=self.mock_send_reply
+        )
         expected_nack = f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: bad format"
-        self.mock_send_reply.assert_called_with(self.mock_iface, '!23456', expected_nack, session_id)
+        self.mock_send_reply.assert_called_with(
+            self.mock_iface, "!23456", expected_nack, session_id
+        )
+
     def test_duplicate_chunk_handling(self):
         sender_node_id = 0x34567
         session_id = "sess_dup"
         chunk_msg = f"BTC_TX|{session_id}|1/2|deadbeef"
         # Simulate duplicate: first call returns None, second raises duplicate warning
-        self.mock_reassembler.add_chunk.side_effect = [None, InvalidChunkFormatError("Duplicate chunk")] 
+        self.mock_reassembler.add_chunk.side_effect = [
+            None,
+            InvalidChunkFormatError("Duplicate chunk"),
+        ]
         packet = {
-            'from': sender_node_id,
-            'toId': '!abcdef',
-            'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'text': chunk_msg},
-            'id': 'packet_dup',
-            'channel': 0
+            "from": sender_node_id,
+            "toId": "!abcdef",
+            "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": chunk_msg},
+            "id": "packet_dup",
+            "channel": 0,
         }
         from btcmesh_server import on_receive_text_message
+
         # First call: valid
-        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        on_receive_text_message(
+            packet, self.mock_iface, send_reply_func=self.mock_send_reply
+        )
         # Second call: duplicate
-        on_receive_text_message(packet, self.mock_iface, send_reply_func=self.mock_send_reply)
+        on_receive_text_message(
+            packet, self.mock_iface, send_reply_func=self.mock_send_reply
+        )
         # Should NACK on duplicate
-        expected_nack = f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: Duplicate chunk"
-        self.mock_send_reply.assert_called_with(self.mock_iface, '!34567', expected_nack, session_id)
+        expected_nack = (
+            f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: Duplicate chunk"
+        )
+        self.mock_send_reply.assert_called_with(
+            self.mock_iface, "!34567", expected_nack, session_id
+        )
 
 
-if __name__ == '__main__':
-    unittest.main() 
+if __name__ == "__main__":
+    unittest.main()

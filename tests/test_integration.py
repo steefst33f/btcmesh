@@ -9,11 +9,12 @@ import time
 # from btcmesh_cli import cli_main
 # from btcmesh_server import server_main_logic # Or however server can be run
 
+
 class TestEndToEndIntegration(unittest.TestCase):
 
     def setUp(self):
         # This setup will be complex, involving mock interfaces, queues, etc.
-        self.mock_meshtastic_interface = None # To be implemented
+        self.mock_meshtastic_interface = None  # To be implemented
         self.server_thread = None
         self.mock_rpc_client = MagicMock()
 
@@ -21,7 +22,7 @@ class TestEndToEndIntegration(unittest.TestCase):
         self.cli_to_server_queue = queue.Queue()
         # Simulating Meshtastic network: a queue for messages from Server to CLI
         self.server_to_cli_queue = queue.Queue()
-        
+
         # Patch necessary modules/functions for CLI and Server
         # For example, the function that initializes the real Meshtastic interface
 
@@ -29,20 +30,20 @@ class TestEndToEndIntegration(unittest.TestCase):
         # Cleanup: stop server thread, clear queues etc.
         if self.server_thread and self.server_thread.is_alive():
             # Need a way to signal server thread to stop
-            pass 
-            # self.server_thread.join(timeout=5) 
+            pass
+            # self.server_thread.join(timeout=5)
 
     def mock_meshtastic_sendText_cli(self, text, destinationId=None):
         # CLI sends a message, put it in the queue for the server
         print(f"[CLI SENDING TO SERVER]: {text}")
         self.cli_to_server_queue.put(text)
-        return True # Simulate send success
+        return True  # Simulate send success
 
     def mock_meshtastic_sendText_server(self, text, destinationId=None):
         # Server sends a message, put it in the queue for the CLI
         print(f"[SERVER SENDING TO CLI]: {text}")
         self.server_to_cli_queue.put(text)
-        return True # Simulate send success
+        return True  # Simulate send success
 
     def test_full_transaction_relay(self):
         # Given a server is running (in a thread) and CLI is ready
@@ -74,5 +75,6 @@ class TestEndToEndIntegration(unittest.TestCase):
         #    - Queues are empty eventually (or messages processed).
         #    - Correct print outputs for success from CLI.
 
-if __name__ == '__main__':
-    unittest.main() 
+
+if __name__ == "__main__":
+    unittest.main()

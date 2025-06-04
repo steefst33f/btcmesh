@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 try:
     from core.config_loader import load_app_config, load_bitcoin_rpc_config
     from core.rpc_client import connect_bitcoin_rpc
+
     # Import Tor management functions and SOCKS port from btcmesh_server
     from btcmesh_server import TOR_SOCKS_PORT, start_tor, stop_tor
 except ImportError as e:
@@ -97,7 +98,7 @@ def main():
             sys.exit(1)
 
         # Check for .onion address and start Tor if needed
-        if rpc_config['host'].endswith('.onion'):
+        if rpc_config["host"].endswith(".onion"):
             print(
                 f"Detected .onion address ({rpc_config['host']}). "
                 "Attempting to start Tor..."
@@ -109,7 +110,7 @@ def main():
                     f"{tor_process.pid if tor_process else 'N/A'}"
                 )
                 proxy_url = f"socks5h://localhost:{TOR_SOCKS_PORT}"
-                rpc_config['proxy'] = proxy_url
+                rpc_config["proxy"] = proxy_url
                 print(f"Using Tor SOCKS proxy: {proxy_url}")
             except Exception as e:
                 print(f"Failed to start Tor: {e}")
@@ -125,15 +126,12 @@ def main():
             rpc = connect_bitcoin_rpc(rpc_config)
             print("Successfully initiated connection object.")
         except Exception as e:
-            print(
-                "Failed to establish connection with Bitcoin Core RPC node: "
-                f"{e}"
-            )
+            print("Failed to establish connection with Bitcoin Core RPC node: " f"{e}")
             print(
                 "Check your Bitcoin node's status, RPC settings, and network "
                 "connectivity."
             )
-            if rpc_config.get('proxy'):
+            if rpc_config.get("proxy"):
                 print(
                     "Also, verify Tor is working correctly if a .onion "
                     "address is used."
@@ -158,9 +156,7 @@ def main():
             print("\nBasic connection test successful!")
         except Exception as e:
             print(f"Error calling getblockchaininfo(): {e}")
-            print(
-                "The connection object was created, but an RPC command failed."
-            )
+            print("The connection object was created, but an RPC command failed.")
             print(
                 "This could indicate an issue with the RPC interface on the "
                 "node, permissions, or network issues preventing the "
@@ -168,12 +164,9 @@ def main():
             )
             sys.exit(1)
 
+        print("\nStep 5: Attempting to broadcast an example raw transaction...")
         print(
-            "\nStep 5: Attempting to broadcast an example raw transaction..."
-        )
-        print(
-            f"Using raw transaction hex (first 80 chars): "
-            f"{EXAMPLE_RAW_TX[:80]}..."
+            f"Using raw transaction hex (first 80 chars): " f"{EXAMPLE_RAW_TX[:80]}..."
         )
         try:
             # The sendrawtransaction method in our rpc object
@@ -205,4 +198,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

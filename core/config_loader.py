@@ -7,7 +7,7 @@ from core.logger_setup import server_logger
 # Load environment variables from .env file in the project root
 # Determine the project root by going up one level from the 'core' directory
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOTENV_PATH = os.path.join(PROJECT_ROOT, '.env')
+DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 # A flag to ensure dotenv is loaded only once
 dotenv_loaded = False
@@ -40,8 +40,8 @@ def get_meshtastic_serial_port() -> Optional[str]:
     """
     if not dotenv_loaded:
         load_app_config()  # Ensure config is loaded
-    
-    return os.getenv('MESHTASTIC_SERIAL_PORT')
+
+    return os.getenv("MESHTASTIC_SERIAL_PORT")
 
 
 def load_bitcoin_rpc_config():
@@ -51,27 +51,25 @@ def load_bitcoin_rpc_config():
     Raises ValueError if any required field is missing.
     Story 4.1.
     """
-    host = os.environ.get('BITCOIN_RPC_HOST')
-    port_str = os.environ.get('BITCOIN_RPC_PORT')
-    user = os.environ.get('BITCOIN_RPC_USER')
-    password = os.environ.get('BITCOIN_RPC_PASSWORD')
-    missing_keys = {
-        'host': host, 'port': port_str, 'user': user, 'password': password
-    }
+    host = os.environ.get("BITCOIN_RPC_HOST")
+    port_str = os.environ.get("BITCOIN_RPC_PORT")
+    user = os.environ.get("BITCOIN_RPC_USER")
+    password = os.environ.get("BITCOIN_RPC_PASSWORD")
+    missing_keys = {"host": host, "port": port_str, "user": user, "password": password}
     missing = [k for k, v in missing_keys.items() if not v]
     if missing:
         raise ValueError(
             f"Missing required Bitcoin RPC config fields: {', '.join(missing)}"
         )
-    
+
     # Extract the numerical part of the port string
-    port_val = port_str.split('#')[0].strip()
+    port_val = port_str.split("#")[0].strip()
 
     return {
-        'host': host,
-        'port': int(port_val),  # Use the cleaned port value
-        'user': user,
-        'password': password
+        "host": host,
+        "port": int(port_val),  # Use the cleaned port value
+        "user": user,
+        "password": password,
     }
 
 
@@ -84,25 +82,26 @@ def load_reassembly_timeout():
     """
     if not dotenv_loaded:
         load_app_config()
-    val = os.environ.get('REASSEMBLY_TIMEOUT_SECONDS')
+    val = os.environ.get("REASSEMBLY_TIMEOUT_SECONDS")
     default = 30
     if val is None:
         server_logger.info(
             f"REASSEMBLY_TIMEOUT_SECONDS not set. Using default: {default}s."
         )
-        return default, 'default'
+        return default, "default"
     try:
         timeout = int(val)
         if timeout <= 0:
             raise ValueError()
         server_logger.info(f"Loaded reassembly timeout from env: {timeout}s.")
-        return timeout, 'env'
+        return timeout, "env"
     except Exception:
         server_logger.warning(
             f"Invalid REASSEMBLY_TIMEOUT_SECONDS value '{val}'. "
             f"Using default: {default}s."
         )
-        return default, 'default'
+        return default, "default"
+
 
 # Example of how to extend for more configurations:
 # def get_rpc_host() -> Optional[str]:
@@ -113,4 +112,4 @@ def load_reassembly_timeout():
 # Call load_app_config at module import time if you want it to load
 # automatically when this module is imported. Or, call it explicitly
 # from your main script. For now, let's make it explicit by calling
-# from functions that need the config. 
+# from functions that need the config.
