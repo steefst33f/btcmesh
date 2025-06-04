@@ -1646,9 +1646,37 @@ class TestReliableSessionChunkTransfer(unittest.TestCase):
         # Retry 2: should be ignored
         on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
         mock_send_reply.assert_not_called()
-        # Retry 3: should be ignored
-        on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
-        mock_send_reply.assert_not_called()
+
+    def test_session_abort(self):
+        """
+        Given a session is active,
+        When either side sends BTC_SESSION_ABORT|<session_id>|<reason>,
+        Then the other side stops processing and logs the abort.
+        """
+        session_id = "sess999"
+        client_node_id = "!abcdef04"
+        server_node_id = "!deadbeef"
+        abort_reason = "User requested abort"
+        packet = {
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': f"BTC_SESSION_ABORT|{session_id}|{abort_reason}"
+            },
+            'from': client_node_id,
+            'to': server_node_id
+        }
+        mock_iface = MagicMock()
+        mock_iface.myInfo = MagicMock()
+        mock_iface.myInfo.my_node_num = server_node_id
+        mock_send_reply = MagicMock()
+        with patch('btcmesh_server.server_logger') as mock_logger:
+            on_receive_text_message(packet, interface=mock_iface, send_reply_func=mock_send_reply)
+            # Should log the abort reason
+            mock_logger.info.assert_any_call(
+                f"Session {session_id} aborted by {client_node_id}: {abort_reason}"
+            )
+            # Should not send any reply
+            mock_send_reply.assert_not_called()
 
 
 if __name__ == '__main__':

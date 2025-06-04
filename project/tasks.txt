@@ -68,13 +68,13 @@ lora/
         - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
         - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
 
-- [ ] **Story 1.3: Timeout and Retries**
-    - [ ] *   **As a** client or server,
-    - [ ] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
-    - [ ] *   **So that** transient losses do not cause session failure.
-        - [ ] *   **Given** a message is sent and not acknowledged within 30 seconds,
-        - [ ] *   **When** the sender retries up to 3 times,
-        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+- [x] **Story 1.3: Timeout and Retries**
+    - [x] *   **As a** client or server,
+    - [x] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
+    - [x] *   **So that** transient losses do not cause session failure.
+        - [x] *   **Given** a message is sent and not acknowledged within 30 seconds,
+        - [x] *   **When** the sender retries up to 3 times,
+        - [x] *   **Then** the session continues if a response is received, or aborts after 3 failures.
 
 - [ ] **Story 1.4: Session Abort**
     - [ ] *   **As a** client or server,
@@ -284,13 +284,13 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
         - [x] *   **When** the client sends `BTC_CHUNK|<session_id>|1/<total_chunks>|<hex_payload>`,
         - [x] *   **Then** the server responds with `BTC_CHUNK_ACK|<session_id>|1|OK|REQUEST_CHUNK|2` and is ready for the next chunk.
 
-- [ ] **Story 1.3: Timeout and Retries**
-    - [ ] *   **As a** client or server,
-    - [ ] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
-    - [ ] *   **So that** transient losses do not cause session failure.
-        - [ ] *   **Given** a message is sent and not acknowledged within 30 seconds,
-        - [ ] *   **When** the sender retries up to 3 times,
-        - [ ] *   **Then** the session continues if a response is received, or aborts after 3 failures.
+- [x] **Story 1.3: Timeout and Retries**
+    - [x] *   **As a** client or server,
+    - [x] *   **I want** to retry a message up to 3 times if no response is received within 30 seconds,
+    - [x] *   **So that** transient losses do not cause session failure.
+        - [x] *   **Given** a message is sent and not acknowledged within 30 seconds,
+        - [x] *   **When** the sender retries up to 3 times,
+        - [x] *   **Then** the session continues if a response is received, or aborts after 3 failures.
 
 - [ ] **Story 1.4: Session Abort**
     - [ ] *   **As a** client or server,
