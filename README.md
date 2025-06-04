@@ -45,7 +45,7 @@ btcmesh/
 
 1.  **Clone the Repository**:
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/eddieoz/btcmesh.git
     cd btcmesh
     ```
 
@@ -92,7 +92,7 @@ btcmesh/
         # Example for Tor connection:
         # BITCOIN_RPC_HOST=yourbitcoinrpcnode.onion
     
-    **OBS** The TOR binary used is compiled for Debian. REPLACE it to make it compatible with your distribution. [DOWNLOAD TOR](https://www.torproject.org/download/)
+    **OBS** The TOR binary supplied is part of the Debian package. REPLACE it to make it compatible with your distribution. [DOWNLOAD TOR](https://www.torproject.org/download/)
         ```
 
 5.  **Meshtastic Device Setup**:
@@ -100,7 +100,7 @@ btcmesh/
     *   The Meshtastic Python library, by default, attempts to auto-detect your device. You can specify the serial port explicitly by setting `MESHTASTIC_SERIAL_PORT` in your `.env` file.
     *   Ensure your Bitcoin Core node is configured to accept RPC connections.
     *   Configure the RPC host, port, user, and password in your `.env` file (see step 4).
-    *   **Tor Connectivity**: If `BITCOIN_RPC_HOST` is a `.onion` address, the script will automatically attempt to establish a connection through Tor using the bundled Tor executable (`tor/tor`). No separate Tor installation or configuration is required by the user.
+    *   **Tor Connectivity**: If `BITCOIN_RPC_HOST` is a `.onion` address, the script will automatically attempt to establish a connection through Tor using the bundled Tor executable (`./tor/tor`). No separate Tor installation or configuration is required by the user.
 
 ## Configuration
 
