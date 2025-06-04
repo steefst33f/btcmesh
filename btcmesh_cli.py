@@ -558,8 +558,7 @@ def cli_main(
                                 if msg_chunk_num_int == chunk_num:
                                     nack_applies_to_current_chunk = True
 
-                            # For now, any NACK for the session will trigger a retry for the current chunk
-                            # A more robust system might differentiate NACK types.
+                            # Get error details
                             error_detail = "|".join(
                                 msg_parts[2:]
                             )  # Grab all parts after session_id as detail.
@@ -570,6 +569,14 @@ def cli_main(
                                 f"Received NACK for session {_current_session_id} (chunk {chunk_num}): {error_detail}. Message: {received_msg_text}"
                             )
 
+                            # If this is a broadcast NACK (after all chunks were sent), treat it as final
+                            if i >= total_chunks:
+                                logger.error(
+                                    f"Transaction broadcast failed for session {_current_session_id}: {error_detail}"
+                                )
+                                raise SystemExit(3)  # Specific exit code for broadcast failure
+
+                            # Otherwise, treat as a chunk-level NACK and retry
                             current_retries += 1
                             if current_retries < MAX_RETRIES:
                                 print(
