@@ -175,6 +175,40 @@ def process_result(result: tuple) -> ResultAction:
     return action
 
 
+def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[str]:
+    """Validate the inputs for sending a transaction.
+
+    This is a pure function that validates inputs without touching the GUI.
+
+    Args:
+        dest: The destination node ID
+        tx_hex: The raw transaction hex (already cleaned of whitespace)
+        has_iface: Whether the Meshtastic interface is connected
+
+    Returns:
+        An error message string if validation fails, or None if inputs are valid
+    """
+    if not dest:
+        return "Enter destination node ID"
+
+    if not dest.startswith('!'):
+        return "Destination must start with '!'"
+
+    if not tx_hex:
+        return "Enter transaction hex"
+
+    if len(tx_hex) % 2 != 0:
+        return "Hex must have even length"
+
+    if not is_valid_hex(tx_hex):
+        return "Invalid hex characters"
+
+    if not has_iface:
+        return "Meshtastic not connected"
+
+    return None
+
+
 class QueueLogHandler(logging.Handler):
     """Custom log handler that sends log records to a queue for GUI display."""
 
@@ -415,29 +449,11 @@ class BTCMeshGUI(BoxLayout):
         tx_hex = self.tx_input.text.strip().replace('\n', '').replace(' ', '')
 
         # Validation
-        if not dest:
-            self.status_log.add_message("Error: Enter destination node ID", COLOR_ERROR)
-            return
-
-        if not dest.startswith('!'):
-            self.status_log.add_message("Error: Destination must start with '!'", COLOR_ERROR)
-            return
-
-        if not tx_hex:
-            self.status_log.add_message("Error: Enter transaction hex", COLOR_ERROR)
-            return
-
-        if len(tx_hex) % 2 != 0:
-            self.status_log.add_message("Error: Hex must have even length", COLOR_ERROR)
-            return
-
-        if not is_valid_hex(tx_hex):
-            self.status_log.add_message("Error: Invalid hex characters", COLOR_ERROR)
-            return
-
-        if not self.iface:
-            self.status_log.add_message("Error: Meshtastic not connected", COLOR_ERROR)
-            self._init_meshtastic()
+        error = validate_send_inputs(dest, tx_hex, bool(self.iface))
+        if error:
+            self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
+            if error == "Meshtastic not connected":
+                self._init_meshtastic()
             return
 
         # Start sending
