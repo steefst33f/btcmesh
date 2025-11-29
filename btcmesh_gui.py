@@ -11,6 +11,8 @@ import logging
 import argparse
 import io
 import sys
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional, Any
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -41,6 +43,136 @@ COLOR_ERROR = get_color_from_hex('#F44336')
 COLOR_WARNING = get_color_from_hex('#FF9800')
 COLOR_BG = get_color_from_hex('#1E1E1E')
 COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')
+
+
+def get_log_color(level, msg):
+    """Determine the color for a log message based on level and content.
+
+    Args:
+        level: The logging level (e.g., logging.ERROR, logging.WARNING, logging.INFO)
+        msg: The log message text
+
+    Returns:
+        A color tuple or None for default color
+    """
+    if level >= logging.ERROR:
+        return COLOR_ERROR
+    elif level >= logging.WARNING:
+        return COLOR_WARNING
+    elif 'success' in msg.lower() or 'ack' in msg.lower():
+        return COLOR_SUCCESS
+    return None
+
+
+def get_print_color(msg):
+    """Determine the color for a print message based on content.
+
+    Args:
+        msg: The message text
+
+    Returns:
+        A color tuple or None for default color
+    """
+    msg_lower = msg.lower()
+    if 'error' in msg_lower or 'failed' in msg_lower or 'abort' in msg_lower:
+        return COLOR_ERROR
+    elif 'success' in msg_lower or 'txid' in msg_lower:
+        return COLOR_SUCCESS
+    return None
+
+
+@dataclass
+class ResultAction:
+    """Represents the actions to take in response to a result from a background thread.
+
+    This dataclass separates the logic of determining what to do from the actual
+    GUI updates, making the logic testable without Kivy.
+    """
+    # Connection label updates
+    connection_text: Optional[str] = None
+    connection_color: Optional[Tuple] = None
+
+    # Log messages to display: list of (message, color) tuples
+    log_messages: List[Tuple[str, Optional[Tuple]]] = field(default_factory=list)
+
+    # State changes
+    stop_sending: bool = False
+
+    # Popup actions
+    show_success_popup: Optional[str] = None  # txid if success popup should be shown
+    show_failed_popup: bool = False
+
+    # Interface to store (for 'connected' result type)
+    store_iface: Optional[Any] = None
+
+
+def process_result(result: tuple) -> ResultAction:
+    """Process a result tuple and return the actions to take.
+
+    This is a pure function that determines what GUI actions should be performed
+    based on the result, without actually performing them.
+
+    Args:
+        result: A tuple where result[0] is the result type string
+
+    Returns:
+        A ResultAction describing what GUI updates to make
+    """
+    action = ResultAction()
+    result_type = result[0]
+
+    if result_type == 'connected':
+        iface = result[1]
+        node_id = result[2]
+        action.store_iface = iface
+        action.connection_text = f'Meshtastic: Connected ({node_id})'
+        action.connection_color = COLOR_SUCCESS
+        action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
+
+    elif result_type == 'connection_failed':
+        action.connection_text = 'Meshtastic: Connection failed'
+        action.connection_color = COLOR_ERROR
+        action.log_messages.append(("Failed to connect to Meshtastic device", COLOR_ERROR))
+
+    elif result_type == 'connection_error':
+        error = result[1]
+        action.connection_text = 'Meshtastic: Error'
+        action.connection_color = COLOR_ERROR
+        action.log_messages.append((f"Connection error: {error}", COLOR_ERROR))
+
+    elif result_type == 'log':
+        msg = result[1]
+        level = result[2]
+        color = get_log_color(level, msg)
+        action.log_messages.append((msg, color))
+
+    elif result_type == 'print':
+        msg = result[1]
+        color = get_print_color(msg)
+        action.log_messages.append((msg, color))
+
+    elif result_type == 'cli_finished':
+        exit_code = result[1]
+        if exit_code == 0:
+            action.log_messages.append(("Transaction completed successfully!", COLOR_SUCCESS))
+        else:
+            action.log_messages.append((f"CLI exited with code {exit_code}", COLOR_ERROR))
+        action.stop_sending = True
+
+    elif result_type == 'tx_success':
+        txid = result[1]
+        action.log_messages.append(("Transaction broadcast successful!", COLOR_SUCCESS))
+        action.log_messages.append((f"TXID: {txid}", COLOR_SUCCESS))
+        action.show_success_popup = txid
+        action.stop_sending = True
+
+    elif result_type == 'error':
+        error = result[1]
+        action.log_messages.append((f"Error: {error}", COLOR_ERROR))
+        action.show_failed_popup = True
+        action.stop_sending = True
+
+    return action
 
 
 class QueueLogHandler(logging.Handler):
@@ -246,74 +378,36 @@ class BTCMeshGUI(BoxLayout):
             pass
 
     def _handle_result(self, result):
-        """Handle a result from a background thread."""
-        result_type = result[0]
+        """Handle a result from a background thread.
 
-        if result_type == 'connected':
-            self.iface = result[1]
-            node_id = result[2]
-            self.connection_label.text = f'Meshtastic: Connected ({node_id})'
-            self.connection_label.color = COLOR_SUCCESS
-            self.status_log.add_message(f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS)
+        Uses process_result to determine actions, then applies them to the GUI.
+        """
+        action = process_result(result)
 
-        elif result_type == 'connection_failed':
-            self.connection_label.text = 'Meshtastic: Connection failed'
-            self.connection_label.color = COLOR_ERROR
-            self.status_log.add_message("Failed to connect to Meshtastic device", COLOR_ERROR)
+        # Apply connection label updates
+        if action.connection_text is not None:
+            self.connection_label.text = action.connection_text
+        if action.connection_color is not None:
+            self.connection_label.color = action.connection_color
 
-        elif result_type == 'connection_error':
-            error = result[1]
-            self.connection_label.text = 'Meshtastic: Error'
-            self.connection_label.color = COLOR_ERROR
-            self.status_log.add_message(f"Connection error: {error}", COLOR_ERROR)
+        # Store interface if provided
+        if action.store_iface is not None:
+            self.iface = action.store_iface
 
-        elif result_type == 'log':
-            # Log message from cli_main via QueueLogHandler
-            msg = result[1]
-            level = result[2]
-            if level >= logging.ERROR:
-                color = COLOR_ERROR
-            elif level >= logging.WARNING:
-                color = COLOR_WARNING
-            else:
-                color = COLOR_SUCCESS if 'success' in msg.lower() or 'ack' in msg.lower() else None
+        # Add log messages
+        for msg, color in action.log_messages:
             self.status_log.add_message(msg, color)
 
-        elif result_type == 'print':
-            # Captured print output from cli_main
-            msg = result[1]
-            # Color based on content
-            if 'error' in msg.lower() or 'failed' in msg.lower() or 'abort' in msg.lower():
-                color = COLOR_ERROR
-            elif 'success' in msg.lower() or 'txid' in msg.lower():
-                color = COLOR_SUCCESS
-            else:
-                color = None
-            self.status_log.add_message(msg, color)
-
-        elif result_type == 'cli_finished':
-            exit_code = result[1]
-            if exit_code == 0:
-                self.status_log.add_message("Transaction completed successfully!", COLOR_SUCCESS)
-            else:
-                self.status_log.add_message(f"CLI exited with code {exit_code}", COLOR_ERROR)
+        # Handle state changes
+        if action.stop_sending:
             self.is_sending = False
             self.send_btn.disabled = False
 
-        elif result_type == 'tx_success':
-            txid = result[1]
-            self.status_log.add_message(f"Transaction broadcast successful!", COLOR_SUCCESS)
-            self.status_log.add_message(f"TXID: {txid}", COLOR_SUCCESS)
-            self._show_success_popup(txid)
-            self.is_sending = False
-            self.send_btn.disabled = False
-
-        elif result_type == 'error':
-            error = result[1]
-            self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
+        # Show popups
+        if action.show_success_popup is not None:
+            self._show_success_popup(action.show_success_popup)
+        if action.show_failed_popup:
             self._show_failed_popup()
-            self.is_sending = False
-            self.send_btn.disabled = False
 
     def on_send_pressed(self, instance):
         """Handle send button press."""
