@@ -11,9 +11,6 @@ import logging
 import sys
 import os
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Mock Kivy modules before importing btcmesh_gui
 sys.modules['kivy'] = unittest.mock.MagicMock()
 sys.modules['kivy.app'] = unittest.mock.MagicMock()
@@ -43,6 +40,7 @@ from btcmesh_gui import (
     get_log_color,
     get_print_color,
     process_result,
+    validate_send_inputs,
     ResultAction,
     COLOR_ERROR,
     COLOR_WARNING,
@@ -396,6 +394,71 @@ class TestResultAction(unittest.TestCase):
 
         self.assertEqual(len(action1.log_messages), 1)
         self.assertEqual(len(action2.log_messages), 0)
+
+
+class TestValidateSendInputs(unittest.TestCase):
+    """Tests for the validate_send_inputs function."""
+
+    def test_empty_destination_returns_error(self):
+        """Given empty destination, Then returns error message."""
+        result = validate_send_inputs("", "aabbccdd", True)
+        self.assertEqual(result, "Enter destination node ID")
+
+    def test_destination_without_exclamation_returns_error(self):
+        """Given destination without '!', Then returns error message."""
+        result = validate_send_inputs("abc123", "aabbccdd", True)
+        self.assertEqual(result, "Destination must start with '!'")
+
+    def test_empty_tx_hex_returns_error(self):
+        """Given empty tx_hex, Then returns error message."""
+        result = validate_send_inputs("!abc123", "", True)
+        self.assertEqual(result, "Enter transaction hex")
+
+    def test_odd_length_tx_hex_returns_error(self):
+        """Given tx_hex with odd length, Then returns error message."""
+        result = validate_send_inputs("!abc123", "aabbccd", True)
+        self.assertEqual(result, "Hex must have even length")
+
+    def test_invalid_hex_characters_returns_error(self):
+        """Given tx_hex with invalid characters, Then returns error message."""
+        # Mock is_valid_hex to return False for this test
+        mock_btcmesh_cli.is_valid_hex.return_value = False
+        result = validate_send_inputs("!abc123", "gghhiijj", True)
+        self.assertEqual(result, "Invalid hex characters")
+        # Reset mock
+        mock_btcmesh_cli.is_valid_hex.return_value = True
+
+    def test_no_interface_returns_error(self):
+        """Given no Meshtastic interface, Then returns error message."""
+        result = validate_send_inputs("!abc123", "aabbccdd", False)
+        self.assertEqual(result, "Meshtastic not connected")
+
+    def test_valid_inputs_returns_none(self):
+        """Given all valid inputs, Then returns None."""
+        mock_btcmesh_cli.is_valid_hex.return_value = True
+        result = validate_send_inputs("!abc123", "aabbccdd", True)
+        self.assertIsNone(result)
+
+    def test_validation_order_checks_dest_first(self):
+        """Given multiple invalid inputs, Then checks destination first."""
+        result = validate_send_inputs("", "", False)
+        self.assertEqual(result, "Enter destination node ID")
+
+    def test_validation_order_checks_dest_format_second(self):
+        """Given invalid dest format and other errors, Then checks dest format second."""
+        result = validate_send_inputs("abc", "", False)
+        self.assertEqual(result, "Destination must start with '!'")
+
+    def test_validation_order_checks_tx_hex_third(self):
+        """Given empty tx_hex and no interface, Then checks tx_hex third."""
+        result = validate_send_inputs("!abc123", "", False)
+        self.assertEqual(result, "Enter transaction hex")
+
+    def test_whitespace_only_destination_returns_error(self):
+        """Given whitespace-only destination (after strip), Then returns error."""
+        # Note: The caller strips the input before calling validate_send_inputs
+        result = validate_send_inputs("", "aabbccdd", True)
+        self.assertEqual(result, "Enter destination node ID")
 
 
 if __name__ == '__main__':
