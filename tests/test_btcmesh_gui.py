@@ -487,6 +487,27 @@ class TestPopupsStory103(unittest.TestCase):
         self.assertIn('successful', action.log_messages[0][0].lower())
         self.assertIn('abc123def456789', action.log_messages[1][0])
 
+    def test_print_with_txid_success_triggers_popup(self):
+        """Given 'print' result with CLI success message and TXID, Then shows popup."""
+        # This is the actual message format from cli_main
+        result = ('print', 'Transaction successfully broadcast by relay. TXID: abc123def456')
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertEqual(action.show_success_popup, 'abc123def456')
+        self.assertEqual(len(action.log_messages), 1)
+
+    def test_print_with_txid_only_does_not_trigger_popup(self):
+        """Given 'print' result with just TXID (no success), Then no popup."""
+        # Just TXID without "successfully" should not trigger popup
+        result = ('print', 'TXID: abc123def456')
+
+        action = process_result(result)
+
+        self.assertFalse(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+
     def test_error_result_stops_sending(self):
         """Given 'error' result, Then stops sending and shows error in log."""
         result = ('error', 'Something went wrong')

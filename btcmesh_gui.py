@@ -154,6 +154,15 @@ def process_result(result: tuple) -> ResultAction:
         color = get_print_color(msg)
         action.log_messages.append((msg, color))
 
+        # Detect success message with TXID and trigger popup
+        # CLI prints: "Transaction successfully broadcast by relay. TXID: <txid>"
+        if 'TXID:' in msg and 'successfully' in msg.lower():
+            # Extract TXID from message
+            txid_start = msg.find('TXID:') + 5
+            txid = msg[txid_start:].strip().split()[0] if txid_start > 5 else 'Unknown'
+            action.show_success_popup = txid
+            action.stop_sending = True
+
     elif result_type == 'cli_finished':
         exit_code = result[1]
         if exit_code == 0:
