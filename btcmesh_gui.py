@@ -176,6 +176,10 @@ def process_result(result: tuple) -> ResultAction:
         action.show_failed_popup = True
         action.stop_sending = True
 
+    elif result_type == 'aborted':
+        action.log_messages.append(("Transaction aborted by user", COLOR_WARNING))
+        action.stop_sending = True
+
     return action
 
 
@@ -274,6 +278,7 @@ class BTCMeshGUI(BoxLayout):
         self.iface = None
         self.send_thread = None
         self.result_queue = queue.Queue()
+        self.abort_requested = False
 
         self._build_ui()
 
@@ -407,13 +412,14 @@ class BTCMeshGUI(BoxLayout):
         self.example_btn.bind(on_press=self.on_load_example)
         btn_box.add_widget(self.example_btn)
 
-        self.clear_btn = Button(
-            text='Clear',
-            background_color=COLOR_BG_LIGHT,
+        self.abort_btn = Button(
+            text='Abort',
+            background_color=COLOR_ERROR,
             background_normal='',
+            disabled=True,
         )
-        self.clear_btn.bind(on_press=self.on_clear)
-        btn_box.add_widget(self.clear_btn)
+        self.abort_btn.bind(on_press=self.on_abort_pressed)
+        btn_box.add_widget(self.abort_btn)
 
         self.add_widget(btn_box)
 
@@ -437,6 +443,17 @@ class BTCMeshGUI(BoxLayout):
         self.add_widget(log_label)
         self.status_log = StatusLog(size_hint_y=1)
         self.add_widget(self.status_log)
+
+        # Clear button at bottom
+        self.clear_btn = Button(
+            text='Clear Log',
+            size_hint_y=None,
+            height=40,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+        )
+        self.clear_btn.bind(on_press=self.on_clear)
+        self.add_widget(self.clear_btn)
 
         # Try to connect to Meshtastic on startup
         Clock.schedule_once(lambda dt: self._init_meshtastic(), 1)
@@ -494,6 +511,7 @@ class BTCMeshGUI(BoxLayout):
         if action.stop_sending:
             self.is_sending = False
             self.send_btn.disabled = False
+            self.abort_btn.disabled = True
 
         # Show popups
         if action.show_success_popup is not None:
@@ -517,6 +535,8 @@ class BTCMeshGUI(BoxLayout):
         # Start sending
         self.is_sending = True
         self.send_btn.disabled = True
+        self.abort_btn.disabled = False
+        self.abort_requested = False
         self.status_log.clear()
         dry_run = self.dry_run_toggle.state == 'down'
         if dry_run:
@@ -534,6 +554,12 @@ class BTCMeshGUI(BoxLayout):
 
     def _send_transaction_thread(self, dest, tx_hex, dry_run):
         """Send transaction in background thread using cli_main."""
+        gui_instance = self  # Reference to check abort_requested
+
+        class AbortedException(Exception):
+            """Raised when user requests abort."""
+            pass
+
         try:
             # Create a custom logger that sends to our queue
             gui_logger = logging.getLogger('btcmesh_gui')
@@ -560,6 +586,9 @@ class BTCMeshGUI(BoxLayout):
                     self.original_stdout = sys.stdout
 
                 def write(self, text):
+                    # Check for abort request
+                    if gui_instance.abort_requested:
+                        raise AbortedException()
                     # Write to original stdout for debugging
                     self.original_stdout.write(text)
                     # Send non-empty lines to the queue
@@ -570,6 +599,11 @@ class BTCMeshGUI(BoxLayout):
 
                 def flush(self):
                     self.original_stdout.flush()
+
+            # Check for abort before starting
+            if self.abort_requested:
+                self.result_queue.put(('aborted',))
+                return
 
             # Run cli_main with our injected logger and interface
             print_capture = PrintCapture(self.result_queue)
@@ -585,8 +619,14 @@ class BTCMeshGUI(BoxLayout):
             finally:
                 sys.stdout = original_stdout
 
-            self.result_queue.put(('cli_finished', exit_code))
+            # Check for abort after completion
+            if self.abort_requested:
+                self.result_queue.put(('aborted',))
+            else:
+                self.result_queue.put(('cli_finished', exit_code))
 
+        except AbortedException:
+            self.result_queue.put(('aborted',))
         except Exception as e:
             gui_logger.error(f"GUI send error: {e}", exc_info=True)
             self.result_queue.put(('error', str(e)))
@@ -633,12 +673,17 @@ class BTCMeshGUI(BoxLayout):
         self.tx_input.text = EXAMPLE_RAW_TX
         self.status_log.add_message("Loaded example destination and transaction")
 
+    def on_abort_pressed(self, instance):
+        """Handle abort button press."""
+        if self.is_sending:
+            self.abort_requested = True
+            self.status_log.add_message("Abort requested...", COLOR_WARNING)
+            self.abort_btn.disabled = True
+
     def on_clear(self, instance):
-        """Clear all inputs and logs."""
-        self.dest_input.text = ''
-        self.tx_input.text = ''
+        """Clear the status log."""
         self.status_log.clear()
-        self.status_log.add_message("Cleared")
+        self.status_log.add_message("Log cleared")
 
 
 class BTCMeshApp(App):
