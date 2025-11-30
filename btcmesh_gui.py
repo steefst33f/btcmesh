@@ -15,9 +15,12 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
+from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
 from kivy.clock import Clock
@@ -43,6 +46,7 @@ COLOR_ERROR = get_color_from_hex('#F44336')
 COLOR_WARNING = get_color_from_hex('#FF9800')
 COLOR_BG = get_color_from_hex('#1E1E1E')
 COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')
+COLOR_SECUNDARY = get_color_from_hex("#FFFFFF")
 
 
 def get_log_color(level, msg):
@@ -265,7 +269,7 @@ class BTCMeshGUI(BoxLayout):
         super().__init__(**kwargs)
         self.orientation = 'vertical'
         self.padding = 15
-        self.spacing = 10
+        self.spacing = 20
 
         self.iface = None
         self.send_thread = None
@@ -279,15 +283,24 @@ class BTCMeshGUI(BoxLayout):
     def _build_ui(self):
         """Build the user interface."""
         # Title
-        title_box = BoxLayout(size_hint_y=None, height=50)
+        title_box = BoxLayout(size_hint_y=None, height=50, padding=15)
         title = Label(
             text='BTCMesh Transaction Relay',
-            font_size=22,
+            font_size=42,
             bold=True,
             color=COLOR_PRIMARY,
         )
         title_box.add_widget(title)
         self.add_widget(title_box)
+
+        # Orange separator line
+        separator1 = Widget(size_hint_y=None, height=2)
+        with separator1.canvas:
+            Color(*COLOR_PRIMARY)
+            self._sep_rect1 = Rectangle(pos=separator1.pos, size=separator1.size)
+        separator1.bind(pos=lambda inst, val: setattr(self._sep_rect1, 'pos', val))
+        separator1.bind(size=lambda inst, val: setattr(self._sep_rect1, 'size', val))
+        self.add_widget(separator1)
 
         # Destination input
         dest_label = Label(
@@ -304,8 +317,8 @@ class BTCMeshGUI(BoxLayout):
             size_hint_y=None,
             height=45,
             background_color=COLOR_BG_LIGHT,
-            foreground_color=(1, 1, 1, 1),
-            cursor_color=(1, 1, 1, 1),
+            foreground_color=COLOR_SECUNDARY,
+            cursor_color=COLOR_SECUNDARY,
         )
         self.add_widget(self.dest_input)
 
@@ -324,10 +337,55 @@ class BTCMeshGUI(BoxLayout):
             size_hint_y=None,
             height=180,
             background_color=COLOR_BG_LIGHT,
-            foreground_color=(1, 1, 1, 1),
-            cursor_color=(1, 1, 1, 1),
+            foreground_color=COLOR_SECUNDARY,
+            cursor_color=COLOR_SECUNDARY,
         )
         self.add_widget(self.tx_input)
+
+        # Dry run toggle
+        dry_run_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
+
+        # Label first, takes remaining space
+        dry_run_label = Label(
+            text='Dry run (simulate only)',
+            size_hint_x=1,
+            halign='left',
+            valign='middle',
+        )
+        dry_run_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        dry_run_box.add_widget(dry_run_label)
+
+        # Toggle button on the right with fixed width
+        self.dry_run_toggle = ToggleButton(
+            text='NO',
+            size_hint_x=None,
+            width=60,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            background_down='',
+        )
+
+        def update_dry_run_toggle(instance, state):
+            if state == 'down':
+                instance.text = 'YES'
+                instance.background_color = COLOR_PRIMARY
+            else:
+                instance.text = 'NO'
+                instance.background_color = COLOR_BG_LIGHT
+
+        self.dry_run_toggle.bind(state=update_dry_run_toggle)
+        dry_run_box.add_widget(self.dry_run_toggle)
+
+        self.add_widget(dry_run_box)
+
+        # Orange separator line
+        separator2 = Widget(size_hint_y=None, height=2)
+        with separator2.canvas:
+            Color(*COLOR_PRIMARY)
+            self._sep_rect2 = Rectangle(pos=separator2.pos, size=separator2.size)
+        separator2.bind(pos=lambda inst, val: setattr(self._sep_rect2, 'pos', val))
+        separator2.bind(size=lambda inst, val: setattr(self._sep_rect2, 'size', val))
+        self.add_widget(separator2)
 
         # Button row
         btn_box = BoxLayout(size_hint_y=None, height=50, spacing=10)
@@ -460,17 +518,21 @@ class BTCMeshGUI(BoxLayout):
         self.is_sending = True
         self.send_btn.disabled = True
         self.status_log.clear()
-        self.status_log.add_message(f"Starting transaction send to {dest}...")
+        dry_run = self.dry_run_toggle.state == 'down'
+        if dry_run:
+            self.status_log.add_message(f"Starting DRY RUN transaction send to {dest}...")
+        else:
+            self.status_log.add_message(f"Starting transaction send to {dest}...")
 
         # Run send in background thread
         self.send_thread = threading.Thread(
             target=self._send_transaction_thread,
-            args=(dest, tx_hex),
+            args=(dest, tx_hex, dry_run),
             daemon=True
         )
         self.send_thread.start()
 
-    def _send_transaction_thread(self, dest, tx_hex):
+    def _send_transaction_thread(self, dest, tx_hex, dry_run):
         """Send transaction in background thread using cli_main."""
         try:
             # Create a custom logger that sends to our queue
@@ -486,7 +548,7 @@ class BTCMeshGUI(BoxLayout):
             args = argparse.Namespace(
                 destination=dest,
                 tx=tx_hex,
-                dry_run=False,
+                dry_run=dry_run,
                 session_id=None  # Let cli_main generate one
             )
 
@@ -566,9 +628,10 @@ class BTCMeshGUI(BoxLayout):
 
 
     def on_load_example(self, instance):
-        """Load example transaction."""
+        """Load example transaction and destination."""
+        self.dest_input.text = '!abcd1234'
         self.tx_input.text = EXAMPLE_RAW_TX
-        self.status_log.add_message("Loaded example transaction")
+        self.status_log.add_message("Loaded example destination and transaction")
 
     def on_clear(self, instance):
         """Clear all inputs and logs."""
