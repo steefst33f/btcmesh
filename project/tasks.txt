@@ -385,21 +385,16 @@ lora/
     *   _Note: Implemented StatusLog widget with ScrollView, color-coded messages via `get_log_color()` and `get_print_color()` pure functions. Uses QueueLogHandler and ResultAction for thread-safe message passing from background threads to GUI._
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestStatusLogStory102`)._
 
-- [x] **Story 10.3: Implement Success/Failure Popups**
+- [x] **Story 10.3: Implement Success Popup**
 - [x] *   **As a** user,
-- [x] *   **I want** clear popup notifications for transaction results,
-- [x] *   **So that** I immediately know if my transaction succeeded or failed.
+- [x] *   **I want** a clear popup notification when my transaction succeeds,
+- [x] *   **So that** I immediately know my transaction was broadcast.
     - [x] *   **Scenario:** Transaction broadcast succeeds
         - [x] *   **Given** the relay returns a SUCCESS ACK with TXID.
         - [x] *   **When** the GUI processes the tx_success result.
         - [x] *   **Then** a success popup appears with "Transaction Sent!" and the TXID.
         - [x] *   **And** the popup has an OK button to dismiss.
-    - [x] *   **Scenario:** Transaction fails
-        - [x] *   **Given** an error occurs during sending.
-        - [x] *   **When** the GUI processes the error result.
-        - [ ] *   **Then** a failure popup appears with "Transaction Failed and the error that accured".
-        - [ ] *   **And** the popup has an OK button to dismiss.
-    *   _Note: Implemented `_show_success_popup()` and `_show_failed_popup()` using Kivy Popup widget._
+    *   _Note: Implemented `_show_success_popup()` using Kivy Popup widget._
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestPopupsStory103`)._
 
 ---

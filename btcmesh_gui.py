@@ -104,7 +104,6 @@ class ResultAction:
 
     # Popup actions
     show_success_popup: Optional[str] = None  # txid if success popup should be shown
-    show_failed_popup: bool = False
 
     # Interface to store (for 'connected' result type)
     store_iface: Optional[Any] = None
@@ -173,7 +172,6 @@ def process_result(result: tuple) -> ResultAction:
     elif result_type == 'error':
         error = result[1]
         action.log_messages.append((f"Error: {error}", COLOR_ERROR))
-        action.show_failed_popup = True
         action.stop_sending = True
 
     elif result_type == 'aborted':
@@ -516,8 +514,6 @@ class BTCMeshGUI(BoxLayout):
         # Show popups
         if action.show_success_popup is not None:
             self._show_success_popup(action.show_success_popup)
-        if action.show_failed_popup:
-            self._show_failed_popup()
 
     def on_send_pressed(self, instance):
         """Handle send button press."""
@@ -637,8 +633,8 @@ class BTCMeshGUI(BoxLayout):
         content.add_widget(Label(text='Transaction Sent!', font_size=18, bold=True))
         content.add_widget(Label(text=f'TXID:\n{txid}', text_size=(300, None)))
 
-        close_btn = Button(text='Close', size_hint_y=None, height=40)
-        content.add_widget(close_btn)
+        ok_btn = Button(text='OK', size_hint_y=None, height=40)
+        content.add_widget(ok_btn)
 
         popup = Popup(
             title='Success',
@@ -646,26 +642,8 @@ class BTCMeshGUI(BoxLayout):
             size_hint=(0.9, 0.4),
             auto_dismiss=True,
         )
-        close_btn.bind(on_press=popup.dismiss)
+        ok_btn.bind(on_press=popup.dismiss)
         popup.open()
-
-    def _show_failed_popup(self):
-        """Show failed popup."""
-        content = BoxLayout(orientation='vertical', padding=20, spacing=10)
-        content.add_widget(Label(text='Transaction Broadcast Failed!', font_size=18, bold=True))
-
-        close_btn = Button(text='Close', size_hint_y=None, height=40)
-        content.add_widget(close_btn)
-
-        popup = Popup(
-            title='Failed',
-            content=content,
-            size_hint=(0.9, 0.4),
-            auto_dismiss=True,
-        )
-        close_btn.bind(on_press=popup.dismiss)
-        popup.open()
-
 
     def on_load_example(self, instance):
         """Load example transaction and destination."""

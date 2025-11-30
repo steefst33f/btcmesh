@@ -314,7 +314,6 @@ class TestStatusLogStory102(unittest.TestCase):
         self.assertEqual(action.log_messages, [])
         self.assertFalse(action.stop_sending)
         self.assertIsNone(action.show_success_popup)
-        self.assertFalse(action.show_failed_popup)
         self.assertIsNone(action.store_iface)
 
     def test_result_action_log_messages_mutable_default(self):
@@ -338,7 +337,6 @@ class TestStatusLogStory102(unittest.TestCase):
         self.assertEqual(len(action.log_messages), 0)
         self.assertFalse(action.stop_sending)
         self.assertIsNone(action.show_success_popup)
-        self.assertFalse(action.show_failed_popup)
 
     # --- get_log_color tests (color coding for log messages) ---
 
@@ -489,14 +487,13 @@ class TestPopupsStory103(unittest.TestCase):
         self.assertIn('successful', action.log_messages[0][0].lower())
         self.assertIn('abc123def456789', action.log_messages[1][0])
 
-    def test_error_result_shows_failed_popup(self):
-        """Given 'error' result, Then shows failed popup and error message."""
+    def test_error_result_stops_sending(self):
+        """Given 'error' result, Then stops sending and shows error in log."""
         result = ('error', 'Something went wrong')
 
         action = process_result(result)
 
         self.assertTrue(action.stop_sending)
-        self.assertTrue(action.show_failed_popup)
         self.assertIn('Something went wrong', action.log_messages[0][0])
         self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
 
