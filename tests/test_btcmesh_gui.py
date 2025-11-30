@@ -8,32 +8,6 @@ import unittest
 import unittest.mock
 import queue
 import logging
-import sys
-import os
-
-# Mock Kivy modules before importing btcmesh_gui
-sys.modules['kivy'] = unittest.mock.MagicMock()
-sys.modules['kivy.app'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.boxlayout'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.label'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.textinput'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.button'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.scrollview'] = unittest.mock.MagicMock()
-sys.modules['kivy.uix.popup'] = unittest.mock.MagicMock()
-sys.modules['kivy.clock'] = unittest.mock.MagicMock()
-sys.modules['kivy.core'] = unittest.mock.MagicMock()
-sys.modules['kivy.core.window'] = unittest.mock.MagicMock()
-sys.modules['kivy.properties'] = unittest.mock.MagicMock()
-sys.modules['kivy.utils'] = unittest.mock.MagicMock()
-
-# Mock btcmesh_cli module to avoid its dependencies (pubsub, meshtastic, etc.)
-mock_btcmesh_cli = unittest.mock.MagicMock()
-mock_btcmesh_cli.is_valid_hex = unittest.mock.MagicMock(return_value=True)
-mock_btcmesh_cli.initialize_meshtastic_interface_cli = unittest.mock.MagicMock()
-mock_btcmesh_cli.cli_main = unittest.mock.MagicMock()
-mock_btcmesh_cli.EXAMPLE_RAW_TX = "0100000001..."
-sys.modules['btcmesh_cli'] = mock_btcmesh_cli
 
 from btcmesh_gui import (
     QueueLogHandler,
@@ -421,12 +395,8 @@ class TestValidateSendInputs(unittest.TestCase):
 
     def test_invalid_hex_characters_returns_error(self):
         """Given tx_hex with invalid characters, Then returns error message."""
-        # Mock is_valid_hex to return False for this test
-        mock_btcmesh_cli.is_valid_hex.return_value = False
         result = validate_send_inputs("!abc123", "gghhiijj", True)
         self.assertEqual(result, "Invalid hex characters")
-        # Reset mock
-        mock_btcmesh_cli.is_valid_hex.return_value = True
 
     def test_no_interface_returns_error(self):
         """Given no Meshtastic interface, Then returns error message."""
@@ -435,7 +405,6 @@ class TestValidateSendInputs(unittest.TestCase):
 
     def test_valid_inputs_returns_none(self):
         """Given all valid inputs, Then returns None."""
-        mock_btcmesh_cli.is_valid_hex.return_value = True
         result = validate_send_inputs("!abc123", "aabbccdd", True)
         self.assertIsNone(result)
 
