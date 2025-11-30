@@ -2,12 +2,43 @@
 """
 Unit tests for btcmesh_gui.py
 
-Tests the GUI logic.
+Tests the GUI logic, organized by story number from project/tasks.txt.
 """
+import sys
 import unittest
 import unittest.mock
 import queue
 import logging
+
+# Mock Kivy modules before importing btcmesh_gui
+# This is necessary because Python loads the entire module (including Kivy imports)
+# before extracting the specific functions we want to test
+# These mocks are needed to also be able to run the tests in an environment
+# without Kivy installed (like a CI server), otherwise they would fail.
+kivy_mock = unittest.mock.MagicMock()
+# get_color_from_hex should return a tuple like (r, g, b, a)
+kivy_mock.get_color_from_hex = lambda _: (1, 1, 1, 1)
+sys.modules['kivy'] = kivy_mock
+sys.modules['kivy.app'] = kivy_mock
+sys.modules['kivy.uix'] = kivy_mock
+sys.modules['kivy.uix.boxlayout'] = kivy_mock
+sys.modules['kivy.uix.label'] = kivy_mock
+sys.modules['kivy.uix.textinput'] = kivy_mock
+sys.modules['kivy.uix.button'] = kivy_mock
+sys.modules['kivy.uix.scrollview'] = kivy_mock
+sys.modules['kivy.uix.popup'] = kivy_mock
+sys.modules['kivy.uix.widget'] = kivy_mock
+sys.modules['kivy.uix.togglebutton'] = kivy_mock
+sys.modules['kivy.clock'] = kivy_mock
+sys.modules['kivy.graphics'] = kivy_mock
+sys.modules['kivy.core'] = kivy_mock
+sys.modules['kivy.core.window'] = kivy_mock
+sys.modules['kivy.properties'] = kivy_mock
+sys.modules['kivy.utils'] = kivy_mock
+
+# Mock pubsub (used by btcmesh_cli)
+pubsub_mock = unittest.mock.MagicMock()
+sys.modules['pubsub'] = pubsub_mock
 
 from btcmesh_gui import (
     QueueLogHandler,
@@ -22,356 +53,13 @@ from btcmesh_gui import (
 )
 
 
-class TestQueueLogHandler(unittest.TestCase):
-    """Tests for the QueueLogHandler class."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.result_queue = queue.Queue()
-        self.handler = QueueLogHandler(self.result_queue)
-        self.handler.setFormatter(logging.Formatter('%(message)s'))
-
-    def test_emit_info_message(self):
-        """Given an INFO log record, Then it should be added to the queue with correct level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.INFO,
-            pathname='test.py',
-            lineno=1,
-            msg='Test info message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        self.assertFalse(self.result_queue.empty())
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test info message')
-        self.assertEqual(result[2], logging.INFO)
-
-    def test_emit_error_message(self):
-        """Given an ERROR log record, Then it should be added to the queue with ERROR level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.ERROR,
-            pathname='test.py',
-            lineno=1,
-            msg='Test error message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test error message')
-        self.assertEqual(result[2], logging.ERROR)
-
-    def test_emit_warning_message(self):
-        """Given a WARNING log record, Then it should be added to the queue with WARNING level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.WARNING,
-            pathname='test.py',
-            lineno=1,
-            msg='Test warning message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test warning message')
-        self.assertEqual(result[2], logging.WARNING)
-
-    def test_emit_with_format_args(self):
-        """Given a log record with format arguments, Then the message should be formatted."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.INFO,
-            pathname='test.py',
-            lineno=1,
-            msg='Chunk %d of %d sent',
-            args=(3, 10),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[1], 'Chunk 3 of 10 sent')
-
-    def test_logger_integration(self):
-        """Given a logger with QueueLogHandler, Then log messages should appear in queue."""
-        logger = logging.getLogger('test_gui_logger')
-        logger.setLevel(logging.DEBUG)
-        logger.handlers.clear()
-        logger.addHandler(self.handler)
-
-        logger.info('Test message from logger')
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test message from logger')
-
-
-class TestGetLogColor(unittest.TestCase):
-    """Tests for the get_log_color function."""
-
-    def test_error_level_returns_error_color(self):
-        """Given ERROR level, Then returns COLOR_ERROR regardless of message."""
-        result = get_log_color(logging.ERROR, "some message")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_critical_level_returns_error_color(self):
-        """Given CRITICAL level, Then returns COLOR_ERROR."""
-        result = get_log_color(logging.CRITICAL, "critical issue")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_warning_level_returns_warning_color(self):
-        """Given WARNING level, Then returns COLOR_WARNING."""
-        result = get_log_color(logging.WARNING, "warning message")
-        self.assertEqual(result, COLOR_WARNING)
-
-    def test_info_with_success_keyword_returns_success_color(self):
-        """Given INFO level with 'success' in message, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Transaction success")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_info_with_ack_keyword_returns_success_color(self):
-        """Given INFO level with 'ack' in message, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Received ACK from node")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_info_without_keywords_returns_none(self):
-        """Given INFO level without success keywords, Then returns None."""
-        result = get_log_color(logging.INFO, "Processing transaction")
-        self.assertIsNone(result)
-
-    def test_debug_without_keywords_returns_none(self):
-        """Given DEBUG level without success keywords, Then returns None."""
-        result = get_log_color(logging.DEBUG, "Debug info")
-        self.assertIsNone(result)
-
-    def test_case_insensitive_success_detection(self):
-        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Operation SUCCESS")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-
-class TestGetPrintColor(unittest.TestCase):
-    """Tests for the get_print_color function."""
-
-    def test_error_keyword_returns_error_color(self):
-        """Given message with 'error', Then returns COLOR_ERROR."""
-        result = get_print_color("An error occurred")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_failed_keyword_returns_error_color(self):
-        """Given message with 'failed', Then returns COLOR_ERROR."""
-        result = get_print_color("Transaction failed")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_abort_keyword_returns_error_color(self):
-        """Given message with 'abort', Then returns COLOR_ERROR."""
-        result = get_print_color("Aborting operation")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_success_keyword_returns_success_color(self):
-        """Given message with 'success', Then returns COLOR_SUCCESS."""
-        result = get_print_color("Transaction success")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_txid_keyword_returns_success_color(self):
-        """Given message with 'txid', Then returns COLOR_SUCCESS."""
-        result = get_print_color("TXID: abc123def456")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_neutral_message_returns_none(self):
-        """Given message without keywords, Then returns None."""
-        result = get_print_color("Processing transaction")
-        self.assertIsNone(result)
-
-    def test_case_insensitive_error_detection(self):
-        """Given message with 'ERROR' uppercase, Then returns COLOR_ERROR."""
-        result = get_print_color("ERROR: something went wrong")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_case_insensitive_success_detection(self):
-        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
-        result = get_print_color("Operation SUCCESS")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-
-class TestProcessResult(unittest.TestCase):
-    """Tests for the process_result function."""
-
-    def test_connected_result_sets_connection_info(self):
-        """Given 'connected' result, Then sets connection text, color, and stores iface."""
-        mock_iface = unittest.mock.MagicMock()
-        result = ('connected', mock_iface, '!abc123')
-
-        action = process_result(result)
-
-        self.assertEqual(action.connection_text, 'Meshtastic: Connected (!abc123)')
-        self.assertEqual(action.connection_color, COLOR_SUCCESS)
-        self.assertEqual(action.store_iface, mock_iface)
-        self.assertEqual(len(action.log_messages), 1)
-        self.assertIn('Connected to Meshtastic device: !abc123', action.log_messages[0][0])
-
-    def test_connection_failed_result(self):
-        """Given 'connection_failed' result, Then sets error connection info."""
-        result = ('connection_failed', None, None)
-
-        action = process_result(result)
-
-        self.assertEqual(action.connection_text, 'Meshtastic: Connection failed')
-        self.assertEqual(action.connection_color, COLOR_ERROR)
-        self.assertEqual(len(action.log_messages), 1)
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_connection_error_result(self):
-        """Given 'connection_error' result, Then includes error message."""
-        result = ('connection_error', 'Device not found', None)
-
-        action = process_result(result)
-
-        self.assertEqual(action.connection_text, 'Meshtastic: Error')
-        self.assertEqual(action.connection_color, COLOR_ERROR)
-        self.assertIn('Device not found', action.log_messages[0][0])
-
-    def test_log_result_with_error_level(self):
-        """Given 'log' result with ERROR level, Then log message has error color."""
-        result = ('log', 'An error occurred', logging.ERROR)
-
-        action = process_result(result)
-
-        self.assertEqual(len(action.log_messages), 1)
-        self.assertEqual(action.log_messages[0][0], 'An error occurred')
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_log_result_with_warning_level(self):
-        """Given 'log' result with WARNING level, Then log message has warning color."""
-        result = ('log', 'A warning', logging.WARNING)
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
-
-    def test_log_result_with_success_keyword(self):
-        """Given 'log' result with 'success' in message, Then has success color."""
-        result = ('log', 'Transaction success', logging.INFO)
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
-    def test_print_result_with_error_keyword(self):
-        """Given 'print' result with error keyword, Then has error color."""
-        result = ('print', 'Error: something failed')
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_print_result_with_txid_keyword(self):
-        """Given 'print' result with 'txid', Then has success color."""
-        result = ('print', 'TXID: abc123def456')
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
-    def test_cli_finished_success(self):
-        """Given 'cli_finished' with exit code 0, Then shows success and stops sending."""
-        result = ('cli_finished', 0)
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertIn('successfully', action.log_messages[0][0].lower())
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
-    def test_cli_finished_failure(self):
-        """Given 'cli_finished' with non-zero exit code, Then shows error."""
-        result = ('cli_finished', 1)
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertIn('1', action.log_messages[0][0])
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_tx_success_result(self):
-        """Given 'tx_success' result, Then shows popup and success messages."""
-        result = ('tx_success', 'abc123def456789')
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertEqual(action.show_success_popup, 'abc123def456789')
-        self.assertEqual(len(action.log_messages), 2)
-        self.assertIn('successful', action.log_messages[0][0].lower())
-        self.assertIn('abc123def456789', action.log_messages[1][0])
-
-    def test_error_result(self):
-        """Given 'error' result, Then shows failed popup and error message."""
-        result = ('error', 'Something went wrong')
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertTrue(action.show_failed_popup)
-        self.assertIn('Something went wrong', action.log_messages[0][0])
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_unknown_result_type_returns_empty_action(self):
-        """Given unknown result type, Then returns action with no changes."""
-        result = ('unknown_type', 'data')
-
-        action = process_result(result)
-
-        self.assertIsNone(action.connection_text)
-        self.assertIsNone(action.connection_color)
-        self.assertEqual(len(action.log_messages), 0)
-        self.assertFalse(action.stop_sending)
-        self.assertIsNone(action.show_success_popup)
-        self.assertFalse(action.show_failed_popup)
-
-
-class TestResultAction(unittest.TestCase):
-    """Tests for the ResultAction dataclass."""
-
-    def test_default_values(self):
-        """Given no arguments, Then ResultAction has correct defaults."""
-        action = ResultAction()
-
-        self.assertIsNone(action.connection_text)
-        self.assertIsNone(action.connection_color)
-        self.assertEqual(action.log_messages, [])
-        self.assertFalse(action.stop_sending)
-        self.assertIsNone(action.show_success_popup)
-        self.assertFalse(action.show_failed_popup)
-        self.assertIsNone(action.store_iface)
-
-    def test_log_messages_mutable_default(self):
-        """Given two ResultAction instances, Then they have separate log_messages lists."""
-        action1 = ResultAction()
-        action2 = ResultAction()
-
-        action1.log_messages.append(('test', None))
-
-        self.assertEqual(len(action1.log_messages), 1)
-        self.assertEqual(len(action2.log_messages), 0)
-
-
-class TestValidateSendInputs(unittest.TestCase):
-    """Tests for the validate_send_inputs function."""
+# =============================================================================
+# Story 9.1: Implement Send Transaction Button
+# Tests for input validation before sending transactions
+# =============================================================================
+
+class TestSendButtonValidationStory91(unittest.TestCase):
+    """Tests for validate_send_inputs() - Story 9.1: Send Transaction Button."""
 
     def test_empty_destination_returns_error(self):
         """Given empty destination, Then returns error message."""
@@ -425,9 +113,392 @@ class TestValidateSendInputs(unittest.TestCase):
 
     def test_whitespace_only_destination_returns_error(self):
         """Given whitespace-only destination (after strip), Then returns error."""
-        # Note: The caller strips the input before calling validate_send_inputs
         result = validate_send_inputs("", "aabbccdd", True)
         self.assertEqual(result, "Enter destination node ID")
+
+    def test_cli_finished_success_stops_sending(self):
+        """Given 'cli_finished' with exit code 0, Then stops sending and shows success."""
+        result = ('cli_finished', 0)
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIn('successfully', action.log_messages[0][0].lower())
+        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
+
+    def test_cli_finished_failure_stops_sending(self):
+        """Given 'cli_finished' with non-zero exit code, Then stops sending and shows error."""
+        result = ('cli_finished', 1)
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIn('1', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+
+# =============================================================================
+# Story 9.3: Implement Abort Button
+# Tests for abort functionality
+# =============================================================================
+
+class TestAbortButtonStory93(unittest.TestCase):
+    """Tests for abort result processing - Story 9.3: Abort Button."""
+
+    def test_aborted_result_stops_sending(self):
+        """Given 'aborted' result, Then stops sending and shows warning."""
+        result = ('aborted',)
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIn('aborted', action.log_messages[0][0].lower())
+        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+
+
+# =============================================================================
+# Story 10.1: Implement Connection Status Display
+# Tests for connection status result processing
+# =============================================================================
+
+class TestConnectionStatusStory101(unittest.TestCase):
+    """Tests for connection result processing - Story 10.1: Connection Status Display."""
+
+    def test_connected_result_sets_connection_info(self):
+        """Given 'connected' result, Then sets connection text, color, and stores iface."""
+        mock_iface = unittest.mock.MagicMock()
+        result = ('connected', mock_iface, '!abc123')
+
+        action = process_result(result)
+
+        self.assertEqual(action.connection_text, 'Meshtastic: Connected (!abc123)')
+        self.assertEqual(action.connection_color, COLOR_SUCCESS)
+        self.assertEqual(action.store_iface, mock_iface)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Connected to Meshtastic device: !abc123', action.log_messages[0][0])
+
+    def test_connection_failed_result(self):
+        """Given 'connection_failed' result, Then sets error connection info."""
+        result = ('connection_failed', None, None)
+
+        action = process_result(result)
+
+        self.assertEqual(action.connection_text, 'Meshtastic: Connection failed')
+        self.assertEqual(action.connection_color, COLOR_ERROR)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+    def test_connection_error_result(self):
+        """Given 'connection_error' result, Then includes error message."""
+        result = ('connection_error', 'Device not found', None)
+
+        action = process_result(result)
+
+        self.assertEqual(action.connection_text, 'Meshtastic: Error')
+        self.assertEqual(action.connection_color, COLOR_ERROR)
+        self.assertIn('Device not found', action.log_messages[0][0])
+
+
+# =============================================================================
+# Story 10.2: Implement Scrollable Status Log
+# Tests for log message display, color coding, and message handling
+# =============================================================================
+
+class TestStatusLogStory102(unittest.TestCase):
+    """Tests for scrollable status log - Story 10.2: Scrollable Status Log."""
+
+    def setUp(self):
+        """Set up test fixtures for QueueLogHandler tests."""
+        self.result_queue = queue.Queue()
+        self.handler = QueueLogHandler(self.result_queue)
+        self.handler.setFormatter(logging.Formatter('%(message)s'))
+
+    # --- QueueLogHandler tests (log messages flow to status log) ---
+
+    def test_queue_handler_emit_info_message(self):
+        """Given an INFO log record, Then it should be added to the queue with correct level."""
+        record = logging.LogRecord(
+            name='test',
+            level=logging.INFO,
+            pathname='test.py',
+            lineno=1,
+            msg='Test info message',
+            args=(),
+            exc_info=None
+        )
+
+        self.handler.emit(record)
+
+        self.assertFalse(self.result_queue.empty())
+        result = self.result_queue.get_nowait()
+        self.assertEqual(result[0], 'log')
+        self.assertEqual(result[1], 'Test info message')
+        self.assertEqual(result[2], logging.INFO)
+
+    def test_queue_handler_emit_error_message(self):
+        """Given an ERROR log record, Then it should be added to the queue with ERROR level."""
+        record = logging.LogRecord(
+            name='test',
+            level=logging.ERROR,
+            pathname='test.py',
+            lineno=1,
+            msg='Test error message',
+            args=(),
+            exc_info=None
+        )
+
+        self.handler.emit(record)
+
+        result = self.result_queue.get_nowait()
+        self.assertEqual(result[0], 'log')
+        self.assertEqual(result[1], 'Test error message')
+        self.assertEqual(result[2], logging.ERROR)
+
+    def test_queue_handler_emit_warning_message(self):
+        """Given a WARNING log record, Then it should be added to the queue with WARNING level."""
+        record = logging.LogRecord(
+            name='test',
+            level=logging.WARNING,
+            pathname='test.py',
+            lineno=1,
+            msg='Test warning message',
+            args=(),
+            exc_info=None
+        )
+
+        self.handler.emit(record)
+
+        result = self.result_queue.get_nowait()
+        self.assertEqual(result[0], 'log')
+        self.assertEqual(result[1], 'Test warning message')
+        self.assertEqual(result[2], logging.WARNING)
+
+    def test_queue_handler_emit_with_format_args(self):
+        """Given a log record with format arguments, Then the message should be formatted."""
+        record = logging.LogRecord(
+            name='test',
+            level=logging.INFO,
+            pathname='test.py',
+            lineno=1,
+            msg='Chunk %d of %d sent',
+            args=(3, 10),
+            exc_info=None
+        )
+
+        self.handler.emit(record)
+
+        result = self.result_queue.get_nowait()
+        self.assertEqual(result[1], 'Chunk 3 of 10 sent')
+
+    def test_queue_handler_logger_integration(self):
+        """Given a logger with QueueLogHandler, Then log messages should appear in queue."""
+        logger = logging.getLogger('test_gui_logger')
+        logger.setLevel(logging.DEBUG)
+        logger.handlers.clear()
+        logger.addHandler(self.handler)
+
+        logger.info('Test message from logger')
+
+        result = self.result_queue.get_nowait()
+        self.assertEqual(result[0], 'log')
+        self.assertEqual(result[1], 'Test message from logger')
+
+    # --- ResultAction tests (result processing for log display) ---
+
+    def test_result_action_default_values(self):
+        """Given no arguments, Then ResultAction has correct defaults."""
+        action = ResultAction()
+
+        self.assertIsNone(action.connection_text)
+        self.assertIsNone(action.connection_color)
+        self.assertEqual(action.log_messages, [])
+        self.assertFalse(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertFalse(action.show_failed_popup)
+        self.assertIsNone(action.store_iface)
+
+    def test_result_action_log_messages_mutable_default(self):
+        """Given two ResultAction instances, Then they have separate log_messages lists."""
+        action1 = ResultAction()
+        action2 = ResultAction()
+
+        action1.log_messages.append(('test', None))
+
+        self.assertEqual(len(action1.log_messages), 1)
+        self.assertEqual(len(action2.log_messages), 0)
+
+    def test_unknown_result_type_returns_empty_action(self):
+        """Given unknown result type, Then returns action with no changes."""
+        result = ('unknown_type', 'data')
+
+        action = process_result(result)
+
+        self.assertIsNone(action.connection_text)
+        self.assertIsNone(action.connection_color)
+        self.assertEqual(len(action.log_messages), 0)
+        self.assertFalse(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertFalse(action.show_failed_popup)
+
+    # --- get_log_color tests (color coding for log messages) ---
+
+    def test_error_level_returns_error_color(self):
+        """Given ERROR level, Then returns COLOR_ERROR regardless of message."""
+        result = get_log_color(logging.ERROR, "some message")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_critical_level_returns_error_color(self):
+        """Given CRITICAL level, Then returns COLOR_ERROR."""
+        result = get_log_color(logging.CRITICAL, "critical issue")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_warning_level_returns_warning_color(self):
+        """Given WARNING level, Then returns COLOR_WARNING."""
+        result = get_log_color(logging.WARNING, "warning message")
+        self.assertEqual(result, COLOR_WARNING)
+
+    def test_info_with_success_keyword_returns_success_color(self):
+        """Given INFO level with 'success' in message, Then returns COLOR_SUCCESS."""
+        result = get_log_color(logging.INFO, "Transaction success")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    def test_info_with_ack_keyword_returns_success_color(self):
+        """Given INFO level with 'ack' in message, Then returns COLOR_SUCCESS."""
+        result = get_log_color(logging.INFO, "Received ACK from node")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    def test_info_without_keywords_returns_none(self):
+        """Given INFO level without success keywords, Then returns None."""
+        result = get_log_color(logging.INFO, "Processing transaction")
+        self.assertIsNone(result)
+
+    def test_debug_without_keywords_returns_none(self):
+        """Given DEBUG level without success keywords, Then returns None."""
+        result = get_log_color(logging.DEBUG, "Debug info")
+        self.assertIsNone(result)
+
+    def test_log_color_case_insensitive_success_detection(self):
+        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
+        result = get_log_color(logging.INFO, "Operation SUCCESS")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    # --- get_print_color tests (color coding for print output) ---
+
+    def test_print_error_keyword_returns_error_color(self):
+        """Given message with 'error', Then returns COLOR_ERROR."""
+        result = get_print_color("An error occurred")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_print_failed_keyword_returns_error_color(self):
+        """Given message with 'failed', Then returns COLOR_ERROR."""
+        result = get_print_color("Transaction failed")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_print_abort_keyword_returns_error_color(self):
+        """Given message with 'abort', Then returns COLOR_ERROR."""
+        result = get_print_color("Aborting operation")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_print_success_keyword_returns_success_color(self):
+        """Given message with 'success', Then returns COLOR_SUCCESS."""
+        result = get_print_color("Transaction success")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    def test_print_txid_keyword_returns_success_color(self):
+        """Given message with 'txid', Then returns COLOR_SUCCESS."""
+        result = get_print_color("TXID: abc123def456")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    def test_print_neutral_message_returns_none(self):
+        """Given message without keywords, Then returns None."""
+        result = get_print_color("Processing transaction")
+        self.assertIsNone(result)
+
+    def test_print_color_case_insensitive_error_detection(self):
+        """Given message with 'ERROR' uppercase, Then returns COLOR_ERROR."""
+        result = get_print_color("ERROR: something went wrong")
+        self.assertEqual(result, COLOR_ERROR)
+
+    def test_print_color_case_insensitive_success_detection(self):
+        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
+        result = get_print_color("Operation SUCCESS")
+        self.assertEqual(result, COLOR_SUCCESS)
+
+    # --- process_result log/print color tests ---
+
+    def test_log_result_with_error_level(self):
+        """Given 'log' result with ERROR level, Then log message has error color."""
+        result = ('log', 'An error occurred', logging.ERROR)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertEqual(action.log_messages[0][0], 'An error occurred')
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+    def test_log_result_with_warning_level(self):
+        """Given 'log' result with WARNING level, Then log message has warning color."""
+        result = ('log', 'A warning', logging.WARNING)
+
+        action = process_result(result)
+
+        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+
+    def test_log_result_with_success_keyword(self):
+        """Given 'log' result with 'success' in message, Then has success color."""
+        result = ('log', 'Transaction success', logging.INFO)
+
+        action = process_result(result)
+
+        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
+
+    def test_print_result_with_error_keyword(self):
+        """Given 'print' result with error keyword, Then has error color."""
+        result = ('print', 'Error: something failed')
+
+        action = process_result(result)
+
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+    def test_print_result_with_txid_keyword(self):
+        """Given 'print' result with 'txid', Then has success color."""
+        result = ('print', 'TXID: abc123def456')
+
+        action = process_result(result)
+
+        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
+
+
+# =============================================================================
+# Story 10.3: Implement Success/Failure Popups
+# Tests for popup triggering
+# =============================================================================
+
+class TestPopupsStory103(unittest.TestCase):
+    """Tests for success/failure popup triggering - Story 10.3: Success/Failure Popups."""
+
+    def test_tx_success_result_shows_popup(self):
+        """Given 'tx_success' result, Then shows popup and success messages."""
+        result = ('tx_success', 'abc123def456789')
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertEqual(action.show_success_popup, 'abc123def456789')
+        self.assertEqual(len(action.log_messages), 2)
+        self.assertIn('successful', action.log_messages[0][0].lower())
+        self.assertIn('abc123def456789', action.log_messages[1][0])
+
+    def test_error_result_shows_failed_popup(self):
+        """Given 'error' result, Then shows failed popup and error message."""
+        result = ('error', 'Something went wrong')
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertTrue(action.show_failed_popup)
+        self.assertIn('Something went wrong', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
 
 
 if __name__ == '__main__':

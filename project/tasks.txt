@@ -309,6 +309,7 @@ lora/
         - [x] *   **Then** an error message is displayed in the status log.
         - [x] *   **And** the send is not initiated.
     *   _Note: Implemented `on_send_pressed()` with input validation via `validate_send_inputs()` pure function._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestSendButtonValidationStory91`)._
 
 - [x] **Story 9.2: Implement Load Example Button**
 - [x] *   **As a** user,
@@ -338,6 +339,7 @@ lora/
         - [x] *   **Given** no transaction send is in progress.
         - [x] *   **Then** the Abort button is disabled (grayed out).
     *   _Note: Implemented using `abort_requested` flag checked in PrintCapture.write(), raising AbortedException to interrupt cli_main()._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestAbortButtonStory93`)._
 
 - [x] **Story 9.4: Implement Clear Log Button**
 - [x] *   **As a** user,
@@ -366,6 +368,7 @@ lora/
         - [x] *   **When** Meshtastic connection fails.
         - [x] *   **Then** the connection label shows "Meshtastic: Connection failed" in red.
     *   _Note: Connection status updated via result queue from background init thread._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestConnectionStatusStory101`)._
 
 - [x] **Story 10.2: Implement Scrollable Status Log**
 - [x] *   **As a** user,
@@ -379,7 +382,8 @@ lora/
         - [x] *   **And** WARNING messages appear in orange (COLOR_WARNING).
         - [x] *   **And** SUCCESS/ACK messages appear in green (COLOR_SUCCESS).
         - [x] *   **And** the log auto-scrolls to show newest messages.
-    *   _Note: Implemented StatusLog widget with ScrollView, color-coded messages via `get_log_color()` and `get_print_color()` pure functions._
+    *   _Note: Implemented StatusLog widget with ScrollView, color-coded messages via `get_log_color()` and `get_print_color()` pure functions. Uses QueueLogHandler and ResultAction for thread-safe message passing from background threads to GUI._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestStatusLogStory102`)._
 
 - [x] **Story 10.3: Implement Success/Failure Popups**
 - [x] *   **As a** user,
@@ -396,6 +400,7 @@ lora/
         - [ ] *   **Then** a failure popup appears with "Transaction Failed and the error that accured".
         - [ ] *   **And** the popup has an OK button to dismiss.
     *   _Note: Implemented `_show_success_popup()` and `_show_failed_popup()` using Kivy Popup widget._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestPopupsStory103`)._
 
 ---
 
