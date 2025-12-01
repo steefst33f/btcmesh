@@ -21,7 +21,8 @@ This project is currently under development.
 
 ```
 btcmesh/
-├── btcmesh_cli.py         # Client script
+├── btcmesh_cli.py         # Command-line client script
+├── btcmesh_gui.py         # Graphical user interface client
 ├── btcmesh_server.py      # Server/Relay script
 ├── core/                  # Core logic for the server/relay
 │   ├── __init__.py
@@ -132,6 +133,55 @@ python btcmesh_cli.py --destination <SERVER_NODE_ID> --tx <RAW_TRANSACTION_HEX>
 Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `btcmesh_server.py` (e.g., `!abcdef12`) and `<RAW_TRANSACTION_HEX>` with the full raw transaction hex string you intend to broadcast.
 
 Use `python btcmesh_cli.py --help` for more options, such as `--dry-run` to simulate sending without actually transmitting over LoRa.
+
+## Running the GUI (`btcmesh_gui.py`)
+
+The GUI provides a user-friendly graphical interface for sending Bitcoin transactions over the Meshtastic LoRa mesh network. It is just a wrapper around the CLI with visual feedback and easy-to-use controls.
+
+### Starting the GUI
+
+```bash
+python btcmesh_gui.py
+```
+
+### GUI Features
+
+- **Connection Status**: Displays Meshtastic device connection status with color-coded indicators (green = connected, red = failed)
+- **Transaction Input**: Text fields for destination node ID and raw transaction hex
+- **Dry Run Toggle**: Test your transaction without actually broadcasting
+- **Real-time Status Log**: Color-coded scrollable log showing transaction progress
+- **Success Popup**: Confirmation popup with TXID when transaction is successfully broadcast
+- **Abort Button**: Cancel a transaction in progress
+- **Load Example**: Quick-fill example data for testing
+
+### GUI Layout
+
+<img src="project/images/gui_main.png" width="500" alt="BTCMesh GUI Main Window">
+
+*Main window showing connection status, input fields, and status log*
+
+<img src="project/images/gui_send.png" width="500" alt="BTCMesh GUI Main Window sending transaction">
+
+*Main window in action trying to send a transaction in chunks to NodeID*
+
+### Usage Instructions
+
+1. **Connect your Meshtastic device** - The GUI will automatically attempt to connect on startup. The connection status indicator shows the result.
+
+2. **Enter destination** - Type the relay server's Meshtastic node ID (e.g., `!abcdef12`) in the Destination field.
+
+3. **Enter transaction hex** - Paste your raw Bitcoin transaction hex string in the Transaction Hex field.
+
+4. **Toggle Dry Run** (optional) - Enable dry run mode to test without actually transmitting over LoRa.
+
+5. **Click Send** - The transaction will be chunked and sent to the relay. Progress appears in the status log.
+
+6. **Monitor progress** - Watch the status log for:
+   - Green messages: Success/ACK confirmations
+   - Orange messages: Warnings
+   - Red messages: Errors
+
+7. **Receive confirmation** - On successful broadcast, a popup displays the transaction ID (TXID).
 
 ## Running Tests
 
