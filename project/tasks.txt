@@ -45,7 +45,7 @@ lora/
 
 ---
 
-## Stories (All Concluded)
+## Stories
 
 > **Note:** This EPIC and all its stories are now finished and concluded. Please refer to the next EPIC for current and ongoing work.
 
@@ -211,6 +211,38 @@ lora/
         - [x] *   **When** the timeout occurs.
         - [x] *   **Then** `btcmesh-cli.py` prints "No acknowledgement received from relay for session <tx_session_id>" and exits.
 
+- [ ] **Story 6.5: Dry Run Without Meshtastic Connection (`btcmesh-cli.py`)**
+- [ ] *   **As a** user of `btcmesh-cli.py`,
+- [ ] *   **I want** dry run mode to work without a Meshtastic device connected,
+- [ ] *   **So that** I can test and validate transaction chunking logic without hardware.
+    - [ ] *   **Scenario:** Dry run executes without Meshtastic device
+        - [ ] *   **Given** no Meshtastic device is connected.
+        - [ ] *   **And** the user runs `btcmesh-cli.py` with `--dry-run` flag.
+        - [ ] *   **When** the CLI executes.
+        - [ ] *   **Then** the CLI skips Meshtastic interface initialization.
+        - [ ] *   **And** simulates transaction chunking and sending.
+        - [ ] *   **And** prints simulated chunk messages to stdout.
+        - [ ] *   **And** exits successfully without errors.
+
+- [ ] **Story 6.6: Transaction History Persistence (`btcmesh-cli.py`)**
+- [ ] *   **As a** user of `btcmesh-cli.py`,
+- [ ] *   **I want** my sent transactions to be saved to a local history file,
+- [ ] *   **So that** I can review past transactions across sessions.
+    - [ ] *   **Scenario:** Transaction is logged after successful broadcast
+        - [ ] *   **Given** a transaction is successfully broadcast.
+        - [ ] *   **When** the SUCCESS ACK with TXID is received.
+        - [ ] *   **Then** the transaction is saved to a local history file (e.g., `~/.btcmesh/history.json`).
+        - [ ] *   **And** the history entry includes: timestamp, TXID, destination, raw tx hex, and status.
+    - [ ] *   **Scenario:** Transaction is logged after failure
+        - [ ] *   **Given** a transaction broadcast fails.
+        - [ ] *   **When** the NACK or error is received.
+        - [ ] *   **Then** the transaction is saved with status "failed" and error details.
+    - [ ] *   **Scenario:** History persists across sessions
+        - [ ] *   **Given** the user has sent transactions in previous sessions.
+        - [ ] *   **When** the CLI runs again.
+        - [ ] *   **Then** previous history entries are preserved.
+        - [ ] *   **And** new entries are appended to existing history.
+
 ### 7. End-to-End Flow (With Chunking)
 
 - [x] **Story 7.1: Successful End-to-End Transaction Relay (Chunked)**
@@ -288,7 +320,7 @@ lora/
         - [x] *   **When** the user toggles the button to "OFF".
         - [x] *   **Then** the button displays "Dry Run: OFF" with dark background.
         - [x] *   **And** subsequent sends will broadcast for real.
-    *   _Note: Implemented using ToggleButton with state-dependent text and background color._
+    *   _Note: Implemented using ToggleButton with state-dependent text and background color. Dry run without Meshtastic connection is handled by Story 6.5 in the CLI._
 
 ### 9. GUI Action Buttons and Controls
 
@@ -407,6 +439,157 @@ lora/
         - [x] *   **Then** the TXID is copied to the system clipboard.
         - [x] *   **And** the button text changes to "Copied!" briefly as feedback.
     *   _Note: Implemented using Kivy's Clipboard.copy() with visual feedback via Clock.schedule_once()._
+
+### 11. Connection & Status Enhancements
+
+- [ ] **Story 11.1: Bitcoin RPC Connection Status Indicator**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to see the Bitcoin RPC connection status in the GUI,
+- [ ] *   **So that** I know if the relay can broadcast transactions to the Bitcoin network.
+    - [ ] *   **Scenario:** Bitcoin RPC is connected
+        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **When** the Bitcoin RPC connection check succeeds.
+        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" in green.
+        - [ ] *   **And** the indicator displays the network type (mainnet/testnet/signet).
+    - [ ] *   **Scenario:** Bitcoin RPC connection failed
+        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **When** the Bitcoin RPC connection check fails.
+        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" in red.
+        - [ ] *   **And** the user is informed they cannot broadcast until RPC is available.
+
+- [ ] **Story 11.2: Device Selection Dropdown**
+- [ ] *   **As a** user,
+- [ ] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
+- [ ] *   **So that** I can choose which device to use for sending transactions.
+    - [ ] *   **Scenario:** Multiple devices available
+        - [ ] *   **Given** multiple Meshtastic devices are connected to the system.
+        - [ ] *   **When** the user opens the device dropdown.
+        - [ ] *   **Then** all available devices are listed with their serial ports.
+        - [ ] *   **And** the user can select a device to use.
+    - [ ] *   **Scenario:** Single device available
+        - [ ] *   **Given** only one Meshtastic device is connected.
+        - [ ] *   **When** the GUI starts.
+        - [ ] *   **Then** the device is automatically selected.
+        - [ ] *   **And** the dropdown shows the selected device.
+    - [ ] *   **Scenario:** No devices available
+        - [ ] *   **Given** no Meshtastic devices are connected.
+        - [ ] *   **When** the GUI starts.
+        - [ ] *   **Then** the dropdown shows "No devices found".
+        - [ ] *   **And** the Send button is disabled.
+
+### 12. UX Improvements
+
+- [ ] **Story 12.1: Settings Panel**
+- [ ] *   **As a** user,
+- [ ] *   **I want** a settings panel to configure device path and RPC options,
+- [ ] *   **So that** I can customize the application without editing config files.
+    - [ ] *   **Scenario:** User opens settings panel
+        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **When** the user clicks the "Settings" button.
+        - [ ] *   **Then** a settings panel opens with configuration options.
+    - [ ] *   **Scenario:** User configures Meshtastic device path
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the user enters a custom serial port path.
+        - [ ] *   **Then** the setting is saved to the config file.
+        - [ ] *   **And** the GUI reconnects using the new path.
+    - [ ] *   **Scenario:** User configures Bitcoin RPC settings
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the user enters RPC host, port, user, and password.
+        - [ ] *   **Then** the settings are saved to the config file.
+        - [ ] *   **And** the connection status is updated.
+
+### 13. Convenience Features
+
+- [ ] **Story 13.1: QR Code Scanner for Transaction Hex**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to scan a QR code to input transaction hex,
+- [ ] *   **So that** I can easily transfer transactions from another device.
+    - [ ] *   **Scenario:** User scans QR code successfully
+        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **When** the user clicks "Scan QR" and presents a QR code with transaction hex.
+        - [ ] *   **Then** the camera opens and scans the QR code.
+        - [ ] *   **And** the transaction hex field is populated with the scanned data.
+        - [ ] *   **And** a confirmation message appears in the status log.
+    - [ ] *   **Scenario:** QR code scan fails
+        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **When** the QR code cannot be read or contains invalid data.
+        - [ ] *   **Then** an error message is displayed.
+        - [ ] *   **And** the transaction hex field remains unchanged.
+
+- [ ] **Story 13.2: Paste from Clipboard Button**
+- [ ] *   **As a** user,
+- [ ] *   **I want** a button to paste transaction hex from my clipboard,
+- [ ] *   **So that** I can quickly input copied transaction data.
+    - [ ] *   **Scenario:** User pastes valid hex from clipboard
+        - [ ] *   **Given** the clipboard contains valid transaction hex.
+        - [ ] *   **When** the user clicks the "Paste" button.
+        - [ ] *   **Then** the transaction hex field is populated with clipboard content.
+        - [ ] *   **And** a confirmation message appears in the status log.
+    - [ ] *   **Scenario:** Clipboard is empty or contains invalid data
+        - [ ] *   **Given** the clipboard is empty or contains non-hex data.
+        - [ ] *   **When** the user clicks the "Paste" button.
+        - [ ] *   **Then** an appropriate message is displayed (empty or invalid).
+        - [ ] *   **And** the transaction hex field remains unchanged.
+
+- [ ] **Story 13.3: Transaction History UI**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to view and interact with my transaction history in the GUI,
+- [ ] *   **So that** I can review past transactions and quickly resend them.
+    - [ ] *   **Scenario:** User views transaction history
+        - [ ] *   **Given** the GUI is running and transaction history exists (from Story 6.6).
+        - [ ] *   **When** the user opens the transaction history view.
+        - [ ] *   **Then** past transactions are displayed in chronological order.
+        - [ ] *   **And** each entry shows: truncated TXID, timestamp, destination, and status.
+    - [ ] *   **Scenario:** User copies TXID from history
+        - [ ] *   **Given** the transaction history view is open.
+        - [ ] *   **When** the user clicks copy on a transaction entry.
+        - [ ] *   **Then** the TXID is copied to the clipboard.
+    - [ ] *   **Scenario:** User reloads a transaction for resending
+        - [ ] *   **Given** the transaction history view is open.
+        - [ ] *   **When** the user selects a transaction to reload.
+        - [ ] *   **Then** the destination and transaction hex fields are populated.
+        - [ ] *   **And** the user can modify and resend the transaction.
+    *   _Note: Depends on Story 6.6 for persistence. GUI provides view/interaction layer._
+
+### 14. Visual Enhancements
+
+- [ ] **Story 14.1: Dark/Light Theme Toggle**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to toggle between dark and light themes,
+- [ ] *   **So that** I can use the application comfortably in different lighting conditions.
+    - [ ] *   **Scenario:** User switches to light theme
+        - [ ] *   **Given** the GUI is running in dark theme (default).
+        - [ ] *   **When** the user clicks the theme toggle button.
+        - [ ] *   **Then** the application switches to light theme.
+        - [ ] *   **And** background becomes light, text becomes dark.
+        - [ ] *   **And** the preference is saved for future sessions.
+    - [ ] *   **Scenario:** User switches to dark theme
+        - [ ] *   **Given** the GUI is running in light theme.
+        - [ ] *   **When** the user clicks the theme toggle button.
+        - [ ] *   **Then** the application switches to dark theme.
+        - [ ] *   **And** the original dark color scheme is restored.
+
+- [ ] **Story 14.2: Network Indicator**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to see which Bitcoin network (mainnet/testnet3/testnet4/signet) is configured,
+- [ ] *   **So that** I know where my transactions will be broadcast.
+    - [ ] *   **Scenario:** Network is mainnet
+        - [ ] *   **Given** the Bitcoin RPC is configured for mainnet.
+        - [ ] *   **When** the GUI connects to the RPC.
+        - [ ] *   **Then** a badge displays "MAINNET" in orange/red.
+        - [ ] *   **And** the badge is prominently visible to prevent accidental mainnet transactions.
+    - [ ] *   **Scenario:** Network is testnet3
+        - [ ] *   **Given** the Bitcoin RPC is configured for testnet3.
+        - [ ] *   **When** the GUI connects to the RPC.
+        - [ ] *   **Then** a badge displays "TESTNET3" in green.
+    - [ ] *   **Scenario:** Network is testnet4
+        - [ ] *   **Given** the Bitcoin RPC is configured for testnet4.
+        - [ ] *   **When** the GUI connects to the RPC.
+        - [ ] *   **Then** a badge displays "TESTNET4" in green.
+    - [ ] *   **Scenario:** Network is signet
+        - [ ] *   **Given** the Bitcoin RPC is configured for signet.
+        - [ ] *   **When** the GUI connects to the RPC.
+        - [ ] *   **Then** a badge displays "SIGNET" in blue.
 
 ---
 
