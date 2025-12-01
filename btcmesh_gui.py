@@ -25,6 +25,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.core.clipboard import Clipboard
 from kivy.properties import StringProperty, BooleanProperty
 from kivy.utils import get_color_from_hex
 
@@ -682,17 +683,38 @@ class BTCMeshGUI(BoxLayout):
         # Spacer
         content.add_widget(Widget(size_hint_y=None, height=20))
 
+        # Button column with Copy and OK buttons
+        btn_row = BoxLayout(orientation='vertical', size_hint_y=None, height=110, spacing=10)
+
+        # Copy button
+        copy_btn = Button(
+            text='Copy',
+            background_color=COLOR_SECUNDARY,
+            background_normal='',
+            color=(0, 0, 0, 1),  # Black text
+            bold=True,
+            font_size=24,
+        )
+
+        def on_copy(instance):
+            Clipboard.copy(txid)
+            instance.text = 'Copied!'
+            Clock.schedule_once(lambda dt: setattr(instance, 'text', 'Copy'), 1.5)
+
+        copy_btn.bind(on_press=on_copy)
+        btn_row.add_widget(copy_btn)
+
         # OK button styled like app buttons
         ok_btn = Button(
             text='OK',
-            size_hint_y=None,
-            height=50,
             background_color=COLOR_PRIMARY,
             background_normal='',
             bold=True,
             font_size=24,
         )
-        content.add_widget(ok_btn)
+        btn_row.add_widget(ok_btn)
+
+        content.add_widget(btn_row)
 
         # Calculate popup size based on content
         content_height = sum(child.height for child in content.children)

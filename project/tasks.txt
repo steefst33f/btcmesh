@@ -397,5 +397,16 @@ lora/
     *   _Note: Implemented `_show_success_popup()` using Kivy Popup widget._
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestPopupsStory103`)._
 
+- [x] **Story 10.4: Add Copy TXID to Clipboard Button**
+- [x] *   **As a** user,
+- [x] *   **I want** a button to copy the TXID to my clipboard,
+- [x] *   **So that** I can easily paste it elsewhere to track or share my transaction.
+    - [x] *   **Scenario:** User clicks Copy button
+        - [x] *   **Given** the success popup is displayed with a TXID.
+        - [x] *   **When** the user clicks the "Copy" button.
+        - [x] *   **Then** the TXID is copied to the system clipboard.
+        - [x] *   **And** the button text changes to "Copied!" briefly as feedback.
+    *   _Note: Implemented using Kivy's Clipboard.copy() with visual feedback via Clock.schedule_once()._
+
 ---
 
