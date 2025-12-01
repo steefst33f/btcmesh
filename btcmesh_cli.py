@@ -475,28 +475,28 @@ def cli_main(
                                                     )
                                                     final_tx_confirmed = True
                                                     break  # from final_ack_retries loop
-                                            elif (
-                                                final_msg_type == "BTC_NACK"
-                                                and len(final_msg_parts) >= 3
-                                                and final_msg_parts[2] == "ERROR"
-                                            ):
-                                                error_details = "|".join(
-                                                    final_msg_parts[3:]
-                                                )
-                                                print(
-                                                    f"Relay reported an error broadcasting transaction: {error_details}"
-                                                )
-                                                logger.error(
-                                                    f"Received final BTC_NACK for session {_current_session_id}: {error_details}"
-                                                )
-                                                # Even with NACK, all chunks were sent. Exit with specific error for broadcast failure
-                                                raise SystemExit(
-                                                    3
-                                                )  # Specific exit code for broadcast failure
-                                            else:
-                                                logger.warning(
-                                                    f"Received unexpected final message for session {_current_session_id}: {final_msg_text}"
-                                                )
+                                                elif (
+                                                    final_msg_type == "BTC_NACK"
+                                                    and len(final_msg_parts) >= 3
+                                                    and final_msg_parts[2] == "ERROR"
+                                                ):
+                                                    error_details = "|".join(
+                                                        final_msg_parts[3:]
+                                                    )
+                                                    print(
+                                                        f"Relay reported an error broadcasting transaction: {error_details}"
+                                                    )
+                                                    logger.error(
+                                                        f"Received final BTC_NACK for session {_current_session_id}: {error_details}"
+                                                    )
+                                                    # Even with NACK, all chunks were sent. Exit with specific error for broadcast failure
+                                                    raise SystemExit(
+                                                        3
+                                                    )  # Specific exit code for broadcast failure
+                                                else:
+                                                    logger.warning(
+                                                        f"Received unexpected final message for session {_current_session_id}: {final_msg_text}"
+                                                    )
                                                 # Fall through to retry if not MAX_RETRIES for final ack
                                         except (
                                             StopIteration,
