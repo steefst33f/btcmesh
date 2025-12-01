@@ -237,3 +237,165 @@ lora/
 
 ---
 
+# EPIC: BTCMesh GUI Client Application
+
+**Goal:** To provide users with a graphical interface for sending Bitcoin transactions via Meshtastic LoRa relay, wrapping the existing `btcmesh_cli.py` functionality in a user-friendly Kivy-based GUI with real-time feedback, connection status, and transaction controls.
+
+**User Persona:** A Bitcoin user who prefers a graphical interface over command-line tools, wants visual feedback on transaction progress, and needs an intuitive way to send transactions via Meshtastic LoRa mesh network.
+
+---
+
+## Stories
+
+> **Note:** This EPIC is still in development
+
+### 8. GUI Application Framework (`btcmesh_gui.py`)
+
+- [x] **Story 8.1: Create GUI Application Structure**
+- [x] *   **As a** user,
+- [x] *   **I want** a graphical application window with proper theming,
+- [x] *   **So that** I can interact with BTCMesh visually.
+    - [x] *   **Scenario:** Application launches with themed window
+        - [x] *   **Given** the user runs `btcmesh_gui.py`.
+        - [x] *   **When** the application starts.
+        - [x] *   **Then** a GUI window opens with Bitcoin-orange themed colors.
+        - [x] *   **And** the window has a dark background (#1E1E1E) for readability.
+        - [x] *   **And** the window title is "BTCMesh Client".
+    *   _Note: Implemented using Kivy App class with custom color scheme (COLOR_PRIMARY=#FF6B00, COLOR_SECUNDARY=#FFFFFF, COLOR_BG=#1E1E1E, COLOR_BG_LIGHT=#2D2D2D)._
+
+- [x] **Story 8.2: Implement Input Fields for Transaction Data**
+- [x] *   **As a** user,
+- [x] *   **I want** text input fields for destination node ID and transaction hex,
+- [x] *   **So that** I can enter the required data for sending a transaction.
+    - [x] *   **Scenario:** User enters destination and transaction hex
+        - [x] *   **Given** the GUI is running.
+        - [x] *   **When** the user types in the destination field.
+        - [x] *   **Then** the input is captured with placeholder hint "!node_id".
+        - [x] *   **And** the transaction hex field accepts multiline input with hint "Raw transaction hex".
+    *   _Note: Implemented TextInput widgets with hint_text, proper sizing, and dark theme styling._
+
+- [x] **Story 8.3: Add Dry Run Toggle Control**
+- [x] *   **As a** user,
+- [x] *   **I want** a toggle to enable/disable dry run mode,
+- [x] *   **So that** I can test transaction sending without actually broadcasting.
+    - [x] *   **Scenario:** User enables dry run mode
+        - [x] *   **Given** the GUI is running.
+        - [x] *   **When** the user toggles the dry run button to "ON".
+        - [x] *   **Then** the button displays "Dry Run: ON" with orange background.
+        - [x] *   **And** subsequent sends will use --dry-run flag.
+    - [x] *   **Scenario:** User disables dry run mode
+        - [x] *   **Given** dry run mode is enabled.
+        - [x] *   **When** the user toggles the button to "OFF".
+        - [x] *   **Then** the button displays "Dry Run: OFF" with dark background.
+        - [x] *   **And** subsequent sends will broadcast for real.
+    *   _Note: Implemented using ToggleButton with state-dependent text and background color._
+
+### 9. GUI Action Buttons and Controls
+
+- [x] **Story 9.1: Implement Send Transaction Button**
+- [x] *   **As a** user,
+- [x] *   **I want** a Send button that initiates transaction sending,
+- [x] *   **So that** I can broadcast my transaction with a single click.
+    - [x] *   **Scenario:** User clicks Send with valid inputs
+        - [x] *   **Given** destination and transaction hex are entered.
+        - [x] *   **And** Meshtastic is connected.
+        - [x] *   **When** the user clicks "Send".
+        - [x] *   **Then** the button becomes disabled during sending.
+        - [x] *   **And** the transaction is sent via `cli_main()` in a background thread.
+        - [x] *   **And** progress is displayed in the status log.
+    - [x] *   **Scenario:** User clicks Send with invalid inputs
+        - [x] *   **Given** destination is empty or invalid.
+        - [x] *   **When** the user clicks "Send".
+        - [x] *   **Then** an error message is displayed in the status log.
+        - [x] *   **And** the send is not initiated.
+    *   _Note: Implemented `on_send_pressed()` with input validation via `validate_send_inputs()` pure function._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestSendButtonValidationStory91`)._
+
+- [x] **Story 9.2: Implement Load Example Button**
+- [x] *   **As a** user,
+- [x] *   **I want** a button to load example transaction data,
+- [x] *   **So that** I can quickly test the application without manual input.
+    - [x] *   **Scenario:** User clicks Load Example
+        - [x] *   **Given** the GUI is running.
+        - [x] *   **When** the user clicks "Load Example".
+        - [x] *   **Then** the destination field is populated with "!abcd1234".
+        - [x] *   **And** the transaction hex field is populated with EXAMPLE_RAW_TX.
+        - [x] *   **And** a confirmation message appears in the status log.
+    *   _Note: Implemented `on_load_example()` loading from `btcmesh_cli.EXAMPLE_RAW_TX`._
+
+- [x] **Story 9.3: Implement Abort Button**
+- [x] *   **As a** user,
+- [x] *   **I want** an Abort button to cancel a running transaction send,
+- [x] *   **So that** I can stop the process if needed.
+    - [x] *   **Scenario:** User clicks Abort during active send
+        - [x] *   **Given** a transaction send is in progress.
+        - [x] *   **When** the user clicks "Abort".
+        - [x] *   **Then** the abort_requested flag is set.
+        - [x] *   **And** a warning message "Abort requested..." appears in the log.
+        - [x] *   **And** the Abort button becomes disabled.
+        - [x] *   **And** the send thread raises AbortedException on next stdout write.
+        - [x] *   **And** the status log shows "Transaction aborted by user".
+    - [x] *   **Scenario:** Abort button disabled when not sending
+        - [x] *   **Given** no transaction send is in progress.
+        - [x] *   **Then** the Abort button is disabled (grayed out).
+    *   _Note: Implemented using `abort_requested` flag checked in PrintCapture.write(), raising AbortedException to interrupt cli_main()._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestAbortButtonStory93`)._
+
+- [x] **Story 9.4: Implement Clear Log Button**
+- [x] *   **As a** user,
+- [x] *   **I want** a Clear button to reset the status log,
+- [x] *   **So that** I can start fresh without restarting the application.
+    - [x] *   **Scenario:** User clicks Clear Log
+        - [x] *   **Given** the status log contains messages.
+        - [x] *   **When** the user clicks "Clear Log".
+        - [x] *   **Then** all messages in the status log are cleared.
+        - [x] *   **And** a "Log cleared" message is shown.
+        - [x] *   **And** the input fields remain unchanged.
+    *   _Note: Clear button positioned at bottom of window, only clears log (not inputs)._
+
+### 10. Status Display and Feedback
+
+- [x] **Story 10.1: Implement Connection Status Display**
+- [x] *   **As a** user,
+- [x] *   **I want** to see the Meshtastic connection status,
+- [x] *   **So that** I know if the device is ready for sending.
+    - [x] *   **Scenario:** Meshtastic connected successfully
+        - [x] *   **Given** the GUI starts.
+        - [x] *   **When** Meshtastic connection succeeds.
+        - [x] *   **Then** the connection label shows "Meshtastic: Connected (!node_id)" in green.
+    - [x] *   **Scenario:** Meshtastic connection failed
+        - [x] *   **Given** the GUI starts.
+        - [x] *   **When** Meshtastic connection fails.
+        - [x] *   **Then** the connection label shows "Meshtastic: Connection failed" in red.
+    *   _Note: Connection status updated via result queue from background init thread._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestConnectionStatusStory101`)._
+
+- [x] **Story 10.2: Implement Scrollable Status Log**
+- [x] *   **As a** user,
+- [x] *   **I want** a scrollable log area showing transaction progress,
+- [x] *   **So that** I can see detailed feedback on what's happening.
+    - [x] *   **Scenario:** Log messages appear during send
+        - [x] *   **Given** a transaction send is in progress.
+        - [x] *   **When** cli_main() logs or prints messages.
+        - [x] *   **Then** messages appear in the scrollable status log.
+        - [x] *   **And** ERROR messages appear in red (COLOR_ERROR).
+        - [x] *   **And** WARNING messages appear in orange (COLOR_WARNING).
+        - [x] *   **And** SUCCESS/ACK messages appear in green (COLOR_SUCCESS).
+        - [x] *   **And** the log auto-scrolls to show newest messages.
+    *   _Note: Implemented StatusLog widget with ScrollView, color-coded messages via `get_log_color()` and `get_print_color()` pure functions. Uses QueueLogHandler and ResultAction for thread-safe message passing from background threads to GUI._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestStatusLogStory102`)._
+
+- [x] **Story 10.3: Implement Success Popup**
+- [x] *   **As a** user,
+- [x] *   **I want** a clear popup notification when my transaction succeeds,
+- [x] *   **So that** I immediately know my transaction was broadcast.
+    - [x] *   **Scenario:** Transaction broadcast succeeds
+        - [x] *   **Given** the relay returns a SUCCESS ACK with TXID.
+        - [x] *   **When** the GUI processes the tx_success result.
+        - [x] *   **Then** a success popup appears with "Transaction Sent!" and the TXID.
+        - [x] *   **And** the popup has an OK button to dismiss.
+    *   _Note: Implemented `_show_success_popup()` using Kivy Popup widget._
+    *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestPopupsStory103`)._
+
+---
+
