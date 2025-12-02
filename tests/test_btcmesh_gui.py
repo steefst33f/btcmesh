@@ -33,6 +33,7 @@ sys.modules['kivy.clock'] = kivy_mock
 sys.modules['kivy.graphics'] = kivy_mock
 sys.modules['kivy.core'] = kivy_mock
 sys.modules['kivy.core.window'] = kivy_mock
+sys.modules['kivy.core.clipboard'] = kivy_mock
 sys.modules['kivy.properties'] = kivy_mock
 sys.modules['kivy.utils'] = kivy_mock
 
