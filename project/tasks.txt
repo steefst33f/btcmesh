@@ -211,18 +211,18 @@ lora/
         - [x] *   **When** the timeout occurs.
         - [x] *   **Then** `btcmesh-cli.py` prints "No acknowledgement received from relay for session <tx_session_id>" and exits.
 
-- [ ] **Story 6.5: Dry Run Without Meshtastic Connection (`btcmesh-cli.py`)**
-- [ ] *   **As a** user of `btcmesh-cli.py`,
-- [ ] *   **I want** dry run mode to work without a Meshtastic device connected,
-- [ ] *   **So that** I can test and validate transaction chunking logic without hardware.
-    - [ ] *   **Scenario:** Dry run executes without Meshtastic device
-        - [ ] *   **Given** no Meshtastic device is connected.
-        - [ ] *   **And** the user runs `btcmesh-cli.py` with `--dry-run` flag.
-        - [ ] *   **When** the CLI executes.
-        - [ ] *   **Then** the CLI skips Meshtastic interface initialization.
-        - [ ] *   **And** simulates transaction chunking and sending.
-        - [ ] *   **And** prints simulated chunk messages to stdout.
-        - [ ] *   **And** exits successfully without errors.
+- [x] **Story 6.5: Dry Run Without Meshtastic Connection (`btcmesh-cli.py`)**
+- [x] *   **As a** user of `btcmesh-cli.py`,
+- [x] *   **I want** dry run mode to work without a Meshtastic device connected,
+- [x] *   **So that** I can test and validate transaction chunking logic without hardware.
+    - [x] *   **Scenario:** Dry run executes without Meshtastic device
+        - [x] *   **Given** no Meshtastic device is connected.
+        - [x] *   **And** the user runs `btcmesh-cli.py` with `--dry-run` flag.
+        - [x] *   **When** the CLI executes.
+        - [x] *   **Then** the CLI skips Meshtastic interface initialization.
+        - [x] *   **And** simulates transaction chunking and sending.
+        - [x] *   **And** prints simulated chunk messages to stdout.
+        - [x] *   **And** exits successfully without errors.
 
 - [ ] **Story 6.6: Transaction History Persistence (`btcmesh-cli.py`)**
 - [ ] *   **As a** user of `btcmesh-cli.py`,

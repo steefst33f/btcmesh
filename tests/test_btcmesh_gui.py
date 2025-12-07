@@ -117,6 +117,30 @@ class TestSendButtonValidationStory91(unittest.TestCase):
         result = validate_send_inputs("", "aabbccdd", True)
         self.assertEqual(result, "Enter destination node ID")
 
+    def test_dry_run_without_interface_returns_none(self):
+        """Given dry_run=True and no Meshtastic interface, Then returns None (valid).
+
+        Story 6.5: Dry run should work without Meshtastic connection.
+        """
+        result = validate_send_inputs("!abc123", "aabbccdd", False, dry_run=True)
+        self.assertIsNone(result)
+
+    def test_dry_run_still_validates_other_inputs(self):
+        """Given dry_run=True but invalid hex, Then still returns error.
+
+        Story 6.5: Dry run should still validate destination and tx_hex.
+        """
+        result = validate_send_inputs("!abc123", "gghhiijj", False, dry_run=True)
+        self.assertEqual(result, "Invalid hex characters")
+
+    def test_non_dry_run_without_interface_returns_error(self):
+        """Given dry_run=False and no Meshtastic interface, Then returns error.
+
+        Ensures regular mode still requires Meshtastic connection.
+        """
+        result = validate_send_inputs("!abc123", "aabbccdd", False, dry_run=False)
+        self.assertEqual(result, "Meshtastic not connected")
+
     def test_cli_finished_success_stops_sending(self):
         """Given 'cli_finished' with exit code 0, Then stops sending and shows success."""
         result = ('cli_finished', 0)

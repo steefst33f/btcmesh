@@ -883,5 +883,81 @@ class TestCliTimeoutAndRetriesOnNoAck(unittest.TestCase):
         )
 
 
+class TestDryRunWithoutMeshtasticStory65(unittest.TestCase):
+    """
+    TDD for Story 6.5: Dry Run Without Meshtastic Connection.
+    Verifies that dry run mode works without a Meshtastic device connected.
+    """
+
+    def test_dry_run_skips_meshtastic_initialization(self):
+        """Verify dry run returns before Meshtastic init is called."""
+        dest = "!abcdef12"
+        tx_hex = "deadbeefcafebabe"
+        Args = type("Args", (), {"destination": dest, "tx": tx_hex, "dry_run": True})
+
+        # Patch initialize_meshtastic_interface_cli to track if it's called
+        # (and silence prints to keep output clean)
+        with patch(
+            "btcmesh_cli.initialize_meshtastic_interface_cli"
+        ) as mock_init_meshtastic, patch("builtins.print"):
+            code = cli_main(args=Args)
+
+        self.assertEqual(code, 0)
+        # Meshtastic initialization should NOT be called when dry_run is True
+        mock_init_meshtastic.assert_not_called()
+
+    def test_dry_run_prints_simulated_chunks(self):
+        """Verify dry run prints simulated chunk messages."""
+        dest = "!abcdef12"
+        tx_hex = "a" * 450  # 3 chunks
+        Args = type("Args", (), {"destination": dest, "tx": tx_hex, "dry_run": True})
+
+        with patch("builtins.print") as mock_print:
+            code = cli_main(args=Args)
+
+        self.assertEqual(code, 0)
+        printed_lines = [
+            str(call.args[0])
+            for call in mock_print.call_args_list
+            if str(call.args[0]).startswith("BTC_TX|")
+        ]
+        # Should print 3 chunks
+        self.assertEqual(len(printed_lines), 3)
+        for i, line in enumerate(printed_lines, 1):
+            self.assertIn(f"|{i}/3|", line)
+
+    def test_dry_run_works_without_meshtastic_installed(self):
+        """
+        Verify dry run works even if meshtastic module is unavailable.
+        This simulates the scenario where no Meshtastic device is connected
+        and the import would fail.
+        """
+        dest = "!abcdef12"
+        tx_hex = "deadbeefcafebabe"
+        Args = type("Args", (), {"destination": dest, "tx": tx_hex, "dry_run": True})
+
+        # Patch to simulate meshtastic not being available
+        with patch.dict(
+            sys.modules, {"meshtastic": None, "meshtastic.serial_interface": None}
+        ), patch("builtins.print") as mock_print:
+            code = cli_main(args=Args)
+
+        self.assertEqual(code, 0)
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("Arguments parsed successfully", printed)
+        self.assertIn("BTC_TX|", printed)
+
+    def test_dry_run_exits_successfully(self):
+        """Verify dry run exits with code 0."""
+        dest = "!abcdef12"
+        tx_hex = "cafebabe"
+        Args = type("Args", (), {"destination": dest, "tx": tx_hex, "dry_run": True})
+
+        with patch("builtins.print"):
+            code = cli_main(args=Args)
+
+        self.assertEqual(code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

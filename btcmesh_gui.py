@@ -191,7 +191,7 @@ def process_result(result: tuple) -> ResultAction:
     return action
 
 
-def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[str]:
+def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False) -> Optional[str]:
     """Validate the inputs for sending a transaction.
 
     This is a pure function that validates inputs without touching the GUI.
@@ -200,6 +200,7 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[st
         dest: The destination node ID
         tx_hex: The raw transaction hex (already cleaned of whitespace)
         has_iface: Whether the Meshtastic interface is connected
+        dry_run: Whether this is a dry run (skips Meshtastic connection check)
 
     Returns:
         An error message string if validation fails, or None if inputs are valid
@@ -219,7 +220,7 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[st
     if not is_valid_hex(tx_hex):
         return "Invalid hex characters"
 
-    if not has_iface:
+    if not has_iface and not dry_run:
         return "Meshtastic not connected"
 
     return None
@@ -529,9 +530,10 @@ class BTCMeshGUI(BoxLayout):
         """Handle send button press."""
         dest = self.dest_input.text.strip()
         tx_hex = self.tx_input.text.strip().replace('\n', '').replace(' ', '')
+        dry_run = self.dry_run_toggle.state == 'down'
 
-        # Validation
-        error = validate_send_inputs(dest, tx_hex, bool(self.iface))
+        # Validation (dry_run skips Meshtastic connection check)
+        error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
             if error == "Meshtastic not connected":
@@ -544,7 +546,6 @@ class BTCMeshGUI(BoxLayout):
         self.abort_btn.disabled = False
         self.abort_requested = False
         self.status_log.clear()
-        dry_run = self.dry_run_toggle.state == 'down'
         if dry_run:
             self.status_log.add_message(f"Starting DRY RUN transaction send to {dest}...")
         else:
