@@ -15,7 +15,7 @@ This project is currently under development.
 *   **Bitcoin RPC Integration**: Connects to a Bitcoin Core RPC node to broadcast the validated raw transaction.
 *   **Logging**: Comprehensive logging for both server and client operations.
 *   **Client Script (`btcmesh_cli.py`)**: Implemented command-line tool (`btcmesh_cli.py`) for users to send raw transactions.
-*   **TOR**: Optionally relay the transaction to a node running inside Tor network. (onion server)
+*   **Tor Support**: Optionally connect to a Bitcoin RPC node via its `.onion` address (requires Tor to be installed and running on your system).
 
 ## Project Structure
 
@@ -88,12 +88,10 @@ btcmesh/
         # Optional: For transaction reassembly timeout
         # REASSEMBLY_TIMEOUT_SECONDS=120
         ```
-    *   **Connecting via Tor**: If you wish to connect to your Bitcoin RPC node via Tor, simply set the `BITCOIN_RPC_HOST` to your node's `.onion` address. The application will automatically detect this and manage the Tor connection using the Tor binary provided in the `tor/` directory of this project. You do not need to have Tor installed or running separately on your system. 
+    *   **Connecting via Tor**: If you wish to connect to your Bitcoin RPC node via Tor, set the `BITCOIN_RPC_HOST` to your node's `.onion` address. **You must have Tor installed and running on your system** (see [Tor Setup](#tor-setup) below).
         ```env
         # Example for Tor connection:
-        # BITCOIN_RPC_HOST=yourbitcoinrpcnode.onion
-    
-    **OBS** The TOR binary supplied is part of the Debian package. REPLACE it to make it compatible with your distribution. [DOWNLOAD TOR](https://www.torproject.org/download/)
+        BITCOIN_RPC_HOST=yourbitcoinrpcnode.onion
         ```
 
 5.  **Meshtastic Device Setup**:
@@ -101,7 +99,7 @@ btcmesh/
     *   The Meshtastic Python library, by default, attempts to auto-detect your device. You can specify the serial port explicitly by setting `MESHTASTIC_SERIAL_PORT` in your `.env` file.
     *   Ensure your Bitcoin Core node is configured to accept RPC connections.
     *   Configure the RPC host, port, user, and password in your `.env` file (see step 4).
-    *   **Tor Connectivity**: If `BITCOIN_RPC_HOST` is a `.onion` address, the script will automatically attempt to establish a connection through Tor using the bundled Tor executable (`./tor/tor`). No separate Tor installation or configuration is required by the user.
+    *   **Tor Connectivity**: If `BITCOIN_RPC_HOST` is a `.onion` address, you must have Tor installed and running on your system. See [Tor Setup](#tor-setup) for installation instructions.
 
 ## Configuration
 
@@ -110,7 +108,7 @@ The primary method for configuration is via a `.env` file in the project root (s
 Key settings configurable in `.env`:
 
 *   Meshtastic device serial port (`MESHTASTIC_SERIAL_PORT`).
-*   Bitcoin RPC connection details (`BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD`). This includes the ability to use a `.onion` address for `BITCOIN_RPC_HOST` to automatically route traffic through Tor using the project's bundled Tor executable.
+*   Bitcoin RPC connection details (`BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD`). Use a `.onion` address for `BITCOIN_RPC_HOST` to route traffic through Tor (requires Tor to be installed and running).
 *   Transaction reassembly timeout (`REASSEMBLY_TIMEOUT_SECONDS`).
 
 ## Running the Server (`btcmesh_server.py`)
@@ -182,6 +180,64 @@ python btcmesh_gui.py
    - Red messages: Errors
 
 7. **Receive confirmation** - On successful broadcast, a popup displays the transaction ID (TXID).
+
+## Tor Setup
+
+To connect to a Bitcoin RPC node via its `.onion` address, you must have Tor installed and running on your system. The application will automatically route traffic through Tor's SOCKS proxy (default: `127.0.0.1:9050`).
+
+### Installing Tor
+
+**macOS** (using Homebrew):
+```bash
+brew install tor
+brew services start tor
+```
+
+**Ubuntu/Debian**:
+```bash
+sudo apt update
+sudo apt install tor
+sudo systemctl start tor
+sudo systemctl enable tor  # Optional: start on boot
+```
+
+**Windows**:
+1. Download the Tor Expert Bundle from [torproject.org/download/tor/](https://www.torproject.org/download/tor/)
+2. Extract and run `tor.exe`
+3. Or install via Chocolatey: `choco install tor`
+
+### Verifying Tor is Running
+
+Check that Tor is listening on the SOCKS port:
+```bash
+# macOS/Linux
+nc -zv 127.0.0.1 9050
+
+# Or check the service status
+# macOS
+brew services list | grep tor
+
+# Linux
+sudo systemctl status tor
+```
+
+### Configuration
+
+Once Tor is running, simply set your `.onion` address in the `.env` file:
+```env
+BITCOIN_RPC_HOST=yourbitcoinnode.onion
+BITCOIN_RPC_PORT=8332
+BITCOIN_RPC_USER=your_rpc_user
+BITCOIN_RPC_PASSWORD=your_rpc_password
+```
+
+The application automatically detects `.onion` addresses and routes the connection through Tor.
+
+### Troubleshooting
+
+- **Connection refused**: Ensure Tor service is running (`brew services start tor` or `sudo systemctl start tor`)
+- **Timeout errors**: Check that your `.onion` address is correct and the remote node is accessible
+- **SOCKS proxy errors**: Verify Tor is using the default port 9050, or check your Tor configuration
 
 ## Running Tests
 
