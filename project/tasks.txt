@@ -442,22 +442,7 @@ lora/
 
 ### 11. Connection & Status Enhancements
 
-- [ ] **Story 11.1: Bitcoin RPC Connection Status Indicator**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to see the Bitcoin RPC connection status in the GUI,
-- [ ] *   **So that** I know if the relay can broadcast transactions to the Bitcoin network.
-    - [ ] *   **Scenario:** Bitcoin RPC is connected
-        - [ ] *   **Given** the GUI is running.
-        - [ ] *   **When** the Bitcoin RPC connection check succeeds.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" in green.
-        - [ ] *   **And** the indicator displays the network type (mainnet/testnet/signet).
-    - [ ] *   **Scenario:** Bitcoin RPC connection failed
-        - [ ] *   **Given** the GUI is running.
-        - [ ] *   **When** the Bitcoin RPC connection check fails.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" in red.
-        - [ ] *   **And** the user is informed they cannot broadcast until RPC is available.
-
-- [ ] **Story 11.2: Device Selection Dropdown**
+- [ ] **Story 11.1: Device Selection Dropdown**
 - [ ] *   **As a** user,
 - [ ] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
 - [ ] *   **So that** I can choose which device to use for sending transactions.
@@ -479,24 +464,24 @@ lora/
 
 ### 12. UX Improvements
 
-- [ ] **Story 12.1: Settings Panel**
-- [ ] *   **As a** user,
-- [ ] *   **I want** a settings panel to configure device path and RPC options,
-- [ ] *   **So that** I can customize the application without editing config files.
+- [ ] **Story 12.1: Client Settings Panel**
+- [ ] *   **As a** client user,
+- [ ] *   **I want** a settings panel to configure Meshtastic device and default options,
+- [ ] *   **So that** I can customize the client without editing config files.
     - [ ] *   **Scenario:** User opens settings panel
-        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **Given** the client GUI is running.
         - [ ] *   **When** the user clicks the "Settings" button.
-        - [ ] *   **Then** a settings panel opens with configuration options.
+        - [ ] *   **Then** a settings panel opens with client configuration options.
     - [ ] *   **Scenario:** User configures Meshtastic device path
         - [ ] *   **Given** the settings panel is open.
         - [ ] *   **When** the user enters a custom serial port path.
         - [ ] *   **Then** the setting is saved to the config file.
         - [ ] *   **And** the GUI reconnects using the new path.
-    - [ ] *   **Scenario:** User configures Bitcoin RPC settings
+    - [ ] *   **Scenario:** User sets default relay destination
         - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the user enters RPC host, port, user, and password.
-        - [ ] *   **Then** the settings are saved to the config file.
-        - [ ] *   **And** the connection status is updated.
+        - [ ] *   **When** the user enters a default relay node ID (e.g., !abcdef12).
+        - [ ] *   **Then** the setting is saved.
+        - [ ] *   **And** the destination field is pre-filled on next launch.
 
 ### 13. Convenience Features
 
@@ -568,28 +553,6 @@ lora/
         - [ ] *   **When** the user clicks the theme toggle button.
         - [ ] *   **Then** the application switches to dark theme.
         - [ ] *   **And** the original dark color scheme is restored.
-
-- [ ] **Story 14.2: Network Indicator**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to see which Bitcoin network (mainnet/testnet3/testnet4/signet) is configured,
-- [ ] *   **So that** I know where my transactions will be broadcast.
-    - [ ] *   **Scenario:** Network is mainnet
-        - [ ] *   **Given** the Bitcoin RPC is configured for mainnet.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "MAINNET" in orange/red.
-        - [ ] *   **And** the badge is prominently visible to prevent accidental mainnet transactions.
-    - [ ] *   **Scenario:** Network is testnet3
-        - [ ] *   **Given** the Bitcoin RPC is configured for testnet3.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "TESTNET3" in green.
-    - [ ] *   **Scenario:** Network is testnet4
-        - [ ] *   **Given** the Bitcoin RPC is configured for testnet4.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "TESTNET4" in green.
-    - [ ] *   **Scenario:** Network is signet
-        - [ ] *   **Given** the Bitcoin RPC is configured for signet.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "SIGNET" in blue.
 
 ---
 
