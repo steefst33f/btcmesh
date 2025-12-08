@@ -23,6 +23,7 @@ from kivy.uix.button import Button
 from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
+from kivy.uix.spinner import Spinner
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.clipboard import Clipboard
@@ -37,6 +38,26 @@ from btcmesh_cli import (
     EXAMPLE_RAW_TX,
 )
 
+# Device selection constants
+NO_DEVICES_TEXT = "No devices found"
+SCANNING_TEXT = "Scanning..."
+
+
+def scan_meshtastic_devices() -> list:
+    """Scan for available Meshtastic devices.
+
+    Returns:
+        List of device paths (e.g., ['/dev/ttyUSB0', '/dev/ttyACM0'])
+    """
+    try:
+        from meshtastic.util import findPorts
+        ports = findPorts(True)  # eliminate_duplicates=True
+        return ports if ports else []
+    except ImportError:
+        return []
+    except Exception:
+        return []
+
 # Set window size for desktop testing
 Window.size = (450, 700)
 
@@ -48,6 +69,20 @@ COLOR_WARNING = get_color_from_hex('#FF9800')
 COLOR_BG = get_color_from_hex('#1E1E1E')
 COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')
 COLOR_SECUNDARY = get_color_from_hex("#FFFFFF")
+COLOR_DISCONNECTED = (0.7, 0.7, 0.7, 1)
+
+
+@dataclass(frozen=True)
+class ConnectionState:
+    """Represents a connection state with display text and color."""
+    text: str
+    color: tuple
+
+
+# Connection states
+STATE_DISCONNECTED = ConnectionState('Meshtastic: Not connected', COLOR_DISCONNECTED)
+STATE_CONNECTION_FAILED = ConnectionState('Meshtastic: Connection failed', COLOR_ERROR)
+STATE_CONNECTION_ERROR = ConnectionState('Meshtastic: Error', COLOR_ERROR)
 
 
 def get_log_color(level, msg):
@@ -134,14 +169,14 @@ def process_result(result: tuple) -> ResultAction:
         action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
 
     elif result_type == 'connection_failed':
-        action.connection_text = 'Meshtastic: Connection failed'
-        action.connection_color = COLOR_ERROR
+        action.connection_text = STATE_CONNECTION_FAILED.text
+        action.connection_color = STATE_CONNECTION_FAILED.color
         action.log_messages.append(("Failed to connect to Meshtastic device", COLOR_ERROR))
 
     elif result_type == 'connection_error':
         error = result[1]
-        action.connection_text = 'Meshtastic: Error'
-        action.connection_color = COLOR_ERROR
+        action.connection_text = STATE_CONNECTION_ERROR.text
+        action.connection_color = STATE_CONNECTION_ERROR.color
         action.log_messages.append((f"Connection error: {error}", COLOR_ERROR))
 
     elif result_type == 'log':
@@ -316,9 +351,47 @@ class BTCMeshGUI(BoxLayout):
         separator1.bind(size=lambda inst, val: setattr(self._sep_rect1, 'size', val))
         self.add_widget(separator1)
 
+        # Device selection row
+        # Label
+        device_label = Label(
+            text='Your Meshtastic Device:',
+            size_hint_y=None,
+            height=25,
+            halign='left'
+        )
+        device_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
+        self.add_widget(device_label)
+
+        device_selection_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
+
+        # Spinner (drop down list)
+        self.device_spinner = Spinner(
+            text=SCANNING_TEXT,
+            values=[],
+            size_hint_x=1,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            color=COLOR_SECUNDARY,
+        )
+        self.device_spinner.bind(text=self.on_device_selected)
+        device_selection_box.add_widget(self.device_spinner)
+
+        # Refresh button
+        self.refresh_btn = Button(
+            text='Scan',
+            size_hint_x=None,
+            width=90,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+        )
+        self.refresh_btn.bind(on_press=self.on_refresh_devices)
+        device_selection_box.add_widget(self.refresh_btn)
+
+        self.add_widget(device_selection_box)
+
         # Destination input
         dest_label = Label(
-            text='Destination Node ID:',
+            text='Destination Meshtastic Node ID:',
             size_hint_y=None,
             height=25,
             halign='left',
@@ -434,10 +507,10 @@ class BTCMeshGUI(BoxLayout):
 
         # Connection status
         self.connection_label = Label(
-            text='Meshtastic: Not connected',
+            text=STATE_DISCONNECTED.text,
             size_hint_y=None,
             height=25,
-            color=(0.7, 0.7, 0.7, 1),
+            color=STATE_DISCONNECTED.color,
         )
         self.add_widget(self.connection_label)
 
@@ -464,16 +537,31 @@ class BTCMeshGUI(BoxLayout):
         self.clear_btn.bind(on_press=self.on_clear)
         self.add_widget(self.clear_btn)
 
-        # Try to connect to Meshtastic on startup
-        Clock.schedule_once(lambda dt: self._init_meshtastic(), 1)
+        # Scan for devices on startup
+        Clock.schedule_once(lambda dt: self._scan_devices(), 1)
 
-    def _init_meshtastic(self):
-        """Initialize Meshtastic interface in background."""
-        self.status_log.add_message("Connecting to Meshtastic device...")
+    def _scan_devices(self):
+        """Scan for available Meshtastic devices in background."""
+        self.device_spinner.text = SCANNING_TEXT
+        self.status_log.add_message("Scanning for Meshtastic devices...")
+
+        def scan_thread():
+            devices = scan_meshtastic_devices()
+            self.result_queue.put(('devices_found', devices))
+
+        threading.Thread(target=scan_thread, daemon=True).start()
+
+    def _init_meshtastic(self, port=None):
+        """Initialize Meshtastic interface in background.
+
+        Args:
+            port: Optional device path to connect to. If None, uses auto-detect.
+        """
+        self.status_log.add_message(f"Connecting to Meshtastic device{f' ({port})' if port else ''}...")
 
         def init_thread():
             try:
-                iface = initialize_meshtastic_interface_cli()
+                iface = initialize_meshtastic_interface_cli(port=port)
                 if iface:
                     node_id = "Unknown"
                     if hasattr(iface, 'myInfo') and iface.myInfo:
@@ -485,6 +573,30 @@ class BTCMeshGUI(BoxLayout):
                 self.result_queue.put(('connection_error', str(e), None))
 
         threading.Thread(target=init_thread, daemon=True).start()
+
+    def _disconnect_device(self):
+        """Disconnect current Meshtastic interface and reset connection status."""
+        if self.iface:
+            try:
+                self.iface.close()
+            except Exception:
+                pass
+            self.iface = None
+        self.connection_label.text = STATE_DISCONNECTED.text
+        self.connection_label.color = STATE_DISCONNECTED.color
+
+    def on_device_selected(self, spinner, text):
+        """Handle device selection from dropdown."""
+        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, ''):
+            return
+
+        self._disconnect_device()
+        self._init_meshtastic(port=text)
+
+    def on_refresh_devices(self, instance):
+        """Handle refresh button press to rescan devices."""
+        self._disconnect_device()
+        self._scan_devices()
 
     def _check_results(self, dt):
         """Check for results from background threads."""
@@ -500,6 +612,29 @@ class BTCMeshGUI(BoxLayout):
 
         Uses process_result to determine actions, then applies them to the GUI.
         """
+        # Handle devices_found specially since it needs spinner access
+        if result[0] == 'devices_found':
+            devices = result[1]
+            if devices:
+                self.device_spinner.values = devices
+                if len(devices) == 1:
+                    # Auto-select and connect to single device
+                    self.device_spinner.text = devices[0]
+                    self.status_log.add_message(f"Found 1 device: {devices[0]}", COLOR_SUCCESS)
+                    self._init_meshtastic(port=devices[0])
+                else:
+                    # Multiple devices - show first but don't connect, let user choose
+                    # Unbind to prevent auto-connect when setting text
+                    self.device_spinner.unbind(text=self.on_device_selected)
+                    self.device_spinner.text = devices[0]
+                    self.device_spinner.bind(text=self.on_device_selected)
+                    self.status_log.add_message(f"Found {len(devices)} devices - select one to connect", COLOR_WARNING)
+            else:
+                self.device_spinner.values = [NO_DEVICES_TEXT]
+                self.device_spinner.text = NO_DEVICES_TEXT
+                self.status_log.add_message("No Meshtastic devices found", COLOR_ERROR)
+            return
+
         action = process_result(result)
 
         # Apply connection label updates

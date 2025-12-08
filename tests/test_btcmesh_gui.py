@@ -29,6 +29,7 @@ sys.modules['kivy.uix.scrollview'] = kivy_mock
 sys.modules['kivy.uix.popup'] = kivy_mock
 sys.modules['kivy.uix.widget'] = kivy_mock
 sys.modules['kivy.uix.togglebutton'] = kivy_mock
+sys.modules['kivy.uix.spinner'] = kivy_mock
 sys.modules['kivy.clock'] = kivy_mock
 sys.modules['kivy.graphics'] = kivy_mock
 sys.modules['kivy.core'] = kivy_mock
@@ -41,6 +42,14 @@ sys.modules['kivy.utils'] = kivy_mock
 pubsub_mock = unittest.mock.MagicMock()
 sys.modules['pubsub'] = pubsub_mock
 
+# Mock meshtastic (for device scanning tests)
+meshtastic_mock = unittest.mock.MagicMock()
+meshtastic_mock.util = unittest.mock.MagicMock()
+meshtastic_mock.util.findPorts = unittest.mock.MagicMock(return_value=[])
+sys.modules['meshtastic'] = meshtastic_mock
+sys.modules['meshtastic.util'] = meshtastic_mock.util
+sys.modules['meshtastic.serial_interface'] = unittest.mock.MagicMock()
+
 from btcmesh_gui import (
     QueueLogHandler,
     get_log_color,
@@ -48,9 +57,17 @@ from btcmesh_gui import (
     process_result,
     validate_send_inputs,
     ResultAction,
+    scan_meshtastic_devices,
+    NO_DEVICES_TEXT,
+    SCANNING_TEXT,
     COLOR_ERROR,
     COLOR_WARNING,
     COLOR_SUCCESS,
+    COLOR_DISCONNECTED,
+    ConnectionState,
+    STATE_DISCONNECTED,
+    STATE_CONNECTION_FAILED,
+    STATE_CONNECTION_ERROR,
 )
 
 
@@ -542,6 +559,54 @@ class TestPopupsStory103(unittest.TestCase):
         self.assertTrue(action.stop_sending)
         self.assertIn('Something went wrong', action.log_messages[0][0])
         self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+
+# =============================================================================
+# Story 11.1: Device Selection Dropdown
+# Tests for Meshtastic device scanning and selection
+# =============================================================================
+
+class TestDeviceSelectionStory111(unittest.TestCase):
+    """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown."""
+
+    def test_scan_handles_import_error(self):
+        """Given meshtastic.util import fails, Then returns empty list."""
+        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=ImportError):
+            result = scan_meshtastic_devices()
+            self.assertEqual(result, [])
+
+    def test_scan_returns_empty_list_on_exception(self):
+        """Given findPorts raises exception, Then returns empty list."""
+        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=Exception("Test error")):
+            result = scan_meshtastic_devices()
+            self.assertEqual(result, [])
+
+    def test_scan_returns_device_list(self):
+        """Given findPorts returns devices, Then returns those devices."""
+        mock_ports = ['/dev/ttyUSB0', '/dev/ttyACM0']
+        with unittest.mock.patch('meshtastic.util.findPorts', return_value=mock_ports):
+            result = scan_meshtastic_devices()
+            self.assertEqual(result, mock_ports)
+
+    def test_scan_returns_empty_list_when_no_devices(self):
+        """Given findPorts returns empty list, Then returns empty list."""
+        with unittest.mock.patch('meshtastic.util.findPorts', return_value=[]):
+            result = scan_meshtastic_devices()
+            self.assertEqual(result, [])
+
+    def test_scan_returns_empty_list_when_findports_returns_none(self):
+        """Given findPorts returns None, Then returns empty list."""
+        with unittest.mock.patch('meshtastic.util.findPorts', return_value=None):
+            result = scan_meshtastic_devices()
+            self.assertEqual(result, [])
+
+    def test_no_devices_text_constant(self):
+        """Verify NO_DEVICES_TEXT constant is defined correctly."""
+        self.assertEqual(NO_DEVICES_TEXT, "No devices found")
+
+    def test_scanning_text_constant(self):
+        """Verify SCANNING_TEXT constant is defined correctly."""
+        self.assertEqual(SCANNING_TEXT, "Scanning...")
 
 
 if __name__ == '__main__':

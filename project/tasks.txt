@@ -442,25 +442,25 @@ lora/
 
 ### 11. Connection & Status Enhancements
 
-- [ ] **Story 11.1: Device Selection Dropdown**
-- [ ] *   **As a** user,
-- [ ] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
-- [ ] *   **So that** I can choose which device to use for sending transactions.
-    - [ ] *   **Scenario:** Multiple devices available
-        - [ ] *   **Given** multiple Meshtastic devices are connected to the system.
-        - [ ] *   **When** the user opens the device dropdown.
-        - [ ] *   **Then** all available devices are listed with their serial ports.
-        - [ ] *   **And** the user can select a device to use.
-    - [ ] *   **Scenario:** Single device available
-        - [ ] *   **Given** only one Meshtastic device is connected.
-        - [ ] *   **When** the GUI starts.
-        - [ ] *   **Then** the device is automatically selected.
-        - [ ] *   **And** the dropdown shows the selected device.
-    - [ ] *   **Scenario:** No devices available
-        - [ ] *   **Given** no Meshtastic devices are connected.
-        - [ ] *   **When** the GUI starts.
-        - [ ] *   **Then** the dropdown shows "No devices found".
-        - [ ] *   **And** the Send button is disabled.
+- [x] **Story 11.1: Device Selection Dropdown**
+- [x] *   **As a** user,
+- [x] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
+- [x] *   **So that** I can choose which device to use for sending transactions.
+    - [x] *   **Scenario:** Multiple devices available
+        - [x] *   **Given** multiple Meshtastic devices are connected to the system.
+        - [x] *   **When** the user opens the device dropdown.
+        - [x] *   **Then** all available devices are listed with their serial ports.
+        - [x] *   **And** the user can select a device to use.
+    - [x] *   **Scenario:** Single device available
+        - [x] *   **Given** only one Meshtastic device is connected.
+        - [x] *   **When** the GUI starts.
+        - [x] *   **Then** the device is automatically selected.
+        - [x] *   **And** the dropdown shows the selected device.
+    - [x] *   **Scenario:** No devices available
+        - [x] *   **Given** no Meshtastic devices are connected.
+        - [x] *   **When** the GUI starts.
+        - [x] *   **Then** the dropdown shows "No devices found".
+        - [x] *   **And** the Send button is disabled.
 
 ### 12. UX Improvements
 
