@@ -609,5 +609,209 @@ class TestDeviceSelectionStory111(unittest.TestCase):
         self.assertEqual(SCANNING_TEXT, "Scanning...")
 
 
+# =============================================================================
+# Story 11.2: Known Nodes Dropdown for Destination
+# Tests for extracting and formatting known nodes from Meshtastic interface
+# =============================================================================
+
+class TestKnownNodesStory112(unittest.TestCase):
+    """Tests for known nodes dropdown - Story 11.2."""
+
+    def _create_mock_node(self, node_id, long_name, short_name, last_heard, hops_away=1):
+        """Helper to create a mock node structure."""
+        return {
+            'user': {
+                'id': node_id,
+                'longName': long_name,
+                'shortName': short_name,
+            },
+            'lastHeard': last_heard,
+            'hopsAway': hops_away,
+        }
+
+    def test_get_known_nodes_returns_empty_list_when_no_nodes(self):
+        """Given interface has no nodes, Then returns empty list."""
+        from btcmesh_gui import get_known_nodes
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.nodes = {}
+        mock_iface.myInfo.my_node_num = 12345678
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(result, [])
+
+    def test_get_known_nodes_returns_empty_list_when_nodes_is_none(self):
+        """Given interface.nodes is None, Then returns empty list."""
+        from btcmesh_gui import get_known_nodes
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.nodes = None
+        mock_iface.myInfo.my_node_num = 12345678
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(result, [])
+
+    def test_get_known_nodes_extracts_node_info(self):
+        """Given interface has nodes, Then extracts id, name, lastHeard."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 12345678
+        mock_iface.nodes = {
+            '!abcd1234': self._create_mock_node('!abcd1234', 'Node One', 'NO1', now - 100),
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], '!abcd1234')
+        self.assertEqual(result[0]['name'], 'Node One')
+        self.assertEqual(result[0]['lastHeard'], now - 100)
+
+    def test_get_known_nodes_filters_out_own_node(self):
+        """Given interface has own node in list, Then filters it out."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0xabcd1234  # Own node
+        mock_iface.nodes = {
+            '!abcd1234': self._create_mock_node('!abcd1234', 'My Node', 'MYN', now - 100),
+            '!efef5678': self._create_mock_node('!efef5678', 'Other Node', 'OTH', now - 200),
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], '!efef5678')
+
+    def test_get_known_nodes_sorts_by_last_heard_descending(self):
+        """Given multiple nodes, Then sorts by lastHeard (most recent first)."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 12345678
+        mock_iface.nodes = {
+            '!oldest00': self._create_mock_node('!oldest00', 'Oldest', 'OLD', now - 3600),
+            '!newest00': self._create_mock_node('!newest00', 'Newest', 'NEW', now - 60),
+            '!middle00': self._create_mock_node('!middle00', 'Middle', 'MID', now - 1800),
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['id'], '!newest00')  # Most recent
+        self.assertEqual(result[1]['id'], '!middle00')
+        self.assertEqual(result[2]['id'], '!oldest00')  # Oldest
+
+    def test_get_known_nodes_uses_short_name_if_no_long_name(self):
+        """Given node has no longName, Then uses shortName."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 12345678
+        mock_iface.nodes = {
+            '!abcd1234': {
+                'user': {
+                    'id': '!abcd1234',
+                    'longName': '',
+                    'shortName': 'SHRT',
+                },
+                'lastHeard': now - 100,
+                'hopsAway': 1,
+            },
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        self.assertEqual(result[0]['name'], 'SHRT')
+
+    def test_get_known_nodes_handles_missing_user_info(self):
+        """Given node has no user info, Then handles gracefully."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 12345678
+        mock_iface.nodes = {
+            '!abcd1234': {
+                'lastHeard': now - 100,
+            },
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        # Should still include node but with node_id as name
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], '!abcd1234')
+
+    def test_get_known_nodes_includes_is_recent_flag(self):
+        """Given nodes with different lastHeard, Then includes is_recent flag."""
+        from btcmesh_gui import get_known_nodes
+        import time
+        now = int(time.time())
+        hours_24 = 24 * 60 * 60
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 12345678
+        mock_iface.nodes = {
+            '!recent00': self._create_mock_node('!recent00', 'Recent', 'REC', now - 100),
+            '!stale000': self._create_mock_node('!stale000', 'Stale', 'STL', now - hours_24 - 100),
+        }
+
+        result = get_known_nodes(mock_iface)
+
+        recent_node = next(n for n in result if n['id'] == '!recent00')
+        stale_node = next(n for n in result if n['id'] == '!stale000')
+
+        self.assertTrue(recent_node['is_recent'])
+        self.assertFalse(stale_node['is_recent'])
+
+    def test_format_node_display_recent_node_has_green_dot(self):
+        """Given a recent node, Then displays green dot (●)."""
+        from btcmesh_gui import format_node_display
+        node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': True}
+
+        result = format_node_display(node)
+
+        self.assertTrue(result.startswith('●'))
+
+    def test_format_node_display_stale_node_has_gray_dot(self):
+        """Given a stale node, Then displays gray dot (○)."""
+        from btcmesh_gui import format_node_display
+        node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': False}
+
+        result = format_node_display(node)
+
+        self.assertTrue(result.startswith('○'))
+
+    def test_format_node_display_includes_name_and_id(self):
+        """Given a node, Then includes name and id in display."""
+        from btcmesh_gui import format_node_display
+        node = {'id': '!abcd1234', 'name': 'My Relay', 'lastHeard': 123456, 'is_recent': True}
+
+        result = format_node_display(node)
+
+        self.assertIn('My Relay', result)
+        self.assertIn('!abcd1234', result)
+
+    def test_format_node_display_format(self):
+        """Given a node, Then formats as 'dot name (id)'."""
+        from btcmesh_gui import format_node_display
+        node = {'id': '!efef5678', 'name': 'Relay Server', 'lastHeard': 123456, 'is_recent': True}
+
+        result = format_node_display(node)
+
+        self.assertEqual(result, '● Relay Server (!efef5678)')
+
+
 if __name__ == '__main__':
     unittest.main()

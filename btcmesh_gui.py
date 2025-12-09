@@ -58,6 +58,82 @@ def scan_meshtastic_devices() -> list:
     except Exception:
         return []
 
+
+def get_known_nodes(iface) -> list:
+    """Get list of known nodes from a Meshtastic interface.
+
+    Args:
+        iface: Meshtastic interface with nodes dictionary
+
+    Returns:
+        List of dicts with keys: id, name, lastHeard, is_recent
+        Sorted by lastHeard descending (most recent first).
+        Filters out the device's own node.
+    """
+    import time
+
+    if not iface or not iface.nodes:
+        return []
+
+    # Get own node number to filter out
+    own_node_num = iface.myInfo.my_node_num if iface.myInfo else None
+
+    nodes = []
+    now = int(time.time())
+    hours_24 = 24 * 60 * 60
+
+    for node_id, node_data in iface.nodes.items():
+        # Skip own node by comparing node_id hex to own_node_num
+        if own_node_num is not None:
+            # node_id format: '!abcd1234' -> convert to int for comparison
+            try:
+                node_num = int(node_id.lstrip('!'), 16)
+                if node_num == own_node_num:
+                    continue
+            except (ValueError, AttributeError):
+                pass
+
+        # Extract user info
+        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
+        long_name = user.get('longName', '') if isinstance(user, dict) else ''
+        short_name = user.get('shortName', '') if isinstance(user, dict) else ''
+
+        # Use longName, or shortName, or node_id as fallback
+        name = long_name or short_name or node_id
+
+        # Get lastHeard timestamp
+        last_heard = node_data.get('lastHeard', 0) if isinstance(node_data, dict) else 0
+
+        # Determine if node was seen in last 24 hours
+        is_recent = (now - last_heard) < hours_24 if last_heard else False
+
+        nodes.append({
+            'id': node_id,
+            'name': name,
+            'lastHeard': last_heard,
+            'is_recent': is_recent,
+        })
+
+    # Sort by lastHeard descending (most recent first)
+    nodes.sort(key=lambda n: n['lastHeard'], reverse=True)
+
+    return nodes
+
+
+def format_node_display(node: dict) -> str:
+    """Format a node dict for display in the dropdown.
+
+    Args:
+        node: Dict with keys: id, name, lastHeard, is_recent
+
+    Returns:
+        Formatted string: '● Name (!nodeid)' for recent nodes,
+                         '○ Name (!nodeid)' for stale nodes.
+    """
+    dot = '●' if node.get('is_recent', False) else '○'
+    return f"{dot} {node['name']} ({node['id']})"
+
+
 # Set window size for desktop testing
 Window.size = (450, 700)
 
@@ -226,7 +302,8 @@ def process_result(result: tuple) -> ResultAction:
     return action
 
 
-def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False) -> Optional[str]:
+def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False,
+                         own_node_id: Optional[str] = None) -> Optional[str]:
     """Validate the inputs for sending a transaction.
 
     This is a pure function that validates inputs without touching the GUI.
@@ -236,6 +313,7 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
         tx_hex: The raw transaction hex (already cleaned of whitespace)
         has_iface: Whether the Meshtastic interface is connected
         dry_run: Whether this is a dry run (skips Meshtastic connection check)
+        own_node_id: The node ID of the connected device (for self-send check)
 
     Returns:
         An error message string if validation fails, or None if inputs are valid
@@ -245,6 +323,10 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
 
     if not dest.startswith('!'):
         return "Destination must start with '!'"
+
+    # Check for sending to own node
+    if own_node_id and dest.lower() == own_node_id.lower():
+        return "Cannot send to your own node"
 
     if not tx_hex:
         return "Enter transaction hex"
@@ -661,6 +743,20 @@ class BTCMeshGUI(BoxLayout):
         if action.show_success_popup is not None:
             self._show_success_popup(action.show_success_popup)
 
+    def _get_own_node_id(self) -> Optional[str]:
+        """Get the node ID of the connected Meshtastic device.
+
+        Returns:
+            Node ID string (e.g., '!abcd1234') or None if not connected.
+        """
+        if not self.iface or not self.iface.myInfo:
+            return None
+        try:
+            node_num = self.iface.myInfo.my_node_num
+            return f"!{node_num:08x}"
+        except (AttributeError, TypeError):
+            return None
+
     def on_send_pressed(self, instance):
         """Handle send button press."""
         dest = self.dest_input.text.strip()
@@ -668,6 +764,7 @@ class BTCMeshGUI(BoxLayout):
         dry_run = self.dry_run_toggle.state == 'down'
 
         # Validation (dry_run skips Meshtastic connection check)
+        own_node_id = self._get_own_node_id()
         error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
