@@ -497,6 +497,23 @@ lora/
     *   _Sort nodes by `lastHeard` timestamp (most recent first)._
     *   _Format: "NodeName (!nodeId)"._
 
+- [ ] **Story 11.3: Display Connected Device Name**
+- [ ] *   **As a** user,
+- [ ] *   **I want** to see the name of my connected Meshtastic device,
+- [ ] *   **So that** I can identify which device I'm using at a glance.
+    - [ ] *   **Scenario:** Device name shown in connection status
+        - [ ] *   **Given** the Meshtastic device is connected.
+        - [ ] *   **When** the device has a configured node name.
+        - [ ] *   **Then** the connection status shows "Meshtastic: Connected - NodeName (!nodeId)".
+    - [ ] *   **Scenario:** No device name configured
+        - [ ] *   **Given** the Meshtastic device is connected.
+        - [ ] *   **When** the device has no longName configured.
+        - [ ] *   **Then** the connection status shows "Meshtastic: Connected (!nodeId)".
+    *   _Implementation notes:_
+    *   _Get own node info from `interface.nodes[own_node_id]` or `interface.getMyNodeInfo()`._
+    *   _Extract `user.longName` or `user.shortName` as fallback._
+    *   _Update connection label format in `process_result()` for 'connection_success'._
+
 ### 12. UX Improvements
 
 - [ ] **Story 12.1: Client Settings Panel**
