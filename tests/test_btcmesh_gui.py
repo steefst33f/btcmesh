@@ -60,6 +60,8 @@ from btcmesh_gui import (
     scan_meshtastic_devices,
     NO_DEVICES_TEXT,
     SCANNING_TEXT,
+    NO_NODES_TEXT,
+    MANUAL_ENTRY_TEXT,
     COLOR_ERROR,
     COLOR_WARNING,
     COLOR_SUCCESS,
@@ -157,6 +159,32 @@ class TestSendButtonValidationStory91(unittest.TestCase):
         """
         result = validate_send_inputs("!abc123", "aabbccdd", False, dry_run=False)
         self.assertEqual(result, "Meshtastic not connected")
+
+    def test_destination_same_as_own_node_returns_error(self):
+        """Given destination same as own node ID, Then returns error.
+
+        Story 11.2: Cannot send transaction to yourself.
+        """
+        own_node_id = "!abcd1234"
+        result = validate_send_inputs("!abcd1234", "aabbccdd", True, own_node_id=own_node_id)
+        self.assertEqual(result, "Cannot send to your own node")
+
+    def test_destination_different_from_own_node_returns_none(self):
+        """Given destination different from own node ID, Then returns None (valid).
+
+        Story 11.2: Sending to a different node should be allowed.
+        """
+        own_node_id = "!abcd1234"
+        result = validate_send_inputs("!efef5678", "aabbccdd", True, own_node_id=own_node_id)
+        self.assertIsNone(result)
+
+    def test_own_node_id_none_skips_validation(self):
+        """Given own_node_id is None, Then skips self-send validation.
+
+        When not connected, we don't know our own node ID.
+        """
+        result = validate_send_inputs("!abcd1234", "aabbccdd", True, own_node_id=None)
+        self.assertIsNone(result)
 
     def test_cli_finished_success_stops_sending(self):
         """Given 'cli_finished' with exit code 0, Then stops sending and shows success."""
@@ -775,23 +803,23 @@ class TestKnownNodesStory112(unittest.TestCase):
         self.assertTrue(recent_node['is_recent'])
         self.assertFalse(stale_node['is_recent'])
 
-    def test_format_node_display_recent_node_has_green_dot(self):
-        """Given a recent node, Then displays green dot (●)."""
+    def test_format_node_display_recent_node(self):
+        """Given a recent node, Then displays name and id."""
         from btcmesh_gui import format_node_display
         node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': True}
 
         result = format_node_display(node)
 
-        self.assertTrue(result.startswith('●'))
+        self.assertEqual(result, 'Test Node (!abcd1234)')
 
-    def test_format_node_display_stale_node_has_gray_dot(self):
-        """Given a stale node, Then displays gray dot (○)."""
+    def test_format_node_display_stale_node(self):
+        """Given a stale node, Then displays name and id (same as recent)."""
         from btcmesh_gui import format_node_display
         node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': False}
 
         result = format_node_display(node)
 
-        self.assertTrue(result.startswith('○'))
+        self.assertEqual(result, 'Test Node (!abcd1234)')
 
     def test_format_node_display_includes_name_and_id(self):
         """Given a node, Then includes name and id in display."""
@@ -804,13 +832,21 @@ class TestKnownNodesStory112(unittest.TestCase):
         self.assertIn('!abcd1234', result)
 
     def test_format_node_display_format(self):
-        """Given a node, Then formats as 'dot name (id)'."""
+        """Given a node, Then formats as 'name (id)'."""
         from btcmesh_gui import format_node_display
         node = {'id': '!efef5678', 'name': 'Relay Server', 'lastHeard': 123456, 'is_recent': True}
 
         result = format_node_display(node)
 
-        self.assertEqual(result, '● Relay Server (!efef5678)')
+        self.assertEqual(result, 'Relay Server (!efef5678)')
+
+    def test_no_nodes_text_constant(self):
+        """Verify NO_NODES_TEXT constant is defined correctly."""
+        self.assertEqual(NO_NODES_TEXT, "No nodes found")
+
+    def test_manual_entry_text_constant(self):
+        """Verify MANUAL_ENTRY_TEXT constant is defined correctly."""
+        self.assertEqual(MANUAL_ENTRY_TEXT, "Enter manually...")
 
 
 if __name__ == '__main__':

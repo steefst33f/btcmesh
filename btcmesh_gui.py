@@ -42,6 +42,10 @@ from btcmesh_cli import (
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
 
+# Node selection constants
+NO_NODES_TEXT = "No nodes found"
+MANUAL_ENTRY_TEXT = "Enter manually..."
+
 
 def scan_meshtastic_devices() -> list:
     """Scan for available Meshtastic devices.
@@ -127,11 +131,9 @@ def format_node_display(node: dict) -> str:
         node: Dict with keys: id, name, lastHeard, is_recent
 
     Returns:
-        Formatted string: '● Name (!nodeid)' for recent nodes,
-                         '○ Name (!nodeid)' for stale nodes.
+        Formatted string: 'Name (!nodeid)'
     """
-    dot = '●' if node.get('is_recent', False) else '○'
-    return f"{dot} {node['name']} ({node['id']})"
+    return f"{node['name']} ({node['id']})"
 
 
 # Set window size for desktop testing
@@ -465,13 +467,15 @@ class BTCMeshGUI(BoxLayout):
             width=90,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
+            font_size='14sp',
+
         )
         self.refresh_btn.bind(on_press=self.on_refresh_devices)
         device_selection_box.add_widget(self.refresh_btn)
 
         self.add_widget(device_selection_box)
 
-        # Destination input
+        # Destination input section
         dest_label = Label(
             text='Destination Meshtastic Node ID:',
             size_hint_y=None,
@@ -480,16 +484,49 @@ class BTCMeshGUI(BoxLayout):
         )
         dest_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
         self.add_widget(dest_label)
+
+        # Node selection row (Spinner + TextInput + Refresh)
+        dest_selection_box = BoxLayout(size_hint_y=None, height=45, spacing=5)
+
+        # Known nodes cache for mapping display text back to node id
+        self.known_nodes = []
+
+        # Spinner for known nodes
+        self.node_spinner = Spinner(
+            text=MANUAL_ENTRY_TEXT,
+            values=[MANUAL_ENTRY_TEXT],
+            size_hint_x=0.5,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            color=COLOR_SECUNDARY,
+        )
+        self.node_spinner.bind(text=self.on_node_selected)
+        dest_selection_box.add_widget(self.node_spinner)
+
+        # TextInput for destination (manual entry or selected from dropdown)
         self.dest_input = TextInput(
-            hint_text='!abcdef12',
+            hint_text='!node_id',
             multiline=False,
-            size_hint_y=None,
-            height=45,
+            size_hint_x=0.4,
             background_color=COLOR_BG_LIGHT,
             foreground_color=COLOR_SECUNDARY,
             cursor_color=COLOR_SECUNDARY,
         )
-        self.add_widget(self.dest_input)
+        dest_selection_box.add_widget(self.dest_input)
+
+        # Refresh nodes button
+        self.refresh_nodes_btn = Button(
+            text='Scan',
+            size_hint_x=None,
+            width=90,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            font_size='14sp',
+        )
+        self.refresh_nodes_btn.bind(on_press=self.on_refresh_nodes)
+        dest_selection_box.add_widget(self.refresh_nodes_btn)
+
+        self.add_widget(dest_selection_box)
 
         # TX Hex input
         tx_label = Label(
@@ -666,6 +703,10 @@ class BTCMeshGUI(BoxLayout):
             self.iface = None
         self.connection_label.text = STATE_DISCONNECTED.text
         self.connection_label.color = STATE_DISCONNECTED.color
+        # Clear known nodes
+        self.known_nodes = []
+        self.node_spinner.values = [MANUAL_ENTRY_TEXT]
+        self.node_spinner.text = MANUAL_ENTRY_TEXT
 
     def on_device_selected(self, spinner, text):
         """Handle device selection from dropdown."""
@@ -679,6 +720,46 @@ class BTCMeshGUI(BoxLayout):
         """Handle refresh button press to rescan devices."""
         self._disconnect_device()
         self._scan_devices()
+
+    def on_node_selected(self, spinner, text):
+        """Handle node selection from dropdown."""
+        if text == MANUAL_ENTRY_TEXT:
+            # Clear input for fresh manual entry
+            self.dest_input.text = ''
+            return
+        if text in (NO_NODES_TEXT, ''):
+            return
+
+        # Find the node ID from the formatted display text
+        for node in self.known_nodes:
+            if format_node_display(node) == text:
+                self.dest_input.text = node['id']
+                break
+
+    def on_refresh_nodes(self, instance):
+        """Handle refresh button press to update known nodes list."""
+        self._update_known_nodes()
+
+    def _update_known_nodes(self):
+        """Update the known nodes dropdown from the connected interface."""
+        if not self.iface:
+            self.node_spinner.values = [NO_NODES_TEXT]
+            self.node_spinner.text = NO_NODES_TEXT
+            self.known_nodes = []
+            return
+
+        nodes = get_known_nodes(self.iface)
+        self.known_nodes = nodes
+
+        if not nodes:
+            self.node_spinner.values = [MANUAL_ENTRY_TEXT, NO_NODES_TEXT]
+            self.node_spinner.text = MANUAL_ENTRY_TEXT
+        else:
+            # Format nodes for display and add manual entry option
+            formatted_nodes = [format_node_display(n) for n in nodes]
+            self.node_spinner.values = [MANUAL_ENTRY_TEXT] + formatted_nodes
+            self.node_spinner.text = MANUAL_ENTRY_TEXT
+            self.status_log.add_message(f"Found {len(nodes)} known node(s)", COLOR_SUCCESS)
 
     def _check_results(self, dt):
         """Check for results from background threads."""
@@ -728,6 +809,8 @@ class BTCMeshGUI(BoxLayout):
         # Store interface if provided
         if action.store_iface is not None:
             self.iface = action.store_iface
+            # Fetch known nodes when connected
+            self._update_known_nodes()
 
         # Add log messages
         for msg, color in action.log_messages:
@@ -765,7 +848,7 @@ class BTCMeshGUI(BoxLayout):
 
         # Validation (dry_run skips Meshtastic connection check)
         own_node_id = self._get_own_node_id()
-        error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run)
+        error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run, own_node_id=own_node_id)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
             if error == "Meshtastic not connected":

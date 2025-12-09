@@ -462,37 +462,40 @@ lora/
         - [x] *   **Then** the dropdown shows "No devices found".
         - [x] *   **And** the Send button is disabled.
 
-- [ ] **Story 11.2: Known Nodes Dropdown for Destination**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to select a destination from a list of known Meshtastic nodes,
-- [ ] *   **So that** I don't have to manually type the node ID.
-    - [ ] *   **Scenario:** Nodes available after connection
-        - [ ] *   **Given** the Meshtastic device is connected.
-        - [ ] *   **When** the node database has been populated.
-        - [ ] *   **Then** the destination dropdown shows known nodes formatted as "!nodeId (NodeName)".
-        - [ ] *   **And** selecting a node fills the destination field with the node ID.
-    - [ ] *   **Scenario:** No known nodes
-        - [ ] *   **Given** the Meshtastic device is connected.
-        - [ ] *   **When** the node database is empty.
-        - [ ] *   **Then** the dropdown shows "No nodes found".
-        - [ ] *   **And** the user can still manually type a destination.
-    - [ ] *   **Scenario:** Filter stale nodes
-        - [ ] *   **Given** the node database contains nodes.
-        - [ ] *   **When** some nodes have not been heard from in over 24 hours.
-        - [ ] *   **Then** stale nodes are shown in gray or at the bottom of the list.
-    - [ ] *   **Scenario:** Refresh node list
-        - [ ] *   **Given** the Meshtastic device is connected.
-        - [ ] *   **When** the user clicks the refresh button next to destination.
-        - [ ] *   **Then** the node list is updated from the current device node database.
-    - [ ] *   **Scenario:** Manual entry always available
-        - [ ] *   **Given** the destination dropdown shows known nodes.
-        - [ ] *   **When** the user wants to send to a node not in the list.
-        - [ ] *   **Then** the user can manually type any valid node ID in the destination field.
-        - [ ] *   **And** manual entry overrides the dropdown selection.
+- [x] **Story 11.2: Known Nodes Dropdown for Destination**
+- [x] *   **As a** user,
+- [x] *   **I want** to select a destination from a list of known Meshtastic nodes,
+- [x] *   **So that** I don't have to manually type the node ID.
+    - [x] *   **Scenario:** Nodes available after connection
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the node database has been populated.
+        - [x] *   **Then** the destination dropdown shows known nodes formatted as "NodeName (!nodeId)".
+        - [x] *   **And** selecting a node fills the destination field with the node ID.
+    - [x] *   **Scenario:** No known nodes
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the node database is empty.
+        - [x] *   **Then** the dropdown shows "No nodes found".
+        - [x] *   **And** the user can still manually type a destination.
+    - [x] *   **Scenario:** Refresh node list
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the user clicks the "Scan" button next to destination.
+        - [x] *   **Then** the node list is updated from the current device node database.
+    - [x] *   **Scenario:** Manual entry always available
+        - [x] *   **Given** the destination dropdown shows known nodes.
+        - [x] *   **When** the user selects "Enter manually..." from the dropdown.
+        - [x] *   **Then** the destination input field is cleared for fresh entry.
+        - [x] *   **And** the user can type any valid node ID in the destination field.
+    - [x] *   **Scenario:** Cannot send to own node
+        - [x] *   **Given** the user is connected to a Meshtastic device.
+        - [x] *   **When** the user enters their own node ID as destination.
+        - [x] *   **Then** an error message is shown: "Cannot send to your own node".
+        - [x] *   **And** the transaction is not sent.
     *   _Implementation notes:_
     *   _Access nodes via `interface.nodes` dictionary after connection._
     *   _Each node has: `user.id`, `user.longName`, `user.shortName`, `lastHeard`, `hopsAway`._
-    *   _Consider filtering by `lastHeard` timestamp to show recently active nodes._
+    *   _Filter out own node (the connected device) from the list._
+    *   _Sort nodes by `lastHeard` timestamp (most recent first)._
+    *   _Format: "NodeName (!nodeId)"._
 
 ### 12. UX Improvements
 
