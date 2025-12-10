@@ -497,22 +497,22 @@ lora/
     *   _Sort nodes by `lastHeard` timestamp (most recent first)._
     *   _Format: "NodeName (!nodeId)"._
 
-- [ ] **Story 11.3: Display Connected Device Name**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to see the name of my connected Meshtastic device,
-- [ ] *   **So that** I can identify which device I'm using at a glance.
-    - [ ] *   **Scenario:** Device name shown in connection status
-        - [ ] *   **Given** the Meshtastic device is connected.
-        - [ ] *   **When** the device has a configured node name.
-        - [ ] *   **Then** the connection status shows "Meshtastic: Connected - NodeName (!nodeId)".
-    - [ ] *   **Scenario:** No device name configured
-        - [ ] *   **Given** the Meshtastic device is connected.
-        - [ ] *   **When** the device has no longName configured.
-        - [ ] *   **Then** the connection status shows "Meshtastic: Connected (!nodeId)".
+- [x] **Story 11.3: Display Connected Device Name**
+- [x] *   **As a** user,
+- [x] *   **I want** to see the name of my connected Meshtastic device,
+- [x] *   **So that** I can identify which device I'm using at a glance.
+    - [x] *   **Scenario:** Device name shown in connection status
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the device has a configured node name.
+        - [x] *   **Then** the connection status shows "Meshtastic: Connected - NodeName (!nodeId)".
+    - [x] *   **Scenario:** No device name configured
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the device has no longName configured.
+        - [x] *   **Then** the connection status shows "Meshtastic: Connected (!nodeId)".
     *   _Implementation notes:_
-    *   _Get own node info from `interface.nodes[own_node_id]` or `interface.getMyNodeInfo()`._
+    *   _Get own node info via `get_own_node_name()` helper using `interface.myInfo.my_node_num` and `interface.nodes`._
     *   _Extract `user.longName` or `user.shortName` as fallback._
-    *   _Update connection label format in `process_result()` for 'connection_success'._
+    *   _Update connection label format in `process_result()` for 'connected' result type._
 
 ### 12. UX Improvements
 

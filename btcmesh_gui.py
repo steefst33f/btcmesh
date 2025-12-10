@@ -136,6 +136,36 @@ def format_node_display(node: dict) -> str:
     return f"{node['name']} ({node['id']})"
 
 
+def get_own_node_name(iface) -> Optional[str]:
+    """Get the name of the connected device's own node.
+
+    Args:
+        iface: Meshtastic interface with nodes dictionary and myInfo
+
+    Returns:
+        The node's longName or shortName, or None if not available.
+    """
+    if not iface or not iface.myInfo:
+        return None
+
+    try:
+        own_node_num = iface.myInfo.my_node_num
+        own_node_id = f"!{own_node_num:08x}"
+
+        if not iface.nodes or own_node_id not in iface.nodes:
+            return None
+
+        node_data = iface.nodes[own_node_id]
+        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
+        long_name = user.get('longName', '') if isinstance(user, dict) else ''
+        short_name = user.get('shortName', '') if isinstance(user, dict) else ''
+
+        name = long_name or short_name
+        return name if name else None
+    except (AttributeError, TypeError, KeyError):
+        return None
+
+
 # Set window size for desktop testing
 Window.size = (450, 700)
 
@@ -241,10 +271,15 @@ def process_result(result: tuple) -> ResultAction:
     if result_type == 'connected':
         iface = result[1]
         node_id = result[2]
+        node_name = result[3] if len(result) > 3 else None
         action.store_iface = iface
-        action.connection_text = f'Meshtastic: Connected ({node_id})'
+        if node_name:
+            action.connection_text = f'Meshtastic: Connected - {node_name} ({node_id})'
+            action.log_messages.append((f"Connected to Meshtastic device: {node_name} ({node_id})", COLOR_SUCCESS))
+        else:
+            action.connection_text = f'Meshtastic: Connected ({node_id})'
+            action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
         action.connection_color = COLOR_SUCCESS
-        action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
 
     elif result_type == 'connection_failed':
         action.connection_text = STATE_CONNECTION_FAILED.text
@@ -685,7 +720,8 @@ class BTCMeshGUI(BoxLayout):
                     node_id = "Unknown"
                     if hasattr(iface, 'myInfo') and iface.myInfo:
                         node_id = f"!{iface.myInfo.my_node_num:x}"
-                    self.result_queue.put(('connected', iface, node_id))
+                    node_name = get_own_node_name(iface)
+                    self.result_queue.put(('connected', iface, node_id, node_name))
                 else:
                     self.result_queue.put(('connection_failed', None, None))
             except Exception as e:

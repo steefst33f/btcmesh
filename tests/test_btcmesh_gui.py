@@ -849,5 +849,121 @@ class TestKnownNodesStory112(unittest.TestCase):
         self.assertEqual(MANUAL_ENTRY_TEXT, "Enter manually...")
 
 
+# =============================================================================
+# Story 11.3: Display Connected Device Name
+# Tests for displaying the connected device's name in the connection status
+# =============================================================================
+
+class TestDisplayDeviceNameStory113(unittest.TestCase):
+    """Tests for displaying connected device name - Story 11.3."""
+
+    def _create_mock_node(self, node_id, long_name, short_name):
+        """Helper to create a mock node structure."""
+        return {
+            'user': {
+                'id': node_id,
+                'longName': long_name,
+                'shortName': short_name,
+            },
+        }
+
+    def test_get_own_node_name_returns_long_name(self):
+        """Given interface has own node with longName, Then returns longName."""
+        from btcmesh_gui import get_own_node_name
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0xabcd1234
+        mock_iface.nodes = {
+            '!abcd1234': self._create_mock_node('!abcd1234', 'My Device', 'MYDEV'),
+        }
+
+        result = get_own_node_name(mock_iface)
+
+        self.assertEqual(result, 'My Device')
+
+    def test_get_own_node_name_returns_short_name_if_no_long_name(self):
+        """Given interface has own node without longName, Then returns shortName."""
+        from btcmesh_gui import get_own_node_name
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0xabcd1234
+        mock_iface.nodes = {
+            '!abcd1234': {
+                'user': {
+                    'id': '!abcd1234',
+                    'longName': '',
+                    'shortName': 'SHRT',
+                },
+            },
+        }
+
+        result = get_own_node_name(mock_iface)
+
+        self.assertEqual(result, 'SHRT')
+
+    def test_get_own_node_name_returns_none_if_no_name(self):
+        """Given interface has own node without any name, Then returns None."""
+        from btcmesh_gui import get_own_node_name
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0xabcd1234
+        mock_iface.nodes = {
+            '!abcd1234': {
+                'user': {
+                    'id': '!abcd1234',
+                    'longName': '',
+                    'shortName': '',
+                },
+            },
+        }
+
+        result = get_own_node_name(mock_iface)
+
+        self.assertIsNone(result)
+
+    def test_get_own_node_name_returns_none_if_no_interface(self):
+        """Given no interface, Then returns None."""
+        from btcmesh_gui import get_own_node_name
+
+        result = get_own_node_name(None)
+
+        self.assertIsNone(result)
+
+    def test_get_own_node_name_returns_none_if_own_node_not_in_nodes(self):
+        """Given own node not in nodes dict, Then returns None."""
+        from btcmesh_gui import get_own_node_name
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0xabcd1234
+        mock_iface.nodes = {}
+
+        result = get_own_node_name(mock_iface)
+
+        self.assertIsNone(result)
+
+    def test_connected_with_node_name_shows_name_in_status(self):
+        """Given 'connected' with node_name, Then shows name in status."""
+        result = ('connected', unittest.mock.MagicMock(), '!abcd1234', 'My Device')
+
+        action = process_result(result)
+
+        self.assertEqual(action.connection_text, 'Meshtastic: Connected - My Device (!abcd1234)')
+        self.assertEqual(action.connection_color, COLOR_SUCCESS)
+
+    def test_connected_without_node_name_shows_only_id(self):
+        """Given 'connected' without node_name, Then shows only id."""
+        result = ('connected', unittest.mock.MagicMock(), '!abcd1234', None)
+
+        action = process_result(result)
+
+        self.assertEqual(action.connection_text, 'Meshtastic: Connected (!abcd1234)')
+        self.assertEqual(action.connection_color, COLOR_SUCCESS)
+
+    def test_connected_log_message_includes_name(self):
+        """Given 'connected' with node_name, Then log message includes name."""
+        result = ('connected', unittest.mock.MagicMock(), '!abcd1234', 'My Device')
+
+        action = process_result(result)
+
+        self.assertIn('My Device', action.log_messages[0][0])
+        self.assertIn('!abcd1234', action.log_messages[0][0])
+
+
 if __name__ == '__main__':
     unittest.main()
