@@ -641,7 +641,7 @@ class BTCMeshGUI(BoxLayout):
         btn_box.add_widget(self.send_btn)
 
         self.example_btn = Button(
-            text='Load Example',
+            text='Load Hex Example',
             background_color=COLOR_BG_LIGHT,
             background_normal='',
         )
@@ -1090,10 +1090,9 @@ class BTCMeshGUI(BoxLayout):
         popup.open()
 
     def on_load_example(self, instance):
-        """Load example transaction and destination."""
-        self.dest_input.text = '!abcd1234'
+        """Load example transaction hex."""
         self.tx_input.text = EXAMPLE_RAW_TX
-        self.status_log.add_message("Loaded example destination and transaction")
+        self.status_log.add_message("Loaded example transaction hex")
 
     def on_abort_pressed(self, instance):
         """Handle abort button press."""

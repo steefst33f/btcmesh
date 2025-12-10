@@ -343,17 +343,16 @@ lora/
     *   _Note: Implemented `on_send_pressed()` with input validation via `validate_send_inputs()` pure function._
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestSendButtonValidationStory91`)._
 
-- [x] **Story 9.2: Implement Load Example Button**
+- [x] **Story 9.2: Implement Load Hex Example Button**
 - [x] *   **As a** user,
-- [x] *   **I want** a button to load example transaction data,
+- [x] *   **I want** a button to load example transaction hex,
 - [x] *   **So that** I can quickly test the application without manual input.
-    - [x] *   **Scenario:** User clicks Load Example
+    - [x] *   **Scenario:** User clicks Load Hex Example
         - [x] *   **Given** the GUI is running.
-        - [x] *   **When** the user clicks "Load Example".
-        - [x] *   **Then** the destination field is populated with "!abcd1234".
-        - [x] *   **And** the transaction hex field is populated with EXAMPLE_RAW_TX.
+        - [x] *   **When** the user clicks "Load Hex Example".
+        - [x] *   **Then** the transaction hex field is populated with EXAMPLE_RAW_TX.
         - [x] *   **And** a confirmation message appears in the status log.
-    *   _Note: Implemented `on_load_example()` loading from `btcmesh_cli.EXAMPLE_RAW_TX`._
+    *   _Note: Implemented `on_load_example()` loading from `btcmesh_cli.EXAMPLE_RAW_TX`. Does not set destination (user selects from known nodes or enters manually)._
 
 - [x] **Story 9.3: Implement Abort Button**
 - [x] *   **As a** user,
