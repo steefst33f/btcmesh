@@ -15,17 +15,65 @@ import logging
 # before extracting the specific functions we want to test
 # These mocks are needed to also be able to run the tests in an environment
 # without Kivy installed (like a CI server), otherwise they would fail.
+
+# Create proper base classes for Kivy widgets to allow class inheritance
+class MockBoxLayout:
+    """Mock base class for BoxLayout to allow proper class inheritance."""
+    def __init__(self, **kwargs):
+        pass
+
+    def add_widget(self, widget):
+        pass
+
+    def bind(self, **kwargs):
+        pass
+
+
+class MockScrollView:
+    """Mock base class for ScrollView."""
+    def __init__(self, **kwargs):
+        pass
+
+    def add_widget(self, widget):
+        pass
+
+
+class MockApp:
+    """Mock base class for App."""
+    def __init__(self, **kwargs):
+        pass
+
+    def run(self):
+        pass
+
+
 kivy_mock = unittest.mock.MagicMock()
 # get_color_from_hex should return a tuple like (r, g, b, a)
 kivy_mock.get_color_from_hex = lambda _: (1, 1, 1, 1)
+
+# Set up modules with proper base classes for inheritance
+boxlayout_mock = unittest.mock.MagicMock()
+boxlayout_mock.BoxLayout = MockBoxLayout
+
+scrollview_mock = unittest.mock.MagicMock()
+scrollview_mock.ScrollView = MockScrollView
+
+app_mock = unittest.mock.MagicMock()
+app_mock.App = MockApp
+
+# Properties need to return actual values, not MagicMocks
+properties_mock = unittest.mock.MagicMock()
+properties_mock.StringProperty = lambda default='': default
+properties_mock.BooleanProperty = lambda default=False: default
+
 sys.modules['kivy'] = kivy_mock
-sys.modules['kivy.app'] = kivy_mock
+sys.modules['kivy.app'] = app_mock
 sys.modules['kivy.uix'] = kivy_mock
-sys.modules['kivy.uix.boxlayout'] = kivy_mock
+sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
 sys.modules['kivy.uix.label'] = kivy_mock
 sys.modules['kivy.uix.textinput'] = kivy_mock
 sys.modules['kivy.uix.button'] = kivy_mock
-sys.modules['kivy.uix.scrollview'] = kivy_mock
+sys.modules['kivy.uix.scrollview'] = scrollview_mock
 sys.modules['kivy.uix.popup'] = kivy_mock
 sys.modules['kivy.uix.widget'] = kivy_mock
 sys.modules['kivy.uix.togglebutton'] = kivy_mock
@@ -35,7 +83,7 @@ sys.modules['kivy.graphics'] = kivy_mock
 sys.modules['kivy.core'] = kivy_mock
 sys.modules['kivy.core.window'] = kivy_mock
 sys.modules['kivy.core.clipboard'] = kivy_mock
-sys.modules['kivy.properties'] = kivy_mock
+sys.modules['kivy.properties'] = properties_mock
 sys.modules['kivy.utils'] = kivy_mock
 
 # Mock pubsub (used by btcmesh_cli)
@@ -963,6 +1011,163 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
         self.assertIn('My Device', action.log_messages[0][0])
         self.assertIn('!abcd1234', action.log_messages[0][0])
+
+
+# =============================================================================
+# Story 9.5: Disable Controls During Transaction Send
+# Tests for disabling input controls during sending and re-enabling on completion
+# =============================================================================
+
+class TestDisableControlsStory95(unittest.TestCase):
+    """Tests for disabling controls during transaction send - Story 9.5.
+
+    These tests verify:
+    1. process_result() sets stop_sending correctly for different result types
+    2. _handle_result() calls _set_controls_enabled(True) when stop_sending is True
+    3. on_send_pressed() calls _set_controls_enabled(False) when starting to send
+    """
+
+    def test_handle_result_calls_set_controls_enabled_true_on_cli_finished(self):
+        """Given 'cli_finished' result, Then _handle_result calls _set_controls_enabled(True)."""
+        # Import the unbound function from the module
+        import btcmesh_gui
+
+        # Create a mock GUI instance with all required attributes
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui.is_sending = True
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui._show_success_popup = unittest.mock.MagicMock()
+
+        # Call the actual _handle_result method with our mock as 'self'
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('cli_finished', 0))
+
+        # Verify _set_controls_enabled was called with True
+        gui._set_controls_enabled.assert_called_once_with(True)
+
+    def test_handle_result_calls_set_controls_enabled_true_on_error(self):
+        """Given 'error' result, Then _handle_result calls _set_controls_enabled(True)."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui.is_sending = True
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui._show_success_popup = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('error', 'Something failed'))
+
+        gui._set_controls_enabled.assert_called_once_with(True)
+
+    def test_handle_result_calls_set_controls_enabled_true_on_abort(self):
+        """Given 'aborted' result, Then _handle_result calls _set_controls_enabled(True)."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui.is_sending = True
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui._show_success_popup = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('aborted',))
+
+        gui._set_controls_enabled.assert_called_once_with(True)
+
+    def test_handle_result_does_not_call_set_controls_enabled_on_log(self):
+        """Given 'log' result, Then _handle_result does NOT call _set_controls_enabled."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui.is_sending = True
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui._show_success_popup = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('log', 'Progress', logging.INFO))
+
+        gui._set_controls_enabled.assert_not_called()
+
+    def test_on_send_pressed_calls_set_controls_enabled_false(self):
+        """Given valid inputs, Then on_send_pressed calls _set_controls_enabled(False)."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui._get_own_node_id = unittest.mock.MagicMock(return_value='!12345678')
+        gui.dest_input.text = '!abcd1234'
+        gui.tx_input.text = 'aabbccdd'
+        gui.dry_run_toggle.state = 'normal'
+        gui.iface = unittest.mock.MagicMock()
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.is_sending = False
+        gui.abort_requested = False
+
+        # Mock threading to prevent actual thread start
+        with unittest.mock.patch('threading.Thread'):
+            btcmesh_gui.BTCMeshGUI.on_send_pressed(gui, None)
+
+        # Verify _set_controls_enabled was called with False
+        gui._set_controls_enabled.assert_called_once_with(False)
+
+    def test_on_send_pressed_does_not_call_set_controls_enabled_on_validation_error(self):
+        """Given invalid inputs, Then on_send_pressed does NOT call _set_controls_enabled."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._set_controls_enabled = unittest.mock.MagicMock()
+        gui._get_own_node_id = unittest.mock.MagicMock(return_value='!12345678')
+        gui.dest_input.text = ''  # Invalid: empty destination
+        gui.tx_input.text = 'aabbccdd'
+        gui.dry_run_toggle.state = 'normal'
+        gui.iface = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui._init_meshtastic = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI.on_send_pressed(gui, None)
+
+        # Verify _set_controls_enabled was NOT called (validation failed)
+        gui._set_controls_enabled.assert_not_called()
+
+    def test_process_result_stop_sending_true_for_completion_results(self):
+        """Verify process_result sets stop_sending=True for completion results."""
+        completion_results = [
+            ('cli_finished', 0),
+            ('cli_finished', 1),
+            ('error', 'Failed'),
+            ('aborted',),
+            ('tx_success', 'txid123'),
+        ]
+
+        for result in completion_results:
+            action = process_result(result)
+            self.assertTrue(action.stop_sending, f"stop_sending should be True for {result}")
+
+    def test_process_result_stop_sending_false_for_progress_results(self):
+        """Verify process_result sets stop_sending=False for progress results."""
+        progress_results = [
+            ('log', 'Progress', logging.INFO),
+            ('print', 'Some output'),
+            ('connected', unittest.mock.MagicMock(), '!abc123'),
+        ]
+
+        for result in progress_results:
+            action = process_result(result)
+            self.assertFalse(action.stop_sending, f"stop_sending should be False for {result}")
 
 
 if __name__ == '__main__':

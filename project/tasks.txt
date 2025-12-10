@@ -384,28 +384,26 @@ lora/
         - [x] *   **And** the input fields remain unchanged.
     *   _Note: Clear button positioned at bottom of window, only clears log (not inputs)._
 
-- [ ] **Story 9.5: Disable Controls During Transaction Send**
-- [ ] *   **As a** user,
-- [ ] *   **I want** input fields and scan buttons to be disabled while sending a transaction,
-- [ ] *   **So that** I cannot accidentally change settings mid-transmission.
-    - [ ] *   **Scenario:** Controls disabled when sending starts
-        - [ ] *   **Given** the user clicks "Send" to start a transaction.
-        - [ ] *   **When** the transaction send begins.
-        - [ ] *   **Then** the device spinner is disabled.
-        - [ ] *   **And** the device scan button is disabled.
-        - [ ] *   **And** the destination node spinner is disabled.
-        - [ ] *   **And** the destination input field is disabled.
-        - [ ] *   **And** the destination scan button is disabled.
-        - [ ] *   **And** the transaction hex input field is disabled.
-        - [ ] *   **And** the dry run toggle is disabled.
-        - [ ] *   **And** the "Load Hex Example" button is disabled.
-    - [ ] *   **Scenario:** Controls re-enabled when sending completes
-        - [ ] *   **Given** a transaction send is in progress.
-        - [ ] *   **When** the transaction completes (success, error, or abort).
-        - [ ] *   **Then** all the above controls are re-enabled.
-    *   _Implementation notes:_
-    *   _Add list of controls to disable: device_spinner, refresh_btn, node_spinner, dest_input, refresh_nodes_btn, tx_input, dry_run_toggle, example_btn._
-    *   _Call disable/enable helper in on_send_pressed() and when stop_sending is triggered._
+- [x] **Story 9.5: Disable Controls During Transaction Send**
+- [x] *   **As a** user,
+- [x] *   **I want** input fields and scan buttons to be disabled while sending a transaction,
+- [x] *   **So that** I cannot accidentally change settings mid-transmission.
+    - [x] *   **Scenario:** Controls disabled when sending starts
+        - [x] *   **Given** the user clicks "Send" to start a transaction.
+        - [x] *   **When** the transaction send begins.
+        - [x] *   **Then** the device spinner is disabled.
+        - [x] *   **And** the device scan button is disabled.
+        - [x] *   **And** the destination node spinner is disabled.
+        - [x] *   **And** the destination input field is disabled.
+        - [x] *   **And** the destination scan button is disabled.
+        - [x] *   **And** the transaction hex input field is disabled.
+        - [x] *   **And** the dry run toggle is disabled.
+        - [x] *   **And** the "Load Hex Example" button is disabled.
+    - [x] *   **Scenario:** Controls re-enabled when sending completes
+        - [x] *   **Given** a transaction send is in progress.
+        - [x] *   **When** the transaction completes (success, error, or abort).
+        - [x] *   **Then** all the above controls are re-enabled.
+    *   _Note: Implemented `_set_controls_enabled(enabled)` helper method in BTCMeshGUI. Called with `False` in `on_send_pressed()` after validation, and `True` in `_handle_result()` when `stop_sending` is triggered._
 
 ### 10. Status Display and Feedback
 

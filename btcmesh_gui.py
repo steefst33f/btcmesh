@@ -857,6 +857,7 @@ class BTCMeshGUI(BoxLayout):
             self.is_sending = False
             self.send_btn.disabled = False
             self.abort_btn.disabled = True
+            self._set_controls_enabled(True)  # Re-enable input controls
 
         # Show popups
         if action.show_success_popup is not None:
@@ -875,6 +876,31 @@ class BTCMeshGUI(BoxLayout):
             return f"!{node_num:08x}"
         except (AttributeError, TypeError):
             return None
+
+    def _set_controls_enabled(self, enabled: bool):
+        """Enable or disable input controls during transaction send.
+
+        Args:
+            enabled: True to enable controls, False to disable them.
+
+        Controls affected:
+            - device_spinner: Device selection dropdown
+            - refresh_btn: Device scan button
+            - node_spinner: Known nodes dropdown
+            - dest_input: Destination input field
+            - refresh_nodes_btn: Node scan button
+            - tx_input: Transaction hex input field
+            - dry_run_toggle: Dry run toggle button
+            - example_btn: Load Hex Example button
+        """
+        self.device_spinner.disabled = not enabled
+        self.refresh_btn.disabled = not enabled
+        self.node_spinner.disabled = not enabled
+        self.dest_input.disabled = not enabled
+        self.refresh_nodes_btn.disabled = not enabled
+        self.tx_input.disabled = not enabled
+        self.dry_run_toggle.disabled = not enabled
+        self.example_btn.disabled = not enabled
 
     def on_send_pressed(self, instance):
         """Handle send button press."""
@@ -896,6 +922,7 @@ class BTCMeshGUI(BoxLayout):
         self.send_btn.disabled = True
         self.abort_btn.disabled = False
         self.abort_requested = False
+        self._set_controls_enabled(False)  # Disable input controls during send
         self.status_log.clear()
         if dry_run:
             self.status_log.add_message(f"Starting DRY RUN transaction send to {dest}...")
