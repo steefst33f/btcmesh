@@ -473,7 +473,7 @@ class BTCMeshGUI(BoxLayout):
         # Device selection row
         # Label
         device_label = Label(
-            text='Your Meshtastic Device:',
+            text='Your Device:',
             size_hint_y=None,
             height=25,
             halign='left'
@@ -512,7 +512,7 @@ class BTCMeshGUI(BoxLayout):
 
         # Destination input section
         dest_label = Label(
-            text='Destination Meshtastic Node ID:',
+            text='Destination Node ID:',
             size_hint_y=None,
             height=25,
             halign='left',
