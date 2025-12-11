@@ -640,16 +640,16 @@ lora/
 
 ### 15. Server GUI Application Framework (`btcmesh_server_gui.py`)
 
-- [ ] **Story 15.1: Create Server GUI Application Structure**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** a graphical application window for the server,
-- [ ] *   **So that** I can monitor the relay visually.
-    - [ ] *   **Scenario:** Server application launches with themed window
-        - [ ] *   **Given** the operator runs `btcmesh_server_gui.py`.
-        - [ ] *   **When** the application starts.
-        - [ ] *   **Then** a GUI window opens with Bitcoin-orange themed colors.
-        - [ ] *   **And** the window has a dark background (#1E1E1E) for readability.
-        - [ ] *   **And** the window title is "BTCMesh Relay Server".
+- [x] **Story 15.1: Create Server GUI Application Structure**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** a graphical application window for the server,
+- [x] *   **So that** I can monitor the relay visually.
+    - [x] *   **Scenario:** Server application launches with themed window
+        - [x] *   **Given** the operator runs `btcmesh_server_gui.py`.
+        - [x] *   **When** the application starts.
+        - [x] *   **Then** a GUI window opens with Bitcoin-orange themed colors.
+        - [x] *   **And** the window has a dark background (#1E1E1E) for readability.
+        - [x] *   **And** the window title is "BTCMesh Relay Server".
     *   _Note: Reuse color scheme from client GUI (COLOR_PRIMARY=#FF6B00, COLOR_BG=#1E1E1E, COLOR_BG_LIGHT=#2D2D2D)._
 
 - [ ] **Story 15.2: Implement Start/Stop Server Controls**

@@ -670,7 +670,7 @@ class BTCMeshGUI(BoxLayout):
 
         # Status/Log area
         log_label = Label(
-            text='Status Log:',
+            text='Activity Log:',
             size_hint_y=None,
             height=25,
             halign='left',
