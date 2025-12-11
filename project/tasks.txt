@@ -628,3 +628,268 @@ lora/
 
 ---
 
+# EPIC: BTCMesh Server GUI Application
+
+**Goal:** To provide relay operators with a graphical interface for running and monitoring the BTCMesh server (`btcmesh_server.py`), displaying real-time connection status, transaction processing, and network information in a user-friendly Kivy-based GUI.
+
+**User Persona:** A Bitcoin relay operator who wants visual feedback on server status, connection health, incoming transactions, and network configuration without relying solely on log files or terminal output.
+
+---
+
+## Stories
+
+### 15. Server GUI Application Framework (`btcmesh_server_gui.py`)
+
+- [ ] **Story 15.1: Create Server GUI Application Structure**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** a graphical application window for the server,
+- [ ] *   **So that** I can monitor the relay visually.
+    - [ ] *   **Scenario:** Server application launches with themed window
+        - [ ] *   **Given** the operator runs `btcmesh_server_gui.py`.
+        - [ ] *   **When** the application starts.
+        - [ ] *   **Then** a GUI window opens with Bitcoin-orange themed colors.
+        - [ ] *   **And** the window has a dark background (#1E1E1E) for readability.
+        - [ ] *   **And** the window title is "BTCMesh Relay Server".
+    *   _Note: Reuse color scheme from client GUI (COLOR_PRIMARY=#FF6B00, COLOR_BG=#1E1E1E, COLOR_BG_LIGHT=#2D2D2D)._
+
+- [ ] **Story 15.2: Implement Start/Stop Server Controls**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** buttons to start and stop the relay server,
+- [ ] *   **So that** I can control the server without using the terminal.
+    - [ ] *   **Scenario:** Operator starts the server
+        - [ ] *   **Given** the server GUI is running and server is stopped.
+        - [ ] *   **When** the operator clicks "Start Server".
+        - [ ] *   **Then** the server initializes Meshtastic and Bitcoin RPC connections.
+        - [ ] *   **And** the server starts listening for incoming transaction chunks.
+        - [ ] *   **And** the Start button becomes disabled.
+        - [ ] *   **And** the Stop button becomes enabled.
+        - [ ] *   **And** a "Server started" message appears in the activity log.
+    - [ ] *   **Scenario:** Operator stops the server
+        - [ ] *   **Given** the server is running.
+        - [ ] *   **When** the operator clicks "Stop Server".
+        - [ ] *   **Then** the server gracefully closes connections.
+        - [ ] *   **And** the Stop button becomes disabled.
+        - [ ] *   **And** the Start button becomes enabled.
+        - [ ] *   **And** a "Server stopped" message appears in the activity log.
+
+### 16. Connection Status Displays
+
+- [ ] **Story 16.1: Display Meshtastic Connection Status**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see the Meshtastic device connection status,
+- [ ] *   **So that** I know if the relay is ready to receive transactions.
+    - [ ] *   **Scenario:** Meshtastic connected successfully
+        - [ ] *   **Given** the server starts.
+        - [ ] *   **When** Meshtastic connection succeeds.
+        - [ ] *   **Then** a status indicator shows "Meshtastic: Connected" with green icon.
+        - [ ] *   **And** the connected device path is displayed (e.g., "/dev/ttyUSB0").
+        - [ ] *   **And** the server's node ID is displayed (e.g., "!abcdef12").
+    - [ ] *   **Scenario:** Meshtastic connection failed
+        - [ ] *   **Given** the server starts.
+        - [ ] *   **When** Meshtastic connection fails.
+        - [ ] *   **Then** a status indicator shows "Meshtastic: Disconnected" with red icon.
+        - [ ] *   **And** an error message is displayed.
+    - [ ] *   **Scenario:** Meshtastic device selection
+        - [ ] *   **Given** multiple Meshtastic devices are connected.
+        - [ ] *   **When** the server settings allow device selection.
+        - [ ] *   **Then** the operator can choose which device to use.
+    *   _Note: Reuse device scanning logic from client GUI (Story 11.1)._
+
+- [ ] **Story 16.2: Display Bitcoin RPC Connection Status**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see the Bitcoin RPC node connection status,
+- [ ] *   **So that** I know if the relay can broadcast transactions.
+    - [ ] *   **Scenario:** Bitcoin RPC connected successfully
+        - [ ] *   **Given** the server starts with valid RPC configuration.
+        - [ ] *   **When** RPC connection succeeds.
+        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" with green icon.
+        - [ ] *   **And** the RPC host is displayed (masked if .onion for privacy).
+    - [ ] *   **Scenario:** Bitcoin RPC connection failed
+        - [ ] *   **Given** the server starts.
+        - [ ] *   **When** RPC connection fails.
+        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" with red icon.
+        - [ ] *   **And** an error message is displayed (auth failed, unreachable, etc.).
+    - [ ] *   **Scenario:** Bitcoin RPC using Tor
+        - [ ] *   **Given** the RPC host is a .onion address.
+        - [ ] *   **When** connection is established via Tor.
+        - [ ] *   **Then** a "Tor" badge is displayed next to the RPC status.
+
+- [ ] **Story 16.3: Display Network Badge (Mainnet/Testnet)**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see which Bitcoin network the relay is connected to,
+- [ ] *   **So that** I can confirm I'm operating on the intended network.
+    - [ ] *   **Scenario:** Connected to mainnet
+        - [ ] *   **Given** the RPC node is running mainnet.
+        - [ ] *   **When** the server queries `getblockchaininfo`.
+        - [ ] *   **Then** a "MAINNET" badge is displayed prominently.
+        - [ ] *   **And** the badge has an orange/bitcoin color.
+    - [ ] *   **Scenario:** Connected to testnet3
+        - [ ] *   **Given** the RPC node is running testnet3.
+        - [ ] *   **When** the server queries network info.
+        - [ ] *   **Then** a "TESTNET3" badge is displayed.
+        - [ ] *   **And** the badge has a distinct color (e.g., blue).
+    - [ ] *   **Scenario:** Connected to testnet4
+        - [ ] *   **Given** the RPC node is running testnet4.
+        - [ ] *   **When** the server queries network info.
+        - [ ] *   **Then** a "TESTNET4" badge is displayed.
+    - [ ] *   **Scenario:** Connected to signet
+        - [ ] *   **Given** the RPC node is running signet.
+        - [ ] *   **When** the server queries network info.
+        - [ ] *   **Then** a "SIGNET" badge is displayed.
+        - [ ] *   **And** the badge has a distinct color (e.g., purple).
+    *   _Implementation notes:_
+    *   _Use `getblockchaininfo` RPC call to retrieve `chain` field._
+    *   _Map chain values: "main" → MAINNET, "test" → TESTNET3, "testnet4" → TESTNET4, "signet" → SIGNET._
+
+### 17. Activity Monitoring
+
+- [ ] **Story 17.1: Implement Activity Log Display**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** a scrollable activity log showing server events,
+- [ ] *   **So that** I can monitor what the relay is doing in real-time.
+    - [ ] *   **Scenario:** Log shows connection events
+        - [ ] *   **Given** the server GUI is running.
+        - [ ] *   **When** the server connects/disconnects from Meshtastic or RPC.
+        - [ ] *   **Then** the event is logged with timestamp and color coding.
+    - [ ] *   **Scenario:** Log shows incoming messages
+        - [ ] *   **Given** the server is running.
+        - [ ] *   **When** a Meshtastic message is received.
+        - [ ] *   **Then** the message source and type are logged.
+        - [ ] *   **And** BTC_TX chunks are highlighted.
+    - [ ] *   **Scenario:** Log shows transaction events
+        - [ ] *   **Given** the server is processing a transaction.
+        - [ ] *   **When** chunks are received, reassembled, or broadcast.
+        - [ ] *   **Then** each step is logged with appropriate color (green=success, red=error).
+    - [ ] *   **Scenario:** Log auto-scrolls
+        - [ ] *   **Given** the activity log has multiple entries.
+        - [ ] *   **When** new entries are added.
+        - [ ] *   **Then** the log auto-scrolls to show the newest entry.
+    *   _Note: Reuse StatusLog component pattern from client GUI._
+
+- [ ] **Story 17.2: Display Active Sessions**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see currently active transaction sessions,
+- [ ] *   **So that** I can monitor transactions in progress.
+    - [ ] *   **Scenario:** Active session displayed
+        - [ ] *   **Given** a transaction is being reassembled.
+        - [ ] *   **When** chunks are being received.
+        - [ ] *   **Then** the session is displayed showing: session ID, sender node, chunks received/total, time elapsed.
+    - [ ] *   **Scenario:** Session completes
+        - [ ] *   **Given** an active session is displayed.
+        - [ ] *   **When** all chunks are received and transaction is broadcast.
+        - [ ] *   **Then** the session is removed from active list.
+        - [ ] *   **And** success is logged in activity log.
+    - [ ] *   **Scenario:** Session times out
+        - [ ] *   **Given** an active session is displayed.
+        - [ ] *   **When** the reassembly timeout is reached.
+        - [ ] *   **Then** the session is removed from active list.
+        - [ ] *   **And** timeout error is logged in activity log.
+
+- [ ] **Story 17.3: Display Transaction History**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see a history of processed transactions,
+- [ ] *   **So that** I can review relay activity.
+    - [ ] *   **Scenario:** Successful transaction in history
+        - [ ] *   **Given** a transaction was successfully broadcast.
+        - [ ] *   **When** the operator views transaction history.
+        - [ ] *   **Then** the entry shows: timestamp, sender node, TXID (truncated), status (success).
+    - [ ] *   **Scenario:** Failed transaction in history
+        - [ ] *   **Given** a transaction failed (reassembly, validation, or RPC error).
+        - [ ] *   **When** the operator views transaction history.
+        - [ ] *   **Then** the entry shows: timestamp, sender node, error message, status (failed).
+    - [ ] *   **Scenario:** Copy TXID from history
+        - [ ] *   **Given** the transaction history is displayed.
+        - [ ] *   **When** the operator clicks copy on a successful transaction.
+        - [ ] *   **Then** the TXID is copied to clipboard.
+
+### 18. Server Settings Panel
+
+- [ ] **Story 18.1: Implement Bitcoin RPC Settings**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to configure Bitcoin RPC settings through the GUI,
+- [ ] *   **So that** I can set up or change the RPC connection without editing files.
+    - [ ] *   **Scenario:** Operator configures RPC credentials
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the operator enters RPC host, port, user, and password.
+        - [ ] *   **Then** the settings are validated and saved.
+        - [ ] *   **And** the server reconnects with new credentials.
+    - [ ] *   **Scenario:** Operator tests RPC connection
+        - [ ] *   **Given** RPC credentials are entered.
+        - [ ] *   **When** the operator clicks "Test Connection".
+        - [ ] *   **Then** a test connection is attempted.
+        - [ ] *   **And** success or failure is displayed.
+    - [ ] *   **Scenario:** Password field is masked
+        - [ ] *   **Given** the settings panel shows RPC password field.
+        - [ ] *   **Then** the password is displayed as asterisks.
+        - [ ] *   **And** a "Show" toggle reveals the password.
+    - [ ] *   **Scenario:** Tor detection for .onion addresses
+        - [ ] *   **Given** the operator enters a .onion address as RPC host.
+        - [ ] *   **Then** the GUI indicates Tor will be used.
+        - [ ] *   **And** validates that Tor service is reachable (port 9050).
+
+- [ ] **Story 18.2: Implement Meshtastic Device Settings**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to configure the Meshtastic device through the GUI,
+- [ ] *   **So that** I can select or change the device without editing files.
+    - [ ] *   **Scenario:** Operator selects device from dropdown
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** multiple Meshtastic devices are connected.
+        - [ ] *   **Then** a dropdown shows all available devices.
+        - [ ] *   **And** the operator can select which device to use.
+    - [ ] *   **Scenario:** Operator manually enters device path
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the operator wants to specify a custom serial port.
+        - [ ] *   **Then** a text field allows manual entry (e.g., "/dev/ttyUSB0").
+    - [ ] *   **Scenario:** Auto-detect option
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the operator selects "Auto-detect".
+        - [ ] *   **Then** the server will auto-detect the Meshtastic device on start.
+
+- [ ] **Story 18.3: Implement Reassembly Timeout Setting**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to configure the transaction reassembly timeout,
+- [ ] *   **So that** I can adjust how long the server waits for missing chunks.
+    - [ ] *   **Scenario:** Operator adjusts timeout
+        - [ ] *   **Given** the settings panel is open.
+        - [ ] *   **When** the operator enters a new timeout value (in seconds).
+        - [ ] *   **Then** the setting is validated (positive integer).
+        - [ ] *   **And** the new timeout is applied to the TransactionReassembler.
+    - [ ] *   **Scenario:** Default timeout shown
+        - [ ] *   **Given** no custom timeout is configured.
+        - [ ] *   **When** the settings panel opens.
+        - [ ] *   **Then** the default timeout (300 seconds) is displayed.
+
+- [ ] **Story 18.4: Save and Load Settings**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** settings to persist across sessions,
+- [ ] *   **So that** I don't have to reconfigure the server every time.
+    - [ ] *   **Scenario:** Settings saved to file
+        - [ ] *   **Given** the operator changes settings.
+        - [ ] *   **When** the operator clicks "Save".
+        - [ ] *   **Then** settings are written to the .env file or a config file.
+        - [ ] *   **And** a confirmation message is displayed.
+    - [ ] *   **Scenario:** Settings loaded on startup
+        - [ ] *   **Given** settings were previously saved.
+        - [ ] *   **When** the server GUI starts.
+        - [ ] *   **Then** saved settings are loaded and displayed.
+        - [ ] *   **And** the server can start with saved configuration.
+
+### 19. Server Statistics
+
+- [ ] **Story 19.1: Display Server Statistics**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** to see statistics about server operation,
+- [ ] *   **So that** I can monitor relay performance and usage.
+    - [ ] *   **Scenario:** Display transaction counts
+        - [ ] *   **Given** the server is running.
+        - [ ] *   **Then** the GUI displays: transactions relayed (success), transactions failed, total chunks received.
+    - [ ] *   **Scenario:** Display uptime
+        - [ ] *   **Given** the server is running.
+        - [ ] *   **Then** the GUI displays server uptime (hours:minutes:seconds).
+    - [ ] *   **Scenario:** Statistics reset on server restart
+        - [ ] *   **Given** the server is stopped and restarted.
+        - [ ] *   **Then** statistics counters reset to zero.
+        - [ ] *   **And** uptime resets to 00:00:00.
+
+---
+
