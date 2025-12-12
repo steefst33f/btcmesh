@@ -14,7 +14,7 @@ from kivy.core.window import Window
 from kivy.properties import BooleanProperty
 
 # Import shared GUI components
-from gui_common import (
+from core.gui_common import (
     # Colors
     COLOR_PRIMARY,
     COLOR_SUCCESS,

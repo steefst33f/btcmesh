@@ -29,7 +29,7 @@ from kivy.core.clipboard import Clipboard
 from kivy.properties import StringProperty, BooleanProperty
 
 # Import shared GUI components
-from gui_common import (
+from core.gui_common import (
     # Colors
     COLOR_PRIMARY,
     COLOR_SUCCESS,
