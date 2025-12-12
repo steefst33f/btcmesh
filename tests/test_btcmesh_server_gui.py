@@ -15,10 +15,28 @@ import unittest.mock
 
 
 # Create proper base classes for Kivy widgets to allow class inheritance
+class MockCanvas:
+    """Mock canvas for Kivy widgets."""
+    def __init__(self):
+        self.before = MockCanvasContext()
+
+
+class MockCanvasContext:
+    """Mock canvas context manager."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
 class MockBoxLayout:
     """Mock base class for BoxLayout to allow proper class inheritance."""
     def __init__(self, **kwargs):
-        pass
+        self.canvas = MockCanvas()
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = 100
 
     def add_widget(self, widget):
         pass
@@ -26,14 +44,27 @@ class MockBoxLayout:
     def bind(self, **kwargs):
         pass
 
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
+
 
 class MockScrollView:
     """Mock base class for ScrollView."""
     def __init__(self, **kwargs):
-        pass
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = 100
 
     def add_widget(self, widget):
         pass
+
+    def bind(self, **kwargs):
+        pass
+
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
 
 
 class MockApp:
@@ -233,6 +264,329 @@ class TestServerGUIHelperFunctionsStory151(unittest.TestCase):
 
         color = btcmesh_server_gui.get_log_color(logging.INFO, "Normal info message")
         self.assertIsNone(color)
+
+
+# =============================================================================
+# Story 15.2: Implement Start/Stop Server Controls
+# Tests for server start and stop functionality
+# =============================================================================
+
+
+class TestServerStartStopStory152(unittest.TestCase):
+    """Tests for Story 15.2: Implement Start/Stop Server Controls.
+
+    Verifies:
+    - Start button initializes Meshtastic and Bitcoin RPC
+    - Stop button gracefully shuts down connections
+    - Button states update correctly
+    - Log messages appear for start/stop events
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        # Reload the module to get fresh state
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_server_gui_has_start_button(self):
+        """Given server GUI, Then it should have a start_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'start_btn'))
+
+    def test_server_gui_has_stop_button(self):
+        """Given server GUI, Then it should have a stop_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'stop_btn'))
+
+    def test_stop_button_initially_disabled(self):
+        """Given server GUI just started, Then stop button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(gui.stop_btn.disabled)
+
+    def test_is_running_initially_false(self):
+        """Given server GUI just started, Then is_running should be False."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertFalse(gui.is_running)
+
+    def test_server_gui_has_result_queue(self):
+        """Given server GUI, Then it should have a result_queue for thread communication."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'result_queue'))
+
+    def test_server_gui_has_stop_event(self):
+        """Given server GUI, Then it should have _stop_event for thread control."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, '_stop_event'))
+
+    def test_server_gui_has_log_handler_attribute(self):
+        """Given server GUI, Then it should have _log_handler attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, '_log_handler'))
+        self.assertIsNone(gui._log_handler)
+
+    def test_on_start_pressed_disables_start_button(self):
+        """Given operator clicks Start Server, Then start button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                mock_instance = unittest.mock.MagicMock()
+                gui.on_start_pressed(mock_instance)
+        self.assertTrue(gui.start_btn.disabled)
+
+    def test_on_stop_pressed_disables_stop_button(self):
+        """Given operator clicks Stop Server, Then stop button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.is_running = True
+                mock_instance = unittest.mock.MagicMock()
+                gui.on_stop_pressed(mock_instance)
+        self.assertTrue(gui.stop_btn.disabled)
+
+
+class TestServerResultHandlingStory152(unittest.TestCase):
+    """Tests for result queue handling in Story 15.2."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_handle_result_server_started_sets_is_running(self):
+        """Given 'server_started' result, Then is_running should be True."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('server_started', None))
+        self.assertTrue(gui.is_running)
+
+    def test_handle_result_server_started_enables_stop_button(self):
+        """Given 'server_started' result, Then stop button should be enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('server_started', None))
+        self.assertFalse(gui.stop_btn.disabled)
+
+    def test_handle_result_server_stopped_sets_is_running_false(self):
+        """Given 'server_stopped' result, Then is_running should be False."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.is_running = True
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.is_running)
+
+    def test_handle_result_server_stopped_enables_start_button(self):
+        """Given 'server_stopped' result, Then start button should be enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.start_btn.disabled = True
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_handle_result_rpc_connected_updates_label(self):
+        """Given 'rpc_connected' result, Then RPC label should show connected state."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', None))
+        self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_CONNECTED.text)
+
+    def test_handle_result_rpc_failed_updates_label(self):
+        """Given 'rpc_failed' result, Then RPC label should show failed state."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_failed', 'Connection refused'))
+        self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_FAILED.text)
+
+    def test_handle_result_meshtastic_connected_updates_label(self):
+        """Given 'meshtastic_connected' result, Then Meshtastic label should show connected."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('meshtastic_connected', '!abcdef12'))
+        self.assertIn('Connected', gui.meshtastic_label.text)
+        self.assertIn('!abcdef12', gui.meshtastic_label.text)
+
+    def test_handle_result_meshtastic_failed_updates_label(self):
+        """Given 'meshtastic_failed' result, Then Meshtastic label should show failed."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertEqual(gui.meshtastic_label.text, btcmesh_server_gui.STATE_MESHTASTIC_FAILED.text)
+
+    def test_handle_result_meshtastic_failed_re_enables_start(self):
+        """Given 'meshtastic_failed' result, Then start button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.start_btn.disabled = True
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.start_btn.disabled)
+
+
+class TestServerLogParsingStory152(unittest.TestCase):
+    """Tests for log parsing in Story 15.2."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_parse_log_for_status_function_exists(self):
+        """Given server GUI module, Then parse_log_for_status function should exist."""
+        import btcmesh_server_gui
+
+        self.assertTrue(hasattr(btcmesh_server_gui, 'parse_log_for_status'))
+        self.assertTrue(callable(btcmesh_server_gui.parse_log_for_status))
+
+    def test_parse_log_detects_rpc_connected(self):
+        """Given RPC connected log message, Then parse_log_for_status returns rpc_connected."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Connected to Bitcoin Core RPC node successfully."
+        )
+        self.assertEqual(result, ('rpc_connected', None))
+
+    def test_parse_log_detects_rpc_failed(self):
+        """Given RPC failed log message, Then parse_log_for_status returns rpc_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Failed to connect to Bitcoin Core RPC node: Connection refused. Continuing without RPC."
+        )
+        self.assertEqual(result[0], 'rpc_failed')
+        self.assertIn('Connection refused', result[1])
+
+    def test_parse_log_detects_meshtastic_connected(self):
+        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: !abcdef12"
+        )
+        self.assertEqual(result[0], 'meshtastic_connected')
+        self.assertEqual(result[1], '!abcdef12')
+
+    def test_parse_log_detects_meshtastic_failed(self):
+        """Given Meshtastic failed log message, Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Failed to initialize Meshtastic interface. Exiting."
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+
+    def test_parse_log_detects_server_started(self):
+        """Given server started log message, Then parse_log_for_status returns server_started."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Registered Meshtastic message handler. Waiting for messages..."
+        )
+        self.assertEqual(result, ('server_started', None))
+
+    def test_parse_log_detects_server_stopped(self):
+        """Given server stopped log message, Then parse_log_for_status returns server_stopped."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Closing Meshtastic interface..."
+        )
+        self.assertEqual(result, ('server_stopped', None))
+
+    def test_parse_log_returns_none_for_normal_message(self):
+        """Given normal log message, Then parse_log_for_status returns None."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Some normal log message"
+        )
+        self.assertIsNone(result)
+
+    def test_process_results_method_exists(self):
+        """Given server GUI, Then _process_results method should exist."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, '_process_results'))
+        self.assertTrue(callable(gui._process_results))
+
+
+class TestQueueLogHandlerStory152(unittest.TestCase):
+    """Tests for QueueLogHandler class in Story 15.2."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_queue_log_handler_class_exists(self):
+        """Given server GUI module, Then QueueLogHandler class should exist."""
+        import btcmesh_server_gui
+
+        self.assertTrue(hasattr(btcmesh_server_gui, 'QueueLogHandler'))
+
+    def test_queue_log_handler_puts_log_to_queue(self):
+        """Given QueueLogHandler with a queue, When emit is called, Then message goes to queue."""
+        import btcmesh_server_gui
+        import logging
+        import queue
+
+        q = queue.Queue()
+        handler = btcmesh_server_gui.QueueLogHandler(q)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+
+        record = logging.LogRecord(
+            name='test', level=logging.INFO, pathname='', lineno=0,
+            msg='Test message', args=(), exc_info=None
+        )
+        handler.emit(record)
+
+        result = q.get_nowait()
+        self.assertEqual(result[0], 'log')
+        self.assertEqual(result[1], 'Test message')
+        self.assertEqual(result[2], logging.INFO)
 
 
 if __name__ == '__main__':

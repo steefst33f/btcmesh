@@ -652,25 +652,26 @@ lora/
         - [x] *   **And** the window title is "BTCMesh Relay Server".
     *   _Note: Reuse color scheme from client GUI (COLOR_PRIMARY=#FF6B00, COLOR_BG=#1E1E1E, COLOR_BG_LIGHT=#2D2D2D)._
 
-- [ ] **Story 15.2: Implement Start/Stop Server Controls**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** buttons to start and stop the relay server,
-- [ ] *   **So that** I can control the server without using the terminal.
-    - [ ] *   **Scenario:** Operator starts the server
-        - [ ] *   **Given** the server GUI is running and server is stopped.
-        - [ ] *   **When** the operator clicks "Start Server".
-        - [ ] *   **Then** the server initializes Meshtastic and Bitcoin RPC connections.
-        - [ ] *   **And** the server starts listening for incoming transaction chunks.
-        - [ ] *   **And** the Start button becomes disabled.
-        - [ ] *   **And** the Stop button becomes enabled.
-        - [ ] *   **And** a "Server started" message appears in the activity log.
-    - [ ] *   **Scenario:** Operator stops the server
-        - [ ] *   **Given** the server is running.
-        - [ ] *   **When** the operator clicks "Stop Server".
-        - [ ] *   **Then** the server gracefully closes connections.
-        - [ ] *   **And** the Stop button becomes disabled.
-        - [ ] *   **And** the Start button becomes enabled.
-        - [ ] *   **And** a "Server stopped" message appears in the activity log.
+- [x] **Story 15.2: Implement Start/Stop Server Controls**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** buttons to start and stop the relay server,
+- [x] *   **So that** I can control the server without using the terminal.
+    - [x] *   **Scenario:** Operator starts the server
+        - [x] *   **Given** the server GUI is running and server is stopped.
+        - [x] *   **When** the operator clicks "Start Server".
+        - [x] *   **Then** the server initializes Meshtastic and Bitcoin RPC connections.
+        - [x] *   **And** the server starts listening for incoming transaction chunks.
+        - [x] *   **And** the Start button becomes disabled.
+        - [x] *   **And** the Stop button becomes enabled.
+        - [x] *   **And** a "Server started" message appears in the activity log.
+    - [x] *   **Scenario:** Operator stops the server
+        - [x] *   **Given** the server is running.
+        - [x] *   **When** the operator clicks "Stop Server".
+        - [x] *   **Then** the server gracefully closes connections.
+        - [x] *   **And** the Stop button becomes disabled.
+        - [x] *   **And** the Start button becomes enabled.
+        - [x] *   **And** a "Server stopped" message appears in the activity log.
+    *   _Note: Implemented by adding stop_event parameter to btcmesh_server.main() and refactoring btcmesh_server_gui.py to wrap main() via log capture (same pattern as client GUI wrapping cli_main). Status labels update by parsing log messages._
 
 ### 16. Connection Status Displays
 

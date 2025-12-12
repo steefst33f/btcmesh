@@ -17,10 +17,28 @@ import logging
 # without Kivy installed (like a CI server), otherwise they would fail.
 
 # Create proper base classes for Kivy widgets to allow class inheritance
+class MockCanvas:
+    """Mock canvas for Kivy widgets."""
+    def __init__(self):
+        self.before = MockCanvasContext()
+
+
+class MockCanvasContext:
+    """Mock canvas context manager."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
 class MockBoxLayout:
     """Mock base class for BoxLayout to allow proper class inheritance."""
     def __init__(self, **kwargs):
-        pass
+        self.canvas = MockCanvas()
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = 100
 
     def add_widget(self, widget):
         pass
@@ -28,14 +46,27 @@ class MockBoxLayout:
     def bind(self, **kwargs):
         pass
 
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
+
 
 class MockScrollView:
     """Mock base class for ScrollView."""
     def __init__(self, **kwargs):
-        pass
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = 100
 
     def add_widget(self, widget):
         pass
+
+    def bind(self, **kwargs):
+        pass
+
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
 
 
 class MockApp:

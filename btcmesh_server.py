@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import threading
 import time
-from typing import Optional, Any, Dict, TYPE_CHECKING
+from typing import Optional, Any, Dict, Callable, TYPE_CHECKING
 
 # No direct 'import meshtastic' or its components here at the module level.
 # These will be imported inside functions that need them to allow the module
@@ -633,9 +634,13 @@ def initialize_meshtastic_interface(
     return iface
 
 
-def main() -> None:
+def main(stop_event: Optional[threading.Event] = None) -> None:
     """
     Main function for the BTC Mesh Server.
+
+    Args:
+        stop_event: Optional threading.Event to signal server shutdown.
+                    If None, runs until KeyboardInterrupt.
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -708,6 +713,11 @@ def main() -> None:
             last_cleanup_time = time.time()
 
             while True:
+                # Check for stop signal from GUI
+                if stop_event and stop_event.is_set():
+                    server_logger.info("Stop signal received. Shutting down...")
+                    break
+
                 current_time = time.time()
                 if current_time - last_cleanup_time >= cleanup_interval:
                     server_logger.debug(
