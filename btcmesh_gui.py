@@ -21,14 +21,45 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.togglebutton import ToggleButton
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
 from kivy.uix.spinner import Spinner
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.clipboard import Clipboard
 from kivy.properties import StringProperty, BooleanProperty
-from kivy.utils import get_color_from_hex
+
+# Import shared GUI components
+from gui_common import (
+    # Colors
+    COLOR_PRIMARY,
+    COLOR_SUCCESS,
+    COLOR_ERROR,
+    COLOR_WARNING,
+    COLOR_BG,
+    COLOR_BG_LIGHT,
+    COLOR_SECUNDARY,
+    COLOR_DISCONNECTED,
+    # Classes
+    ConnectionState,
+    StatusLog,
+    # Functions
+    get_log_color,
+    get_print_color,
+    create_separator,
+    create_section_label,
+    create_title,
+    create_action_button,
+    create_clear_button,
+    create_refresh_button,
+)
+
+# Import Meshtastic utilities from core
+from core.meshtastic_utils import (
+    scan_meshtastic_devices,
+    get_own_node_name,
+    get_known_nodes,
+    format_node_display,
+)
 
 # Import btcmesh_cli functions
 from btcmesh_cli import (
@@ -46,187 +77,13 @@ SCANNING_TEXT = "Scanning..."
 NO_NODES_TEXT = "No nodes found"
 MANUAL_ENTRY_TEXT = "Enter manually..."
 
-
-def scan_meshtastic_devices() -> list:
-    """Scan for available Meshtastic devices.
-
-    Returns:
-        List of device paths (e.g., ['/dev/ttyUSB0', '/dev/ttyACM0'])
-    """
-    try:
-        from meshtastic.util import findPorts
-        ports = findPorts(True)  # eliminate_duplicates=True
-        return ports if ports else []
-    except ImportError:
-        return []
-    except Exception:
-        return []
-
-
-def get_known_nodes(iface) -> list:
-    """Get list of known nodes from a Meshtastic interface.
-
-    Args:
-        iface: Meshtastic interface with nodes dictionary
-
-    Returns:
-        List of dicts with keys: id, name, lastHeard, is_recent
-        Sorted by lastHeard descending (most recent first).
-        Filters out the device's own node.
-    """
-    import time
-
-    if not iface or not iface.nodes:
-        return []
-
-    # Get own node number to filter out
-    own_node_num = iface.myInfo.my_node_num if iface.myInfo else None
-
-    nodes = []
-    now = int(time.time())
-    hours_24 = 24 * 60 * 60
-
-    for node_id, node_data in iface.nodes.items():
-        # Skip own node by comparing node_id hex to own_node_num
-        if own_node_num is not None:
-            # node_id format: '!abcd1234' -> convert to int for comparison
-            try:
-                node_num = int(node_id.lstrip('!'), 16)
-                if node_num == own_node_num:
-                    continue
-            except (ValueError, AttributeError):
-                pass
-
-        # Extract user info
-        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
-        long_name = user.get('longName', '') if isinstance(user, dict) else ''
-        short_name = user.get('shortName', '') if isinstance(user, dict) else ''
-
-        # Use longName, or shortName, or node_id as fallback
-        name = long_name or short_name or node_id
-
-        # Get lastHeard timestamp
-        last_heard = node_data.get('lastHeard', 0) if isinstance(node_data, dict) else 0
-
-        # Determine if node was seen in last 24 hours
-        is_recent = (now - last_heard) < hours_24 if last_heard else False
-
-        nodes.append({
-            'id': node_id,
-            'name': name,
-            'lastHeard': last_heard,
-            'is_recent': is_recent,
-        })
-
-    # Sort by lastHeard descending (most recent first)
-    nodes.sort(key=lambda n: n['lastHeard'], reverse=True)
-
-    return nodes
-
-
-def format_node_display(node: dict) -> str:
-    """Format a node dict for display in the dropdown.
-
-    Args:
-        node: Dict with keys: id, name, lastHeard, is_recent
-
-    Returns:
-        Formatted string: 'Name (!nodeid)'
-    """
-    return f"{node['name']} ({node['id']})"
-
-
-def get_own_node_name(iface) -> Optional[str]:
-    """Get the name of the connected device's own node.
-
-    Args:
-        iface: Meshtastic interface with nodes dictionary and myInfo
-
-    Returns:
-        The node's longName or shortName, or None if not available.
-    """
-    if not iface or not iface.myInfo:
-        return None
-
-    try:
-        own_node_num = iface.myInfo.my_node_num
-        own_node_id = f"!{own_node_num:08x}"
-
-        if not iface.nodes or own_node_id not in iface.nodes:
-            return None
-
-        node_data = iface.nodes[own_node_id]
-        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
-        long_name = user.get('longName', '') if isinstance(user, dict) else ''
-        short_name = user.get('shortName', '') if isinstance(user, dict) else ''
-
-        name = long_name or short_name
-        return name if name else None
-    except (AttributeError, TypeError, KeyError):
-        return None
-
-
 # Set window size for desktop testing
 Window.size = (450, 700)
 
-# Colors
-COLOR_PRIMARY = get_color_from_hex('#FF6B00')  # Bitcoin orange
-COLOR_SUCCESS = get_color_from_hex('#4CAF50')
-COLOR_ERROR = get_color_from_hex('#F44336')
-COLOR_WARNING = get_color_from_hex('#FF9800')
-COLOR_BG = get_color_from_hex('#1E1E1E')
-COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')
-COLOR_SECUNDARY = get_color_from_hex("#FFFFFF")
-COLOR_DISCONNECTED = (0.7, 0.7, 0.7, 1)
-
-
-@dataclass(frozen=True)
-class ConnectionState:
-    """Represents a connection state with display text and color."""
-    text: str
-    color: tuple
-
-
-# Connection states
+# Connection states (using ConnectionState from gui_common)
 STATE_DISCONNECTED = ConnectionState('Meshtastic: Not connected', COLOR_DISCONNECTED)
 STATE_CONNECTION_FAILED = ConnectionState('Meshtastic: Connection failed', COLOR_ERROR)
 STATE_CONNECTION_ERROR = ConnectionState('Meshtastic: Error', COLOR_ERROR)
-
-
-def get_log_color(level, msg):
-    """Determine the color for a log message based on level and content.
-
-    Args:
-        level: The logging level (e.g., logging.ERROR, logging.WARNING, logging.INFO)
-        msg: The log message text
-
-    Returns:
-        A color tuple or None for default color
-    """
-    if level >= logging.ERROR:
-        return COLOR_ERROR
-    elif level >= logging.WARNING:
-        return COLOR_WARNING
-    elif 'success' in msg.lower() or 'ack' in msg.lower():
-        return COLOR_SUCCESS
-    return None
-
-
-def get_print_color(msg):
-    """Determine the color for a print message based on content.
-
-    Args:
-        msg: The message text
-
-    Returns:
-        A color tuple or None for default color
-    """
-    msg_lower = msg.lower()
-    if 'error' in msg_lower or 'failed' in msg_lower or 'abort' in msg_lower:
-        return COLOR_ERROR
-    elif 'success' in msg_lower or 'txid' in msg_lower:
-        return COLOR_SUCCESS
-    return None
 
 
 @dataclass
@@ -340,7 +197,7 @@ def process_result(result: tuple) -> ResultAction:
 
 
 def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False,
-                         own_node_id: Optional[str] = None) -> Optional[str]:
+                        own_node_id: Optional[str] = None) -> Optional[str]:
     """Validate the inputs for sending a transaction.
 
     This is a pure function that validates inputs without touching the GUI.
@@ -395,37 +252,6 @@ class QueueLogHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-
-class StatusLog(ScrollView):
-    """Scrollable status/log area."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.layout = BoxLayout(orientation='vertical', size_hint_y=None, padding=5, spacing=2)
-        self.layout.bind(minimum_height=self.layout.setter('height'))
-        self.add_widget(self.layout)
-
-    def add_message(self, text, color=None):
-        """Add a log message with optional color."""
-        label = Label(
-            text=text,
-            size_hint_y=None,
-            height=25,
-            text_size=(self.width - 20, None),
-            halign='left',
-            valign='middle',
-            color=color or (1, 1, 1, 1),
-        )
-        label.bind(texture_size=lambda instance, value: setattr(instance, 'height', max(25, value[1] + 10)))
-        self.layout.add_widget(label)
-        # Auto-scroll to bottom
-        self.scroll_y = 0
-
-    def clear(self):
-        """Clear all log messages."""
-        self.layout.clear_widgets()
-
-
 class BTCMeshGUI(BoxLayout):
     """Main GUI widget."""
 
@@ -451,35 +277,13 @@ class BTCMeshGUI(BoxLayout):
     def _build_ui(self):
         """Build the user interface."""
         # Title
-        title_box = BoxLayout(size_hint_y=None, height=50, padding=15)
-        title = Label(
-            text='BTCMesh Transaction Relay',
-            font_size=42,
-            bold=True,
-            color=COLOR_PRIMARY,
-        )
-        title_box.add_widget(title)
-        self.add_widget(title_box)
+        self.add_widget(create_title('BTCMesh Transaction Relay'))
 
         # Orange separator line
-        separator1 = Widget(size_hint_y=None, height=2)
-        with separator1.canvas:
-            Color(*COLOR_PRIMARY)
-            self._sep_rect1 = Rectangle(pos=separator1.pos, size=separator1.size)
-        separator1.bind(pos=lambda inst, val: setattr(self._sep_rect1, 'pos', val))
-        separator1.bind(size=lambda inst, val: setattr(self._sep_rect1, 'size', val))
-        self.add_widget(separator1)
+        self.add_widget(create_separator())
 
         # Device selection row
-        # Label
-        device_label = Label(
-            text='Your Device:',
-            size_hint_y=None,
-            height=25,
-            halign='left'
-        )
-        device_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
-        self.add_widget(device_label)
+        self.add_widget(create_section_label('Your Device:'))
 
         device_selection_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
 
@@ -496,29 +300,14 @@ class BTCMeshGUI(BoxLayout):
         device_selection_box.add_widget(self.device_spinner)
 
         # Refresh button
-        self.refresh_btn = Button(
-            text='Scan',
-            size_hint_x=None,
-            width=90,
-            background_color=COLOR_BG_LIGHT,
-            background_normal='',
-            font_size='14sp',
-
-        )
+        self.refresh_btn = create_refresh_button('Scan')
         self.refresh_btn.bind(on_press=self.on_refresh_devices)
         device_selection_box.add_widget(self.refresh_btn)
 
         self.add_widget(device_selection_box)
 
         # Destination input section
-        dest_label = Label(
-            text='Destination Node ID:',
-            size_hint_y=None,
-            height=25,
-            halign='left',
-        )
-        dest_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
-        self.add_widget(dest_label)
+        self.add_widget(create_section_label('Destination Node ID:'))
 
         # Node selection row (Spinner + TextInput + Refresh)
         dest_selection_box = BoxLayout(size_hint_y=None, height=45, spacing=5)
@@ -550,28 +339,14 @@ class BTCMeshGUI(BoxLayout):
         dest_selection_box.add_widget(self.dest_input)
 
         # Refresh nodes button
-        self.refresh_nodes_btn = Button(
-            text='Scan',
-            size_hint_x=None,
-            width=90,
-            background_color=COLOR_BG_LIGHT,
-            background_normal='',
-            font_size='14sp',
-        )
+        self.refresh_nodes_btn = create_refresh_button('Scan')
         self.refresh_nodes_btn.bind(on_press=self.on_refresh_nodes)
         dest_selection_box.add_widget(self.refresh_nodes_btn)
 
         self.add_widget(dest_selection_box)
 
         # TX Hex input
-        tx_label = Label(
-            text='Raw Transaction Hex:',
-            size_hint_y=None,
-            height=25,
-            halign='left',
-        )
-        tx_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
-        self.add_widget(tx_label)
+        self.add_widget(create_section_label('Raw Transaction Hex:'))
         self.tx_input = TextInput(
             hint_text='Paste raw transaction hex here...',
             multiline=True,
@@ -587,14 +362,7 @@ class BTCMeshGUI(BoxLayout):
         dry_run_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
 
         # Label first, takes remaining space
-        dry_run_label = Label(
-            text='Dry run (simulate only)',
-            size_hint_x=1,
-            halign='left',
-            valign='middle',
-        )
-        dry_run_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
-        dry_run_box.add_widget(dry_run_label)
+        dry_run_box.add_widget(create_section_label('Dry run (simulate only)'))
 
         # Toggle button on the right with fixed width
         self.dry_run_toggle = ToggleButton(
@@ -620,40 +388,20 @@ class BTCMeshGUI(BoxLayout):
         self.add_widget(dry_run_box)
 
         # Orange separator line
-        separator2 = Widget(size_hint_y=None, height=2)
-        with separator2.canvas:
-            Color(*COLOR_PRIMARY)
-            self._sep_rect2 = Rectangle(pos=separator2.pos, size=separator2.size)
-        separator2.bind(pos=lambda inst, val: setattr(self._sep_rect2, 'pos', val))
-        separator2.bind(size=lambda inst, val: setattr(self._sep_rect2, 'size', val))
-        self.add_widget(separator2)
+        self.add_widget(create_separator())
 
         # Button row
         btn_box = BoxLayout(size_hint_y=None, height=50, spacing=10)
 
-        self.send_btn = Button(
-            text='Send Transaction',
-            background_color=COLOR_PRIMARY,
-            background_normal='',
-            bold=True,
-        )
+        self.send_btn = create_action_button('Send Transaction')
         self.send_btn.bind(on_press=self.on_send_pressed)
         btn_box.add_widget(self.send_btn)
 
-        self.example_btn = Button(
-            text='Load Hex Example',
-            background_color=COLOR_BG_LIGHT,
-            background_normal='',
-        )
+        self.example_btn = create_action_button('Load Hex Example', color=COLOR_BG_LIGHT, bold=False)
         self.example_btn.bind(on_press=self.on_load_example)
         btn_box.add_widget(self.example_btn)
 
-        self.abort_btn = Button(
-            text='Abort',
-            background_color=COLOR_ERROR,
-            background_normal='',
-            disabled=True,
-        )
+        self.abort_btn = create_action_button('Abort', color=COLOR_ERROR, disabled=True)
         self.abort_btn.bind(on_press=self.on_abort_pressed)
         btn_box.add_widget(self.abort_btn)
 
@@ -669,26 +417,12 @@ class BTCMeshGUI(BoxLayout):
         self.add_widget(self.connection_label)
 
         # Status/Log area
-        log_label = Label(
-            text='Activity Log:',
-            size_hint_y=None,
-            height=25,
-            halign='left',
-        )
-        log_label.bind(width=lambda instance, value: setattr(instance, 'text_size', (value, None)))
-        self.add_widget(log_label)
+        self.add_widget(create_section_label('Activity Log:'))
         self.status_log = StatusLog(size_hint_y=1)
         self.add_widget(self.status_log)
 
         # Clear button at bottom
-        self.clear_btn = Button(
-            text='Clear Log',
-            size_hint_y=None,
-            height=40,
-            background_color=COLOR_BG_LIGHT,
-            background_normal='',
-        )
-        self.clear_btn.bind(on_press=self.on_clear)
+        self.clear_btn = create_clear_button(self.on_clear)
         self.add_widget(self.clear_btn)
 
         # Scan for devices on startup
