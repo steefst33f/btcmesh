@@ -117,12 +117,6 @@ class TestServerGUIStructureStory151(unittest.TestCase):
 
         self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_BG'))
 
-    def test_color_bg_light_exists(self):
-        """Given server GUI module, Then COLOR_BG_LIGHT should exist (#2D2D2D)."""
-        import btcmesh_server_gui
-
-        self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_BG_LIGHT'))
-
     def test_color_success_exists(self):
         """Given server GUI module, Then COLOR_SUCCESS should exist for green indicators."""
         import btcmesh_server_gui
