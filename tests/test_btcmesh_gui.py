@@ -509,9 +509,9 @@ class TestStatusLogStory102(unittest.TestCase):
         result = get_log_color(logging.INFO, "Transaction success")
         self.assertEqual(result, COLOR_SUCCESS)
 
-    def test_info_with_ack_keyword_returns_success_color(self):
-        """Given INFO level with 'ack' in message, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Received ACK from node")
+    def test_info_with_successfully_keyword_returns_success_color(self):
+        """Given INFO level with 'successfully' in message, Then returns COLOR_SUCCESS."""
+        result = get_log_color(logging.INFO, "Connected successfully to node")
         self.assertEqual(result, COLOR_SUCCESS)
 
     def test_info_without_keywords_returns_none(self):

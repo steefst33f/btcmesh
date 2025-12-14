@@ -766,6 +766,7 @@ lora/
         - [ ] *   **When** new entries are added.
         - [ ] *   **Then** the log auto-scrolls to show the newest entry.
     *   _Note: Reuse StatusLog component pattern from client GUI._
+    *   _Note: See [project/log_color_spec.md](log_color_spec.md) for log message color categorization requirements._
 
 - [ ] **Story 17.2: Display Active Sessions**
 - [ ] *   **As a** relay operator,

@@ -55,30 +55,53 @@ class ConnectionState:
 # Helper Functions
 # =============================================================================
 
-def get_log_color(level: int, msg: str, success_keywords: Optional[list] = None) -> Optional[Tuple]:
+def get_log_color(level: int, msg: str,
+                  success_keywords: Optional[list] = None,
+                  error_keywords: Optional[list] = None) -> Optional[Tuple]:
     """Determine the color for a log message based on level and content.
 
     Args:
         level: The logging level (e.g., logging.ERROR, logging.WARNING, logging.INFO)
         msg: The log message text
         success_keywords: Optional list of keywords that indicate success messages.
-                         Defaults to ['success', 'ack', 'txid', 'broadcast']
+                         Defaults to ['successfully', 'success', 'txid:']
+        error_keywords: Optional list of keywords that indicate error messages at INFO level.
+                       Defaults to ['failed', 'nack', 'timed out', 'abort',
+                                   'cannot', 'closing']
 
     Returns:
         A color tuple (r, g, b, a) or None for default color
+
+    See project/log_color_spec.md for full categorization requirements.
     """
     if success_keywords is None:
-        success_keywords = ['success', 'ack', 'txid', 'broadcast']
+        success_keywords = ['successfully', 'success', 'txid:']
+    if error_keywords is None:
+        error_keywords = ['failed', 'nack', 'timed out', 'abort',
+                         'cannot', 'closing']
 
+    # ERROR level always red
     if level >= logging.ERROR:
         return COLOR_ERROR
-    elif level >= logging.WARNING:
+
+    # WARNING level always orange
+    if level >= logging.WARNING:
         return COLOR_WARNING
-    else:
-        msg_lower = msg.lower()
-        for keyword in success_keywords:
-            if keyword in msg_lower:
-                return COLOR_SUCCESS
+
+    # For INFO level, check content
+    msg_lower = msg.lower()
+
+    # Check for error keywords first (more specific)
+    for keyword in error_keywords:
+        if keyword in msg_lower:
+            return COLOR_ERROR
+
+    # Check for success keywords
+    for keyword in success_keywords:
+        if keyword in msg_lower:
+            return COLOR_SUCCESS
+
+    # Default: white/none
     return None
 
 

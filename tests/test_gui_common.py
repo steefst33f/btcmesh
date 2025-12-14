@@ -225,22 +225,68 @@ class TestGetLogColor(unittest.TestCase):
         self.assertEqual(color, gui_common.COLOR_SUCCESS)
 
     def test_get_log_color_returns_success_for_txid_keyword(self):
-        """Given INFO level with 'txid' in message, Then return COLOR_SUCCESS."""
+        """Given INFO level with 'txid:' in message, Then return COLOR_SUCCESS."""
         from core import gui_common
-        color = gui_common.get_log_color(logging.INFO, "TXID: abc123")
+        color = gui_common.get_log_color(logging.INFO, "Broadcast success. TXID: abc123")
         self.assertEqual(color, gui_common.COLOR_SUCCESS)
 
-    def test_get_log_color_returns_success_for_broadcast_keyword(self):
-        """Given INFO level with 'broadcast' in message, Then return COLOR_SUCCESS."""
+    def test_get_log_color_returns_success_for_successfully_keyword(self):
+        """Given INFO level with 'successfully' in message, Then return COLOR_SUCCESS."""
         from core import gui_common
-        color = gui_common.get_log_color(logging.INFO, "Transaction broadcast")
+        color = gui_common.get_log_color(logging.INFO, "Connected successfully")
         self.assertEqual(color, gui_common.COLOR_SUCCESS)
 
-    def test_get_log_color_returns_success_for_ack_keyword(self):
-        """Given INFO level with 'ack' in message, Then return COLOR_SUCCESS."""
+    def test_get_log_color_returns_error_for_failed_keyword_at_info(self):
+        """Given INFO level with 'failed' in message, Then return COLOR_ERROR."""
         from core import gui_common
-        color = gui_common.get_log_color(logging.INFO, "Received ACK")
-        self.assertEqual(color, gui_common.COLOR_SUCCESS)
+        color = gui_common.get_log_color(logging.INFO, "Broadcast failed: some error")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_nack_keyword_at_info(self):
+        """Given INFO level with 'nack' in message, Then return COLOR_ERROR."""
+        from core import gui_common
+        color = gui_common.get_log_color(logging.INFO, "Sending NACK to client")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_timeout_keyword_at_info(self):
+        """Given INFO level with 'timed out' in message, Then return COLOR_ERROR."""
+        from core import gui_common
+        color = gui_common.get_log_color(logging.INFO, "Session timed out. Sending NACK")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_closing_keyword_at_info(self):
+        """Given INFO level with 'closing' in message, Then return COLOR_ERROR."""
+        from core import gui_common
+        color = gui_common.get_log_color(logging.INFO, "Closing Meshtastic interface...")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_cannot_keyword_at_info(self):
+        """Given INFO level with 'cannot' in message, Then return COLOR_ERROR."""
+        from core import gui_common
+        color = gui_common.get_log_color(logging.INFO, "Cannot send reply: no interface")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_abort_keyword_at_info(self):
+        """Given INFO level with 'abort' in message, Then return COLOR_ERROR."""
+        from core import gui_common
+        color = gui_common.get_log_color(logging.INFO, "Session aborted by sender")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_error_keywords_take_priority_over_success(self):
+        """Given message with both error and success keywords, Then error takes priority."""
+        from core import gui_common
+        # 'failed' is error keyword, 'success' would be success keyword
+        color = gui_common.get_log_color(logging.INFO, "Success check failed")
+        self.assertEqual(color, gui_common.COLOR_ERROR)
+
+    def test_get_log_color_with_custom_error_keywords(self):
+        """Given custom error keywords, Then use those for matching."""
+        from core import gui_common
+        color = gui_common.get_log_color(
+            logging.INFO, "Connection dropped",
+            error_keywords=['dropped']
+        )
+        self.assertEqual(color, gui_common.COLOR_ERROR)
 
     def test_get_log_color_returns_none_for_normal_info(self):
         """Given INFO level with normal message, Then return None."""
