@@ -665,8 +665,14 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
             global bitcoin_rpc
 
             bitcoin_rpc = BitcoinRPCClient(rpc_config)
-            server_logger.info("Connected to Bitcoin Core RPC node successfully.")
-            server_logger.info(f"rpc: {bitcoin_rpc}.")
+            # Build host display string for GUI status (mask .onion for privacy)
+            host = rpc_config.get('host', 'unknown')
+            port = rpc_config.get('port', '')
+            is_tor = host.endswith('.onion')
+            host_display = "*.onion" if is_tor else f"{host}:{port}"
+            server_logger.info(
+                f"Connected to Bitcoin Core RPC node successfully. Host: {host_display}, Tor: {is_tor}"
+            )
         except Exception as e:
             bitcoin_rpc = None
             server_logger.error(

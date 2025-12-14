@@ -416,12 +416,34 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertFalse(gui.start_btn.disabled)
 
     def test_handle_result_rpc_connected_updates_label(self):
-        """Given 'rpc_connected' result, Then RPC label should show connected state."""
+        """Given 'rpc_connected' result with host, Then RPC label should show connected with host."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('rpc_connected', None))
+            gui._handle_result(('rpc_connected', {'host': 'localhost:8332', 'is_tor': False}))
+        self.assertIn('Connected', gui.rpc_label.text)
+        self.assertIn('localhost:8332', gui.rpc_label.text)
+        self.assertNotIn('[Tor]', gui.rpc_label.text)
+
+    def test_handle_result_rpc_connected_with_tor(self):
+        """Given 'rpc_connected' result with Tor, Then RPC label should show Tor badge."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': '*.onion', 'is_tor': True}))
+        self.assertIn('Connected', gui.rpc_label.text)
+        self.assertIn('*.onion', gui.rpc_label.text)
+        self.assertIn('[Tor]', gui.rpc_label.text)
+
+    def test_handle_result_rpc_connected_without_host(self):
+        """Given 'rpc_connected' result without host, Then RPC label shows default text."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': None, 'is_tor': False}))
         self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_CONNECTED.text)
 
     def test_handle_result_rpc_failed_updates_label(self):
@@ -491,13 +513,24 @@ class TestServerLogParsingStory152(unittest.TestCase):
         self.assertTrue(callable(btcmesh_server_gui.parse_log_for_status))
 
     def test_parse_log_detects_rpc_connected(self):
-        """Given RPC connected log message, Then parse_log_for_status returns rpc_connected."""
+        """Given RPC connected log message with host, Then parse_log_for_status returns rpc_connected with dict."""
         import btcmesh_server_gui
 
         result = btcmesh_server_gui.parse_log_for_status(
-            "Connected to Bitcoin Core RPC node successfully."
+            "Connected to Bitcoin Core RPC node successfully. Host: localhost:8332, Tor: False"
         )
-        self.assertEqual(result, ('rpc_connected', None))
+        self.assertEqual(result[0], 'rpc_connected')
+        self.assertEqual(result[1], {'host': 'localhost:8332', 'is_tor': False})
+
+    def test_parse_log_detects_rpc_connected_with_tor(self):
+        """Given RPC connected log message with Tor, Then parse_log_for_status returns is_tor=True."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Connected to Bitcoin Core RPC node successfully. Host: *.onion, Tor: True"
+        )
+        self.assertEqual(result[0], 'rpc_connected')
+        self.assertEqual(result[1], {'host': '*.onion', 'is_tor': True})
 
     def test_parse_log_detects_rpc_failed(self):
         """Given RPC failed log message, Then parse_log_for_status returns rpc_failed."""

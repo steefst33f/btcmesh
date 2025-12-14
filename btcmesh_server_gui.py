@@ -83,7 +83,13 @@ def parse_log_for_status(message: str, level: int = None):  # noqa: ARG001
     """
     # Bitcoin RPC status
     if "Connected to Bitcoin Core RPC node successfully" in message:
-        return ('rpc_connected', None)
+        # Extract host from "Host: localhost:8332" or "Host: *.onion"
+        host_match = re.search(r'Host: ([^,]+)', message)
+        host = host_match.group(1).strip() if host_match else None
+        # Extract Tor status from "Tor: True" or "Tor: False"
+        tor_match = re.search(r'Tor: (True|False)', message)
+        is_tor = tor_match.group(1) == 'True' if tor_match else False
+        return ('rpc_connected', {'host': host, 'is_tor': is_tor})
     if "Failed to connect to Bitcoin Core RPC node" in message:
         # Extract error message after the colon
         match = re.search(r'Failed to connect to Bitcoin Core RPC node: (.+?)(?:\. |$)', message)
@@ -289,7 +295,14 @@ class BTCMeshServerGUI(BoxLayout):
         status_type, data = status_update
 
         if status_type == 'rpc_connected':
-            self.rpc_label.text = STATE_RPC_CONNECTED.text
+            # data is dict with 'host' and 'is_tor' keys
+            host = data.get('host') if isinstance(data, dict) else None
+            is_tor = data.get('is_tor', False) if isinstance(data, dict) else False
+            if host:
+                tor_badge = " [Tor]" if is_tor else ""
+                self.rpc_label.text = f"Bitcoin RPC: Connected ({host}){tor_badge}"
+            else:
+                self.rpc_label.text = STATE_RPC_CONNECTED.text
             self.rpc_label.color = STATE_RPC_CONNECTED.color
 
         elif status_type == 'rpc_failed':

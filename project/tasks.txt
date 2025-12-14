@@ -696,24 +696,25 @@ lora/
         - [ ] *   **Then** the operator can choose which device to use.
     *   _Note: Reuse device scanning logic from client GUI (Story 11.1). Device selection deferred to Story 18.2 (Meshtastic Device Settings)._
 
-- [ ] **Story 16.2: Display Bitcoin RPC Connection Status**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see the Bitcoin RPC node connection status,
-- [ ] *   **So that** I know if the relay can broadcast transactions.
-    - [ ] *   **Scenario:** Bitcoin RPC connected successfully
-        - [ ] *   **Given** the server starts with valid RPC configuration.
-        - [ ] *   **When** RPC connection succeeds.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" with green icon.
-        - [ ] *   **And** the RPC host is displayed (masked if .onion for privacy).
-    - [ ] *   **Scenario:** Bitcoin RPC connection failed
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** RPC connection fails.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" with red icon.
-        - [ ] *   **And** an error message is displayed (auth failed, unreachable, etc.).
-    - [ ] *   **Scenario:** Bitcoin RPC using Tor
-        - [ ] *   **Given** the RPC host is a .onion address.
-        - [ ] *   **When** connection is established via Tor.
-        - [ ] *   **Then** a "Tor" badge is displayed next to the RPC status.
+- [x] **Story 16.2: Display Bitcoin RPC Connection Status**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see the Bitcoin RPC node connection status,
+- [x] *   **So that** I know if the relay can broadcast transactions.
+    - [x] *   **Scenario:** Bitcoin RPC connected successfully
+        - [x] *   **Given** the server starts with valid RPC configuration.
+        - [x] *   **When** RPC connection succeeds.
+        - [x] *   **Then** a status indicator shows "Bitcoin RPC: Connected" with green icon.
+        - [x] *   **And** the RPC host is displayed (masked if .onion for privacy).
+    - [x] *   **Scenario:** Bitcoin RPC connection failed
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** RPC connection fails.
+        - [x] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" with red icon.
+        - [x] *   **And** an error message is displayed (auth failed, unreachable, etc.).
+    - [x] *   **Scenario:** Bitcoin RPC using Tor
+        - [x] *   **Given** the RPC host is a .onion address.
+        - [x] *   **When** connection is established via Tor.
+        - [x] *   **Then** a "Tor" badge is displayed next to the RPC status.
+    *   _Note: Implemented by enhancing RPC connection log message in btcmesh_server.py to include host and Tor info. GUI parses log and displays "Bitcoin RPC: Connected (host:port)" or "Bitcoin RPC: Connected (*.onion) [Tor]"._
 
 - [ ] **Story 16.3: Display Network Badge (Mainnet/Testnet)**
 - [ ] *   **As a** relay operator,
