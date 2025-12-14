@@ -675,26 +675,26 @@ lora/
 
 ### 16. Connection Status Displays
 
-- [ ] **Story 16.1: Display Meshtastic Connection Status**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see the Meshtastic device connection status,
-- [ ] *   **So that** I know if the relay is ready to receive transactions.
-    - [ ] *   **Scenario:** Meshtastic connected successfully
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** Meshtastic connection succeeds.
-        - [ ] *   **Then** a status indicator shows "Meshtastic: Connected" with green icon.
-        - [ ] *   **And** the connected device path is displayed (e.g., "/dev/ttyUSB0").
-        - [ ] *   **And** the server's node ID is displayed (e.g., "!abcdef12").
-    - [ ] *   **Scenario:** Meshtastic connection failed
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** Meshtastic connection fails.
-        - [ ] *   **Then** a status indicator shows "Meshtastic: Disconnected" with red icon.
-        - [ ] *   **And** an error message is displayed.
+- [x] **Story 16.1: Display Meshtastic Connection Status**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see the Meshtastic device connection status,
+- [x] *   **So that** I know if the relay is ready to receive transactions.
+    - [x] *   **Scenario:** Meshtastic connected successfully
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** Meshtastic connection succeeds.
+        - [x] *   **Then** a status indicator shows "Meshtastic: Connected" with green icon.
+        - [x] *   **And** the connected device path is displayed (e.g., "/dev/ttyUSB0").
+        - [x] *   **And** the server's node ID is displayed (e.g., "!abcdef12").
+    - [x] *   **Scenario:** Meshtastic connection failed
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** Meshtastic connection fails.
+        - [x] *   **Then** a status indicator shows "Meshtastic: Disconnected" with red icon.
+        - [x] *   **And** an error message is displayed.
     - [ ] *   **Scenario:** Meshtastic device selection
         - [ ] *   **Given** multiple Meshtastic devices are connected.
         - [ ] *   **When** the server settings allow device selection.
         - [ ] *   **Then** the operator can choose which device to use.
-    *   _Note: Reuse device scanning logic from client GUI (Story 11.1)._
+    *   _Note: Reuse device scanning logic from client GUI (Story 11.1). Device selection deferred to Story 18.2 (Meshtastic Device Settings)._
 
 - [ ] **Story 16.2: Display Bitcoin RPC Connection Status**
 - [ ] *   **As a** relay operator,

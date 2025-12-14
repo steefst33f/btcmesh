@@ -434,14 +434,26 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_FAILED.text)
 
     def test_handle_result_meshtastic_connected_updates_label(self):
-        """Given 'meshtastic_connected' result, Then Meshtastic label should show connected."""
+        """Given 'meshtastic_connected' result with device, Then Meshtastic label should show connected with device."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('meshtastic_connected', '!abcdef12'))
+            gui._handle_result(('meshtastic_connected', {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'}))
         self.assertIn('Connected', gui.meshtastic_label.text)
         self.assertIn('!abcdef12', gui.meshtastic_label.text)
+        self.assertIn('/dev/ttyUSB0', gui.meshtastic_label.text)
+
+    def test_handle_result_meshtastic_connected_without_device(self):
+        """Given 'meshtastic_connected' result without device, Then label shows connected without device path."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('meshtastic_connected', {'node_id': '!abcdef12', 'device': None}))
+        self.assertIn('Connected', gui.meshtastic_label.text)
+        self.assertIn('!abcdef12', gui.meshtastic_label.text)
+        self.assertNotIn(') on ', gui.meshtastic_label.text)  # No device path syntax
 
     def test_handle_result_meshtastic_failed_updates_label(self):
         """Given 'meshtastic_failed' result, Then Meshtastic label should show failed."""
@@ -498,14 +510,14 @@ class TestServerLogParsingStory152(unittest.TestCase):
         self.assertIn('Connection refused', result[1])
 
     def test_parse_log_detects_meshtastic_connected(self):
-        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected."""
+        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected with dict."""
         import btcmesh_server_gui
 
         result = btcmesh_server_gui.parse_log_for_status(
             "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: !abcdef12"
         )
         self.assertEqual(result[0], 'meshtastic_connected')
-        self.assertEqual(result[1], '!abcdef12')
+        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'})
 
     def test_parse_log_detects_meshtastic_failed(self):
         """Given Meshtastic failed log message, Then parse_log_for_status returns meshtastic_failed."""

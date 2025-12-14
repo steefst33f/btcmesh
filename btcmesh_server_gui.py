@@ -92,10 +92,13 @@ def parse_log_for_status(message: str, level: int = None):  # noqa: ARG001
 
     # Meshtastic status
     if "Meshtastic interface initialized successfully" in message:
+        # Extract device path from "Device: /dev/ttyUSB0"
+        device_match = re.search(r'Device: ([^,]+)', message)
+        device = device_match.group(1).strip() if device_match else None
         # Extract node ID from "My Node Num: !abcdef12"
-        match = re.search(r'My Node Num: (!?[0-9a-fA-F]+)', message)
-        node_id = match.group(1) if match else "Unknown"
-        return ('meshtastic_connected', node_id)
+        node_match = re.search(r'My Node Num: (!?[0-9a-fA-F]+)', message)
+        node_id = node_match.group(1) if node_match else "Unknown"
+        return ('meshtastic_connected', {'node_id': node_id, 'device': device})
     if "Failed to initialize Meshtastic interface" in message:
         return ('meshtastic_failed', "Could not initialize Meshtastic")
     if "No Meshtastic device found" in message:
@@ -294,7 +297,13 @@ class BTCMeshServerGUI(BoxLayout):
             self.rpc_label.color = STATE_RPC_FAILED.color
 
         elif status_type == 'meshtastic_connected':
-            self.meshtastic_label.text = f"Meshtastic: Connected ({data})"
+            # data is dict with 'node_id' and 'device' keys
+            node_id = data.get('node_id', 'Unknown') if isinstance(data, dict) else data
+            device = data.get('device') if isinstance(data, dict) else None
+            if device:
+                self.meshtastic_label.text = f"Meshtastic: Connected ({node_id}) on {device}"
+            else:
+                self.meshtastic_label.text = f"Meshtastic: Connected ({node_id})"
             self.meshtastic_label.color = STATE_MESHTASTIC_CONNECTED.color
 
         elif status_type == 'meshtastic_failed':
