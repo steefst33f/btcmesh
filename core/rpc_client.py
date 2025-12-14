@@ -35,11 +35,11 @@ class BitcoinRPCClient:
     def connect(self):
         """Connects to Bitcoin Core RPC using the provided config dictionary."""
         server_logger.debug("Connecting to Bitcoin RPC...")
-        
-        # Test connection
 
+        # Test connection and get chain info
         info = self.getblockchaininfo()
-        server_logger.debug(f"Connected to Bitcoin Core chain: {info['chain']}")
+        self.chain = info['chain']  # Store chain for later access (main, test, testnet4, signet)
+        server_logger.debug(f"Connected to Bitcoin Core chain: {self.chain}")
 
     def rpc_request(self, method, params=None, retries: int = 3, delay: int = 5):
         """Performs a JSON-RPC requests with automatic connection retry logic."""

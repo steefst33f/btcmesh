@@ -13,7 +13,6 @@ import re
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.graphics import Color, Rectangle
-from kivy.uix.label import Label
 from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.properties import BooleanProperty
@@ -28,6 +27,9 @@ from core.gui_common import (
     COLOR_BG,
     COLOR_SECUNDARY,
     COLOR_DISCONNECTED,
+    COLOR_MAINNET,
+    COLOR_TESTNET,
+    COLOR_SIGNET,
     # Classes
     ConnectionState,
     StatusLog,
@@ -38,6 +40,7 @@ from core.gui_common import (
     create_title,
     create_action_button,
     create_clear_button,
+    create_status_row,
 )
 
 # Import server module
@@ -48,15 +51,15 @@ from core.logger_setup import server_logger
 # Set window size for desktop
 Window.size = (550, 700)
 
-# Meshtastic connection states
-STATE_MESHTASTIC_DISCONNECTED = ConnectionState('Meshtastic: Not connected', COLOR_DISCONNECTED)
-STATE_MESHTASTIC_CONNECTED = ConnectionState('Meshtastic: Connected', COLOR_SUCCESS)
-STATE_MESHTASTIC_FAILED = ConnectionState('Meshtastic: Connection failed', COLOR_ERROR)
+# Meshtastic connection states (text only - description is in separate label)
+STATE_MESHTASTIC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
+STATE_MESHTASTIC_CONNECTED = ConnectionState('Connected', COLOR_SUCCESS)
+STATE_MESHTASTIC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 
-# Bitcoin RPC connection states
-STATE_RPC_DISCONNECTED = ConnectionState('Bitcoin RPC: Not connected', COLOR_DISCONNECTED)
-STATE_RPC_CONNECTED = ConnectionState('Bitcoin RPC: Connected', COLOR_SUCCESS)
-STATE_RPC_FAILED = ConnectionState('Bitcoin RPC: Connection failed', COLOR_ERROR)
+# Bitcoin RPC connection states (text only - description is in separate label)
+STATE_RPC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
+STATE_RPC_CONNECTED = ConnectionState('Connected', COLOR_SUCCESS)
+STATE_RPC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 
 
 class QueueLogHandler(logging.Handler):
@@ -89,7 +92,10 @@ def parse_log_for_status(message: str, level: int = None):  # noqa: ARG001
         # Extract Tor status from "Tor: True" or "Tor: False"
         tor_match = re.search(r'Tor: (True|False)', message)
         is_tor = tor_match.group(1) == 'True' if tor_match else False
-        return ('rpc_connected', {'host': host, 'is_tor': is_tor})
+        # Extract chain from "Chain: main" or "Chain: testnet4" etc.
+        chain_match = re.search(r'Chain: (\w+)', message)
+        chain = chain_match.group(1) if chain_match else None
+        return ('rpc_connected', {'host': host, 'is_tor': is_tor, 'chain': chain})
     if "Failed to connect to Bitcoin Core RPC node" in message:
         # Extract error message after the colon
         match = re.search(r'Failed to connect to Bitcoin Core RPC node: (.+?)(?:\. |$)', message)
@@ -169,29 +175,32 @@ class BTCMeshServerGUI(BoxLayout):
         self.add_widget(create_separator())
 
         # Connection status section
-        status_section = BoxLayout(orientation='vertical', size_hint_y=None, height=80, spacing=5)
+        status_section = BoxLayout(orientation='vertical', size_hint_y=None, height=110, spacing=5)
 
-        # Meshtastic status
-        self.meshtastic_label = Label(
-            text=STATE_MESHTASTIC_DISCONNECTED.text,
-            size_hint_y=None,
-            height=30,
-            color=STATE_MESHTASTIC_DISCONNECTED.color,
-            halign='left'
+        # Network badge row (mainnet/testnet/signet)
+        network_row, self.network_label = create_status_row(
+            'Network:',
+            '',
+            initial_color=COLOR_DISCONNECTED,
+            bold_value=True
         )
-        self.meshtastic_label.bind(size=self.meshtastic_label.setter('text_size'))
-        status_section.add_widget(self.meshtastic_label)
+        status_section.add_widget(network_row)
 
-        # Bitcoin RPC status
-        self.rpc_label = Label(
-            text=STATE_RPC_DISCONNECTED.text,
-            size_hint_y=None,
-            height=30,
-            color=STATE_RPC_DISCONNECTED.color,
-            halign='left'
+        # Bitcoin RPC status row
+        rpc_row, self.rpc_label = create_status_row(
+            'Bitcoin RPC:',
+            'Not connected',
+            initial_color=COLOR_DISCONNECTED
         )
-        self.rpc_label.bind(size=self.rpc_label.setter('text_size'))
-        status_section.add_widget(self.rpc_label)
+        status_section.add_widget(rpc_row)
+
+        # Meshtastic status row
+        meshtastic_row, self.meshtastic_label = create_status_row(
+            'Meshtastic:',
+            'Not connected',
+            initial_color=COLOR_DISCONNECTED
+        )
+        status_section.add_widget(meshtastic_row)
 
         self.add_widget(status_section)
 
@@ -295,15 +304,29 @@ class BTCMeshServerGUI(BoxLayout):
         status_type, data = status_update
 
         if status_type == 'rpc_connected':
-            # data is dict with 'host' and 'is_tor' keys
+            # data is dict with 'host', 'is_tor', and 'chain' keys
             host = data.get('host') if isinstance(data, dict) else None
             is_tor = data.get('is_tor', False) if isinstance(data, dict) else False
+            chain = data.get('chain') if isinstance(data, dict) else None
             if host:
                 tor_badge = " [Tor]" if is_tor else ""
-                self.rpc_label.text = f"Bitcoin RPC: Connected ({host}){tor_badge}"
+                self.rpc_label.text = f"Connected ({host}){tor_badge}"
             else:
                 self.rpc_label.text = STATE_RPC_CONNECTED.text
             self.rpc_label.color = STATE_RPC_CONNECTED.color
+
+            # Update network badge based on chain
+            if chain:
+                # Map chain values to display names and colors
+                chain_display_map = {
+                    'main': ('MAINNET', COLOR_MAINNET),
+                    'test': ('TESTNET3', COLOR_TESTNET),
+                    'testnet4': ('TESTNET4', COLOR_TESTNET),
+                    'signet': ('SIGNET', COLOR_SIGNET),
+                }
+                display_name, color = chain_display_map.get(chain, (chain.upper(), COLOR_TESTNET))
+                self.network_label.text = display_name
+                self.network_label.color = color
 
         elif status_type == 'rpc_failed':
             self.rpc_label.text = STATE_RPC_FAILED.text
@@ -314,9 +337,9 @@ class BTCMeshServerGUI(BoxLayout):
             node_id = data.get('node_id', 'Unknown') if isinstance(data, dict) else data
             device = data.get('device') if isinstance(data, dict) else None
             if device:
-                self.meshtastic_label.text = f"Meshtastic: Connected ({node_id}) on {device}"
+                self.meshtastic_label.text = f"Connected ({node_id}) on {device}"
             else:
-                self.meshtastic_label.text = f"Meshtastic: Connected ({node_id})"
+                self.meshtastic_label.text = f"Connected ({node_id})"
             self.meshtastic_label.color = STATE_MESHTASTIC_CONNECTED.color
 
         elif status_type == 'meshtastic_failed':
@@ -344,6 +367,8 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
             self.rpc_label.color = STATE_RPC_DISCONNECTED.color
+            self.network_label.text = ''
+            self.network_label.color = COLOR_DISCONNECTED
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True
             self.start_btn.disabled = False

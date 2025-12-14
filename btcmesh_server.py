@@ -671,7 +671,7 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
             is_tor = host.endswith('.onion')
             host_display = "*.onion" if is_tor else f"{host}:{port}"
             server_logger.info(
-                f"Connected to Bitcoin Core RPC node successfully. Host: {host_display}, Tor: {is_tor}"
+                f"Connected to Bitcoin Core RPC node successfully. Host: {host_display}, Tor: {is_tor}, Chain: {bitcoin_rpc.chain}"
             )
         except Exception as e:
             bitcoin_rpc = None

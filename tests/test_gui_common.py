@@ -408,6 +408,28 @@ class TestWidgetFactories(unittest.TestCase):
         self.assertTrue(hasattr(gui_common, 'create_action_button'))
         self.assertTrue(callable(gui_common.create_action_button))
 
+    def test_create_status_row_exists(self):
+        """Given gui_common module, Then create_status_row should be defined."""
+        from core import gui_common
+        self.assertTrue(hasattr(gui_common, 'create_status_row'))
+        self.assertTrue(callable(gui_common.create_status_row))
+
+    def test_create_status_row_returns_tuple(self):
+        """Given create_status_row call, Then returns tuple of (BoxLayout, Label)."""
+        from core import gui_common
+        result = gui_common.create_status_row('Test:', 'Value')
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+    def test_create_status_row_returns_label_as_second_element(self):
+        """Given create_status_row call, Then second element is a Label-like object."""
+        from core import gui_common
+        _, value_label = gui_common.create_status_row('Label:', 'Initial Value')
+        # The value_label should be a Label (mocked in tests)
+        # We can verify it has expected Label attributes
+        self.assertTrue(hasattr(value_label, 'text'))
+        self.assertTrue(hasattr(value_label, 'color'))
+
 
 if __name__ == '__main__':
     unittest.main()
