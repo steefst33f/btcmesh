@@ -25,6 +25,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.core.clipboard import Clipboard
 from kivy.properties import StringProperty, BooleanProperty
 from kivy.utils import get_color_from_hex
 
@@ -190,7 +191,7 @@ def process_result(result: tuple) -> ResultAction:
     return action
 
 
-def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[str]:
+def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False) -> Optional[str]:
     """Validate the inputs for sending a transaction.
 
     This is a pure function that validates inputs without touching the GUI.
@@ -199,6 +200,7 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[st
         dest: The destination node ID
         tx_hex: The raw transaction hex (already cleaned of whitespace)
         has_iface: Whether the Meshtastic interface is connected
+        dry_run: Whether this is a dry run (skips Meshtastic connection check)
 
     Returns:
         An error message string if validation fails, or None if inputs are valid
@@ -218,7 +220,7 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool) -> Optional[st
     if not is_valid_hex(tx_hex):
         return "Invalid hex characters"
 
-    if not has_iface:
+    if not has_iface and not dry_run:
         return "Meshtastic not connected"
 
     return None
@@ -528,9 +530,10 @@ class BTCMeshGUI(BoxLayout):
         """Handle send button press."""
         dest = self.dest_input.text.strip()
         tx_hex = self.tx_input.text.strip().replace('\n', '').replace(' ', '')
+        dry_run = self.dry_run_toggle.state == 'down'
 
-        # Validation
-        error = validate_send_inputs(dest, tx_hex, bool(self.iface))
+        # Validation (dry_run skips Meshtastic connection check)
+        error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
             if error == "Meshtastic not connected":
@@ -543,7 +546,6 @@ class BTCMeshGUI(BoxLayout):
         self.abort_btn.disabled = False
         self.abort_requested = False
         self.status_log.clear()
-        dry_run = self.dry_run_toggle.state == 'down'
         if dry_run:
             self.status_log.add_message(f"Starting DRY RUN transaction send to {dest}...")
         else:
@@ -638,18 +640,100 @@ class BTCMeshGUI(BoxLayout):
 
     def _show_success_popup(self, txid):
         """Show success popup with TXID."""
-        content = BoxLayout(orientation='vertical', padding=20, spacing=10)
-        content.add_widget(Label(text='Transaction Sent!', font_size=18, bold=True))
-        content.add_widget(Label(text=f'TXID:\n{txid}', text_size=(300, None)))
+        # Create content with dark background
+        content = BoxLayout(orientation='vertical', padding=30, spacing=15)
+        with content.canvas.before:
+            Color(*COLOR_BG)
+            self._popup_bg = Rectangle(pos=content.pos, size=content.size)
+        content.bind(pos=lambda inst, val: setattr(self._popup_bg, 'pos', val))
+        content.bind(size=lambda inst, val: setattr(self._popup_bg, 'size', val))
 
-        ok_btn = Button(text='OK', size_hint_y=None, height=40)
-        content.add_widget(ok_btn)
+        # Top spacer for space between popup top and content
+        content.add_widget(Widget(size_hint_y=None, height=15))
+
+        # Success title in green
+        content.add_widget(Label(
+            text='Transaction Sent!',
+            font_size=32,
+            bold=True,
+            color=COLOR_SUCCESS,
+            size_hint_y=None,
+            height=50,
+        ))
+
+        # TXID label
+        content.add_widget(Label(
+            text='TXID:',
+            font_size=24,
+            color=(0.7, 0.7, 0.7, 1),
+            size_hint_y=None,
+            height=35,
+        ))
+
+        # TXID value in white (larger font, wrapping enabled)
+        content.add_widget(Label(
+            text=txid,
+            font_size=24,
+            color=COLOR_SECUNDARY,
+            text_size=(380, None),
+            size_hint_y=None,
+            height=70,
+            halign='center',
+        ))
+
+        # Spacer
+        content.add_widget(Widget(size_hint_y=None, height=20))
+
+        # Button column with Copy and OK buttons
+        btn_row = BoxLayout(orientation='vertical', size_hint_y=None, height=110, spacing=10)
+
+        # Copy button
+        copy_btn = Button(
+            text='Copy',
+            background_color=COLOR_SECUNDARY,
+            background_normal='',
+            color=(0, 0, 0, 1),  # Black text
+            bold=True,
+            font_size=24,
+        )
+
+        def on_copy(instance):
+            Clipboard.copy(txid)
+            instance.text = 'Copied!'
+            Clock.schedule_once(lambda dt: setattr(instance, 'text', 'Copy'), 1.5)
+
+        copy_btn.bind(on_press=on_copy)
+        btn_row.add_widget(copy_btn)
+
+        # OK button styled like app buttons
+        ok_btn = Button(
+            text='OK',
+            background_color=COLOR_PRIMARY,
+            background_normal='',
+            bold=True,
+            font_size=24,
+        )
+        btn_row.add_widget(ok_btn)
+
+        content.add_widget(btn_row)
+
+        # Calculate popup size based on content
+        content_height = sum(child.height for child in content.children)
+        padding_height = content.padding[1] + content.padding[3] if len(content.padding) == 4 else content.padding * 2
+        spacing_height = content.spacing * (len(content.children) - 1)
+        popup_height = content_height + padding_height + spacing_height
+        # Width based on TXID text_size (380) + horizontal padding (30 * 2)
+        popup_width = 440
 
         popup = Popup(
-            title='Success',
+            title='',
             content=content,
-            size_hint=(0.9, 0.4),
+            size_hint=(None, None),
+            size=(popup_width, popup_height),
             auto_dismiss=True,
+            separator_height=0,
+            background_color=COLOR_BG,
+            background='',
         )
         ok_btn.bind(on_press=popup.dismiss)
         popup.open()
