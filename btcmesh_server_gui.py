@@ -107,12 +107,20 @@ def parse_log_for_status(message: str, level: int = None):  # noqa: ARG001
         # Extract device path from "Device: /dev/ttyUSB0"
         device_match = re.search(r'Device: ([^,]+)', message)
         device = device_match.group(1).strip() if device_match else None
+        # Validate device - reject invalid values like "None", "?", empty strings
+        if device in (None, '', '?', 'None'):
+            device = None
         # Extract node ID from "My Node Num: !abcdef12"
         node_match = re.search(r'My Node Num: (!?[0-9a-fA-F]+)', message)
-        node_id = node_match.group(1) if node_match else "Unknown"
+        node_id = node_match.group(1) if node_match else None
+        # If we don't have a valid node_id, treat as failed connection
+        if not node_id or not node_id.startswith('!'):
+            return ('meshtastic_failed', "Invalid device info")
         return ('meshtastic_connected', {'node_id': node_id, 'device': device})
     if "Failed to initialize Meshtastic interface" in message:
         return ('meshtastic_failed', "Could not initialize Meshtastic")
+    if "Meshtastic interface created but could not retrieve device info" in message:
+        return ('meshtastic_failed', "No device connected")
     if "No Meshtastic device found" in message:
         return ('meshtastic_failed', "No device found")
 

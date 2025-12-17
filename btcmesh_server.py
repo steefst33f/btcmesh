@@ -616,7 +616,7 @@ def initialize_meshtastic_interface(
                 exc_info=True,
             )
         return None
-    node_num_display = "Unknown Node Num"
+    node_num_display = None
     if (
         hasattr(iface, "myInfo")
         and iface.myInfo
@@ -627,9 +627,26 @@ def initialize_meshtastic_interface(
             node_num_display = formatted_node_id
         elif iface.myInfo.my_node_num is not None:
             node_num_display = str(iface.myInfo.my_node_num)
-    device_path_str = str(getattr(iface, "devicePath", getattr(iface, "devPath", "?")))
+
+    # Get device path, filtering out invalid values
+    device_path_raw = getattr(iface, "devicePath", getattr(iface, "devPath", None))
+    device_path_str = str(device_path_raw) if device_path_raw not in (None, "?", "None") else None
+
+    # Validate that we have valid device info before declaring success
+    if not node_num_display or not node_num_display.startswith("!"):
+        server_logger.error(
+            "Meshtastic interface created but could not retrieve device info. "
+            "This usually means no Meshtastic device is connected. "
+            "Please ensure your device is plugged in and recognized by the system."
+        )
+        try:
+            iface.close()
+        except Exception:
+            pass
+        return None
+
     server_logger.info(
-        f"Meshtastic interface initialized successfully. Device: {device_path_str}, My Node Num: {node_num_display}"
+        f"Meshtastic interface initialized successfully. Device: {device_path_str or '?'}, My Node Num: {node_num_display}"
     )
     return iface
 

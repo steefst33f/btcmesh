@@ -651,6 +651,48 @@ class TestServerLogParsingStory152(unittest.TestCase):
         )
         self.assertEqual(result[0], 'meshtastic_failed')
 
+    def test_parse_log_meshtastic_invalid_device_none_string(self):
+        """Given Meshtastic log with Device='None', Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: None, My Node Num: Unknown Node Num"
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "Invalid device info")
+
+    def test_parse_log_meshtastic_invalid_device_question_mark(self):
+        """Given Meshtastic log with Device='?', Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: ?, My Node Num: !abcdef12"
+        )
+        # Still connected because node_id is valid, just device is None
+        self.assertEqual(result[0], 'meshtastic_connected')
+        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': None})
+
+    def test_parse_log_meshtastic_invalid_node_id(self):
+        """Given Meshtastic log with invalid node ID, Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: Unknown Node Num"
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "Invalid device info")
+
+    def test_parse_log_meshtastic_no_device_connected_error(self):
+        """Given server error about no device connected, Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface created but could not retrieve device info. "
+            "This usually means no Meshtastic device is connected."
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "No device connected")
+
     def test_parse_log_detects_server_started(self):
         """Given server started log message, Then parse_log_for_status returns server_started."""
         import btcmesh_server_gui
