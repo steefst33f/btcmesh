@@ -343,17 +343,16 @@ lora/
     *   _Note: Implemented `on_send_pressed()` with input validation via `validate_send_inputs()` pure function._
     *   _Note: All scenarios are now covered by tests in `tests/test_btcmesh_gui.py` (see `TestSendButtonValidationStory91`)._
 
-- [x] **Story 9.2: Implement Load Example Button**
+- [x] **Story 9.2: Implement Load Hex Example Button**
 - [x] *   **As a** user,
-- [x] *   **I want** a button to load example transaction data,
+- [x] *   **I want** a button to load example transaction hex,
 - [x] *   **So that** I can quickly test the application without manual input.
-    - [x] *   **Scenario:** User clicks Load Example
+    - [x] *   **Scenario:** User clicks Load Hex Example
         - [x] *   **Given** the GUI is running.
-        - [x] *   **When** the user clicks "Load Example".
-        - [x] *   **Then** the destination field is populated with "!abcd1234".
-        - [x] *   **And** the transaction hex field is populated with EXAMPLE_RAW_TX.
+        - [x] *   **When** the user clicks "Load Hex Example".
+        - [x] *   **Then** the transaction hex field is populated with EXAMPLE_RAW_TX.
         - [x] *   **And** a confirmation message appears in the status log.
-    *   _Note: Implemented `on_load_example()` loading from `btcmesh_cli.EXAMPLE_RAW_TX`._
+    *   _Note: Implemented `on_load_example()` loading from `btcmesh_cli.EXAMPLE_RAW_TX`. Does not set destination (user selects from known nodes or enters manually)._
 
 - [x] **Story 9.3: Implement Abort Button**
 - [x] *   **As a** user,
@@ -384,6 +383,27 @@ lora/
         - [x] *   **And** a "Log cleared" message is shown.
         - [x] *   **And** the input fields remain unchanged.
     *   _Note: Clear button positioned at bottom of window, only clears log (not inputs)._
+
+- [x] **Story 9.5: Disable Controls During Transaction Send**
+- [x] *   **As a** user,
+- [x] *   **I want** input fields and scan buttons to be disabled while sending a transaction,
+- [x] *   **So that** I cannot accidentally change settings mid-transmission.
+    - [x] *   **Scenario:** Controls disabled when sending starts
+        - [x] *   **Given** the user clicks "Send" to start a transaction.
+        - [x] *   **When** the transaction send begins.
+        - [x] *   **Then** the device spinner is disabled.
+        - [x] *   **And** the device scan button is disabled.
+        - [x] *   **And** the destination node spinner is disabled.
+        - [x] *   **And** the destination input field is disabled.
+        - [x] *   **And** the destination scan button is disabled.
+        - [x] *   **And** the transaction hex input field is disabled.
+        - [x] *   **And** the dry run toggle is disabled.
+        - [x] *   **And** the "Load Hex Example" button is disabled.
+    - [x] *   **Scenario:** Controls re-enabled when sending completes
+        - [x] *   **Given** a transaction send is in progress.
+        - [x] *   **When** the transaction completes (success, error, or abort).
+        - [x] *   **Then** all the above controls are re-enabled.
+    *   _Note: Implemented `_set_controls_enabled(enabled)` helper method in BTCMeshGUI. Called with `False` in `on_send_pressed()` after validation, and `True` in `_handle_result()` when `stop_sending` is triggered._
 
 ### 10. Status Display and Feedback
 
@@ -442,61 +462,98 @@ lora/
 
 ### 11. Connection & Status Enhancements
 
-- [ ] **Story 11.1: Bitcoin RPC Connection Status Indicator**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to see the Bitcoin RPC connection status in the GUI,
-- [ ] *   **So that** I know if the relay can broadcast transactions to the Bitcoin network.
-    - [ ] *   **Scenario:** Bitcoin RPC is connected
-        - [ ] *   **Given** the GUI is running.
-        - [ ] *   **When** the Bitcoin RPC connection check succeeds.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" in green.
-        - [ ] *   **And** the indicator displays the network type (mainnet/testnet/signet).
-    - [ ] *   **Scenario:** Bitcoin RPC connection failed
-        - [ ] *   **Given** the GUI is running.
-        - [ ] *   **When** the Bitcoin RPC connection check fails.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" in red.
-        - [ ] *   **And** the user is informed they cannot broadcast until RPC is available.
+- [x] **Story 11.1: Device Selection Dropdown**
+- [x] *   **As a** user,
+- [x] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
+- [x] *   **So that** I can choose which device to use for sending transactions.
+    - [x] *   **Scenario:** Multiple devices available
+        - [x] *   **Given** multiple Meshtastic devices are connected to the system.
+        - [x] *   **When** the user opens the device dropdown.
+        - [x] *   **Then** all available devices are listed with their serial ports.
+        - [x] *   **And** the user can select a device to use.
+    - [x] *   **Scenario:** Single device available
+        - [x] *   **Given** only one Meshtastic device is connected.
+        - [x] *   **When** the GUI starts.
+        - [x] *   **Then** the device is automatically selected.
+        - [x] *   **And** the dropdown shows the selected device.
+    - [x] *   **Scenario:** No devices available
+        - [x] *   **Given** no Meshtastic devices are connected.
+        - [x] *   **When** the GUI starts.
+        - [x] *   **Then** the dropdown shows "No devices found".
+        - [x] *   **And** the Send button is disabled.
 
-- [ ] **Story 11.2: Device Selection Dropdown**
-- [ ] *   **As a** user,
-- [ ] *   **I want** a dropdown to select from multiple connected Meshtastic devices,
-- [ ] *   **So that** I can choose which device to use for sending transactions.
-    - [ ] *   **Scenario:** Multiple devices available
-        - [ ] *   **Given** multiple Meshtastic devices are connected to the system.
-        - [ ] *   **When** the user opens the device dropdown.
-        - [ ] *   **Then** all available devices are listed with their serial ports.
-        - [ ] *   **And** the user can select a device to use.
-    - [ ] *   **Scenario:** Single device available
-        - [ ] *   **Given** only one Meshtastic device is connected.
-        - [ ] *   **When** the GUI starts.
-        - [ ] *   **Then** the device is automatically selected.
-        - [ ] *   **And** the dropdown shows the selected device.
-    - [ ] *   **Scenario:** No devices available
-        - [ ] *   **Given** no Meshtastic devices are connected.
-        - [ ] *   **When** the GUI starts.
-        - [ ] *   **Then** the dropdown shows "No devices found".
-        - [ ] *   **And** the Send button is disabled.
+- [x] **Story 11.2: Known Nodes Dropdown for Destination**
+- [x] *   **As a** user,
+- [x] *   **I want** to select a destination from a list of known Meshtastic nodes,
+- [x] *   **So that** I don't have to manually type the node ID.
+    - [x] *   **Scenario:** Nodes available after connection
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the node database has been populated.
+        - [x] *   **Then** the destination dropdown shows known nodes formatted as "NodeName (!nodeId)".
+        - [x] *   **And** selecting a node fills the destination field with the node ID.
+    - [x] *   **Scenario:** No known nodes
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the node database is empty.
+        - [x] *   **Then** the dropdown shows "No nodes found".
+        - [x] *   **And** the user can still manually type a destination.
+    - [x] *   **Scenario:** Refresh node list
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the user clicks the "Scan" button next to destination.
+        - [x] *   **Then** the node list is updated from the current device node database.
+    - [x] *   **Scenario:** Manual entry always available
+        - [x] *   **Given** the destination dropdown shows known nodes.
+        - [x] *   **When** the user selects "Enter manually..." from the dropdown.
+        - [x] *   **Then** the destination input field is cleared for fresh entry.
+        - [x] *   **And** the user can type any valid node ID in the destination field.
+    - [x] *   **Scenario:** Cannot send to own node
+        - [x] *   **Given** the user is connected to a Meshtastic device.
+        - [x] *   **When** the user enters their own node ID as destination.
+        - [x] *   **Then** an error message is shown: "Cannot send to your own node".
+        - [x] *   **And** the transaction is not sent.
+    *   _Implementation notes:_
+    *   _Access nodes via `interface.nodes` dictionary after connection._
+    *   _Each node has: `user.id`, `user.longName`, `user.shortName`, `lastHeard`, `hopsAway`._
+    *   _Filter out own node (the connected device) from the list._
+    *   _Sort nodes by `lastHeard` timestamp (most recent first)._
+    *   _Format: "NodeName (!nodeId)"._
+
+- [x] **Story 11.3: Display Connected Device Name**
+- [x] *   **As a** user,
+- [x] *   **I want** to see the name of my connected Meshtastic device,
+- [x] *   **So that** I can identify which device I'm using at a glance.
+    - [x] *   **Scenario:** Device name shown in connection status
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the device has a configured node name.
+        - [x] *   **Then** the connection status shows "Meshtastic: Connected - NodeName (!nodeId)".
+    - [x] *   **Scenario:** No device name configured
+        - [x] *   **Given** the Meshtastic device is connected.
+        - [x] *   **When** the device has no longName configured.
+        - [x] *   **Then** the connection status shows "Meshtastic: Connected (!nodeId)".
+    *   _Implementation notes:_
+    *   _Get own node info via `get_own_node_name()` helper using `interface.myInfo.my_node_num` and `interface.nodes`._
+    *   _Extract `user.longName` or `user.shortName` as fallback._
+    *   _Update connection label format in `process_result()` for 'connected' result type._
 
 ### 12. UX Improvements
 
-- [ ] **Story 12.1: Settings Panel**
-- [ ] *   **As a** user,
-- [ ] *   **I want** a settings panel to configure device path and RPC options,
-- [ ] *   **So that** I can customize the application without editing config files.
+- [ ] **Story 12.1: Client Settings Panel**
+- [ ] *   **As a** client user,
+- [ ] *   **I want** a settings panel to configure Meshtastic device and default options,
+- [ ] *   **So that** I can customize the client without editing config files.
     - [ ] *   **Scenario:** User opens settings panel
-        - [ ] *   **Given** the GUI is running.
+        - [ ] *   **Given** the client GUI is running.
         - [ ] *   **When** the user clicks the "Settings" button.
-        - [ ] *   **Then** a settings panel opens with configuration options.
+        - [ ] *   **Then** a settings panel opens with client configuration options.
     - [ ] *   **Scenario:** User configures Meshtastic device path
         - [ ] *   **Given** the settings panel is open.
         - [ ] *   **When** the user enters a custom serial port path.
         - [ ] *   **Then** the setting is saved to the config file.
         - [ ] *   **And** the GUI reconnects using the new path.
-    - [ ] *   **Scenario:** User configures Bitcoin RPC settings
+    - [ ] *   **Scenario:** User sets default relay destination
         - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the user enters RPC host, port, user, and password.
-        - [ ] *   **Then** the settings are saved to the config file.
-        - [ ] *   **And** the connection status is updated.
+        - [ ] *   **When** the user enters a default relay node ID (e.g., !abcdef12).
+        - [ ] *   **Then** the setting is saved.
+        - [ ] *   **And** the destination field is pre-filled on next launch.
 
 ### 13. Convenience Features
 
@@ -568,28 +625,6 @@ lora/
         - [ ] *   **When** the user clicks the theme toggle button.
         - [ ] *   **Then** the application switches to dark theme.
         - [ ] *   **And** the original dark color scheme is restored.
-
-- [ ] **Story 14.2: Network Indicator**
-- [ ] *   **As a** user,
-- [ ] *   **I want** to see which Bitcoin network (mainnet/testnet3/testnet4/signet) is configured,
-- [ ] *   **So that** I know where my transactions will be broadcast.
-    - [ ] *   **Scenario:** Network is mainnet
-        - [ ] *   **Given** the Bitcoin RPC is configured for mainnet.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "MAINNET" in orange/red.
-        - [ ] *   **And** the badge is prominently visible to prevent accidental mainnet transactions.
-    - [ ] *   **Scenario:** Network is testnet3
-        - [ ] *   **Given** the Bitcoin RPC is configured for testnet3.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "TESTNET3" in green.
-    - [ ] *   **Scenario:** Network is testnet4
-        - [ ] *   **Given** the Bitcoin RPC is configured for testnet4.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "TESTNET4" in green.
-    - [ ] *   **Scenario:** Network is signet
-        - [ ] *   **Given** the Bitcoin RPC is configured for signet.
-        - [ ] *   **When** the GUI connects to the RPC.
-        - [ ] *   **Then** a badge displays "SIGNET" in blue.
 
 ---
 
