@@ -24,10 +24,13 @@ btcmesh/
 ├── btcmesh_cli.py         # Command-line client script
 ├── btcmesh_gui.py         # Graphical user interface client
 ├── btcmesh_server.py      # Server/Relay script
+├── btcmesh_server_gui.py  # Server GUI for relay operators
 ├── core/                  # Core logic for the server/relay
 │   ├── __init__.py
 │   ├── config_loader.py   # For loading .env and other configurations
+│   ├── gui_common.py      # Shared GUI components and styling
 │   ├── logger_setup.py    # For setting up consistent logging
+│   ├── meshtastic_utils.py # Meshtastic device utilities
 │   ├── transaction_parser.py # For decoding raw Bitcoin transactions (Planned)
 │   ├── rpc_client.py      # For interacting with Bitcoin RPC
 │   └── reassembler.py     # For reassembling chunked messages
@@ -132,43 +135,46 @@ Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `b
 
 Use `python btcmesh_cli.py --help` for more options, such as `--dry-run` to simulate sending without actually transmitting over LoRa.
 
-## Running the GUI (`btcmesh_gui.py`)
+## Running the Client GUI (`btcmesh_gui.py`)
 
-The GUI provides a user-friendly graphical interface for sending Bitcoin transactions over the Meshtastic LoRa mesh network. It is just a wrapper around the CLI with visual feedback and easy-to-use controls.
+The GUI provides a user-friendly graphical interface for sending Bitcoin transactions over the Meshtastic LoRa mesh network. It wraps the CLI with visual feedback and easy-to-use controls.
 
-### Starting the GUI
+### Starting the Client GUI
 
 ```bash
 python btcmesh_gui.py
 ```
 
-### GUI Features
+### Client GUI Features
 
-- **Connection Status**: Displays Meshtastic device connection status with color-coded indicators (green = connected, red = failed)
+- **Device Selection**: Dropdown to select from multiple connected Meshtastic devices with scan/refresh capability
+- **Connection Status**: Displays connected device name and node ID with color-coded indicators
+- **Known Nodes Dropdown**: Select destination from previously seen mesh nodes
 - **Transaction Input**: Text fields for destination node ID and raw transaction hex
-- **Dry Run Toggle**: Test your transaction without actually broadcasting
+- **Dry Run Toggle**: Test your transaction without actually broadcasting (ON/OFF indicator)
 - **Real-time Status Log**: Color-coded scrollable log showing transaction progress
-- **Success Popup**: Confirmation popup with TXID when transaction is successfully broadcast
+- **Success Popup**: Styled confirmation popup with TXID and copy-to-clipboard button
 - **Abort Button**: Cancel a transaction in progress
 - **Load Example**: Quick-fill example data for testing
+- **Disabled Controls During Send**: Input fields are locked while transaction is in progress
 
-### GUI Layout
+### Client GUI Layout
 
-<img src="project/images/gui_main.png" width="500" alt="BTCMesh GUI Main Window">
+<img src="project/images/gui_main.png" width="500" alt="BTCMesh Client GUI Main Window">
 
-*Main window showing connection status, input fields, and status log*
+*Main window showing device selection, connection status, destination dropdown, and input fields*
 
-<img src="project/images/gui_send.png" width="500" alt="BTCMesh GUI Main Window sending transaction">
+<img src="project/images/gui_send.png" width="500" alt="BTCMesh Client GUI sending transaction">
 
-*Main window in action trying to send a transaction in chunks to NodeID*
+*Main window in action sending a transaction in chunks to the relay server*
 
 ### Usage Instructions
 
-1. **Connect your Meshtastic device** - The GUI will automatically attempt to connect on startup. The connection status indicator shows the result.
+1. **Select your Meshtastic device** - Use the device dropdown to select from available devices. Click "Scan" to refresh the list.
 
-2. **Enter destination** - Type the relay server's Meshtastic node ID (e.g., `!abcdef12`) in the Destination field.
+2. **Select or enter destination** - Choose a known node from the dropdown or manually type the relay server's Meshtastic node ID (e.g., `!abcdef12`).
 
-3. **Enter transaction hex** - Paste your raw Bitcoin transaction hex string in the Transaction Hex field.
+3. **Enter transaction hex** - Paste your raw Bitcoin transaction hex string or use the "Paste" button to paste from clipboard.
 
 4. **Toggle Dry Run** (optional) - Enable dry run mode to test without actually transmitting over LoRa.
 
@@ -179,7 +185,52 @@ python btcmesh_gui.py
    - Orange messages: Warnings
    - Red messages: Errors
 
-7. **Receive confirmation** - On successful broadcast, a popup displays the transaction ID (TXID).
+7. **Receive confirmation** - On successful broadcast, a styled popup displays the transaction ID (TXID) with a copy button.
+
+## Running the Server GUI (`btcmesh_server_gui.py`)
+
+The Server GUI provides a graphical interface for relay operators to run and monitor the BTCMesh relay server.
+
+### Starting the Server GUI
+
+```bash
+python btcmesh_server_gui.py
+```
+
+### Server GUI Features
+
+- **Start/Stop Controls**: One-click buttons to start and stop the relay server
+- **Network Badge**: Displays the connected Bitcoin network (MAINNET/TESTNET3/TESTNET4/SIGNET) with color-coded badge
+- **Bitcoin RPC Status**: Shows connection status to Bitcoin Core node with host information and Tor indicator
+- **Meshtastic Status**: Shows device connection status with node ID and device path
+- **Activity Log**: Real-time color-coded log of all server events
+- **Clear Log**: Button to clear the activity log
+
+### Server GUI Layout
+
+<img src="project/images/server_gui_main.png" width="500" alt="BTCMesh Server GUI Main Window">
+
+*Server GUI showing status indicators for Network, Bitcoin RPC, and Meshtastic connections*
+
+The Server GUI displays:
+- **Network**: Current Bitcoin network (orange for mainnet, blue for testnet, purple for signet)
+- **Bitcoin RPC**: Connection status with host:port (or `*.onion [Tor]` for Tor connections)
+- **Meshtastic**: Device connection status with node ID and device path
+
+### Server Usage Instructions
+
+1. **Configure your `.env` file** - Ensure Bitcoin RPC credentials and Meshtastic settings are configured.
+
+2. **Click Start Server** - The server will initialize connections to Meshtastic and Bitcoin RPC.
+
+3. **Monitor status indicators**:
+   - Network badge shows which Bitcoin network you're connected to
+   - Green indicators show successful connections
+   - Red indicators show connection failures
+
+4. **Watch the activity log** - All server events appear with color-coded messages.
+
+5. **Click Stop Server** - Gracefully shuts down the relay server.
 
 ## Tor Setup
 
