@@ -61,10 +61,10 @@ from core.meshtastic_utils import (
     format_node_display,
 )
 
+
 # Import btcmesh_cli functions
 from btcmesh_cli import (
     is_valid_hex,
-    initialize_meshtastic_interface_cli,
     cli_main,
     EXAMPLE_RAW_TX,
 )
@@ -141,13 +141,21 @@ def process_result(result: tuple) -> ResultAction:
     elif result_type == 'connection_failed':
         action.connection_text = STATE_CONNECTION_FAILED.text
         action.connection_color = STATE_CONNECTION_FAILED.color
-        action.log_messages.append(("Failed to connect to Meshtastic device", COLOR_ERROR))
+        # Use specific error message if provided, otherwise generic message
+        error_msg = result[1] if len(result) > 1 and result[1] else "Failed to connect to Meshtastic device"
+        action.log_messages.append((error_msg, COLOR_ERROR))
 
     elif result_type == 'connection_error':
         error = result[1]
         action.connection_text = STATE_CONNECTION_ERROR.text
         action.connection_color = STATE_CONNECTION_ERROR.color
         action.log_messages.append((f"Connection error: {error}", COLOR_ERROR))
+
+    elif result_type == 'connection_initializing':
+        # Device is still initializing - show informational message
+        action.log_messages.append(("Device is initializing, please wait...", COLOR_WARNING))
+        action.connection_text = 'Meshtastic: Initializing...'
+        action.connection_color = COLOR_WARNING
 
     elif result_type == 'log':
         msg = result[1]
@@ -268,6 +276,7 @@ class BTCMeshGUI(BoxLayout):
         self.send_thread = None
         self.result_queue = queue.Queue()
         self.abort_requested = False
+        self._connection_monitor = None  # Track the connection state monitor
 
         self._build_ui()
 
@@ -449,28 +458,70 @@ class BTCMeshGUI(BoxLayout):
 
         def init_thread():
             try:
-                iface = initialize_meshtastic_interface_cli(port=port)
-                if iface:
-                    node_id = "Unknown"
-                    if hasattr(iface, 'myInfo') and iface.myInfo:
-                        node_id = f"!{iface.myInfo.my_node_num:x}"
-                    node_name = get_own_node_name(iface)
-                    self.result_queue.put(('connected', iface, node_id, node_name))
-                else:
-                    self.result_queue.put(('connection_failed', None, None))
+                import meshtastic.serial_interface
+
+                iface = (
+                    meshtastic.serial_interface.SerialInterface(devPath=port)
+                    if port
+                    else meshtastic.serial_interface.SerialInterface()
+                )
+
+                # Validate we got valid device info
+                node_id = None
+                if hasattr(iface, 'myInfo') and iface.myInfo and hasattr(iface.myInfo, 'my_node_num'):
+                    node_id = f"!{iface.myInfo.my_node_num:x}"
+
+                if not node_id or not node_id.startswith('!'):
+                    # Interface created but device info invalid - likely no device connected
+                    try:
+                        iface.close()
+                    except Exception:
+                        pass
+                    self.result_queue.put(('connection_failed', "Could not retrieve device info. Ensure device is connected.", None))
+                    return
+
+                node_name = get_own_node_name(iface)
+                self.result_queue.put(('connected', iface, node_id, node_name))
+
+            except ImportError:
+                self.result_queue.put(('connection_error', "Meshtastic library not installed", None))
             except Exception as e:
-                self.result_queue.put(('connection_error', str(e), None))
+                error_msg = str(e)
+                # Check if this is a transient error from the Meshtastic library still initializing
+                is_transient = any(x in error_msg.lower() for x in [
+                    'resource temporarily unavailable',
+                    'busy',
+                ])
+                if is_transient:
+                    # Show as info message - device is still initializing
+                    self.result_queue.put(('connection_initializing', error_msg, None))
+                else:
+                    # Provide more helpful error messages for common cases
+                    if "No Meshtastic" in error_msg or "No serial" in error_msg:
+                        error_msg = "No Meshtastic device found"
+                    elif "Permission denied" in error_msg:
+                        error_msg = f"Permission denied accessing {port or 'device'}"
+                    elif "could not open port" in error_msg.lower():
+                        error_msg = f"Could not open port {port or '(auto-detect)'}"
+                    self.result_queue.put(('connection_error', error_msg, None))
 
         threading.Thread(target=init_thread, daemon=True).start()
 
     def _disconnect_device(self):
         """Disconnect current Meshtastic interface and reset connection status."""
         if self.iface:
-            try:
-                self.iface.close()
-            except Exception:
-                pass
+            # Close interface in background thread to avoid blocking main thread
+            # (iface.close() can block if device is in a bad state)
+            iface_to_close = self.iface
             self.iface = None
+
+            def close_thread():
+                try:
+                    iface_to_close.close()
+                except Exception:
+                    pass
+
+            threading.Thread(target=close_thread, daemon=True).start()
         self.connection_label.text = STATE_DISCONNECTED.text
         self.connection_label.color = STATE_DISCONNECTED.color
         # Clear known nodes
@@ -579,12 +630,14 @@ class BTCMeshGUI(BoxLayout):
         # Store interface if provided
         if action.store_iface is not None:
             self.iface = action.store_iface
-            # Fetch known nodes when connected
-            self._update_known_nodes()
 
-        # Add log messages
+        # Add log messages first (before _update_known_nodes which also logs)
         for msg, color in action.log_messages:
             self.status_log.add_message(msg, color)
+
+        # Fetch known nodes AFTER connection success message is logged
+        if action.store_iface is not None:
+            self._update_known_nodes()
 
         # Handle state changes
         if action.stop_sending:
@@ -881,7 +934,7 @@ class BTCMeshApp(App):
         if hasattr(self.root, 'iface') and self.root.iface:
             try:
                 self.root.iface.close()
-            except:
+            except Exception:
                 pass
 
 
