@@ -675,72 +675,71 @@ lora/
 
 ### 16. Connection Status Displays
 
-- [ ] **Story 16.1: Display Meshtastic Connection Status**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see the Meshtastic device connection status,
-- [ ] *   **So that** I know if the relay is ready to receive transactions.
-    - [ ] *   **Scenario:** Meshtastic connected successfully
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** Meshtastic connection succeeds.
-        - [ ] *   **Then** a status indicator shows "Meshtastic: Connected" with green icon.
-        - [ ] *   **And** the connected device path is displayed (e.g., "/dev/ttyUSB0").
-        - [ ] *   **And** the server's node ID is displayed (e.g., "!abcdef12").
-    - [ ] *   **Scenario:** Meshtastic connection failed
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** Meshtastic connection fails.
-        - [ ] *   **Then** a status indicator shows "Meshtastic: Disconnected" with red icon.
-        - [ ] *   **And** an error message is displayed.
+- [x] **Story 16.1: Display Meshtastic Connection Status**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see the Meshtastic device connection status,
+- [x] *   **So that** I know if the relay is ready to receive transactions.
+    - [x] *   **Scenario:** Meshtastic connected successfully
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** Meshtastic connection succeeds.
+        - [x] *   **Then** a status indicator shows "Meshtastic: Connected" with green icon.
+        - [x] *   **And** the connected device path is displayed (e.g., "/dev/ttyUSB0").
+        - [x] *   **And** the server's node ID is displayed (e.g., "!abcdef12").
+    - [x] *   **Scenario:** Meshtastic connection failed
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** Meshtastic connection fails.
+        - [x] *   **Then** a status indicator shows "Meshtastic: Disconnected" with red icon.
+        - [x] *   **And** an error message is displayed.
     - [ ] *   **Scenario:** Meshtastic device selection
         - [ ] *   **Given** multiple Meshtastic devices are connected.
         - [ ] *   **When** the server settings allow device selection.
         - [ ] *   **Then** the operator can choose which device to use.
-    *   _Note: Reuse device scanning logic from client GUI (Story 11.1)._
+    *   _Note: Reuse device scanning logic from client GUI (Story 11.1). Device selection deferred to Story 18.2 (Meshtastic Device Settings)._
 
-- [ ] **Story 16.2: Display Bitcoin RPC Connection Status**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see the Bitcoin RPC node connection status,
-- [ ] *   **So that** I know if the relay can broadcast transactions.
-    - [ ] *   **Scenario:** Bitcoin RPC connected successfully
-        - [ ] *   **Given** the server starts with valid RPC configuration.
-        - [ ] *   **When** RPC connection succeeds.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Connected" with green icon.
-        - [ ] *   **And** the RPC host is displayed (masked if .onion for privacy).
-    - [ ] *   **Scenario:** Bitcoin RPC connection failed
-        - [ ] *   **Given** the server starts.
-        - [ ] *   **When** RPC connection fails.
-        - [ ] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" with red icon.
-        - [ ] *   **And** an error message is displayed (auth failed, unreachable, etc.).
-    - [ ] *   **Scenario:** Bitcoin RPC using Tor
-        - [ ] *   **Given** the RPC host is a .onion address.
-        - [ ] *   **When** connection is established via Tor.
-        - [ ] *   **Then** a "Tor" badge is displayed next to the RPC status.
+- [x] **Story 16.2: Display Bitcoin RPC Connection Status**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see the Bitcoin RPC node connection status,
+- [x] *   **So that** I know if the relay can broadcast transactions.
+    - [x] *   **Scenario:** Bitcoin RPC connected successfully
+        - [x] *   **Given** the server starts with valid RPC configuration.
+        - [x] *   **When** RPC connection succeeds.
+        - [x] *   **Then** a status indicator shows "Bitcoin RPC: Connected" with green icon.
+        - [x] *   **And** the RPC host is displayed (masked if .onion for privacy).
+    - [x] *   **Scenario:** Bitcoin RPC connection failed
+        - [x] *   **Given** the server starts.
+        - [x] *   **When** RPC connection fails.
+        - [x] *   **Then** a status indicator shows "Bitcoin RPC: Disconnected" with red icon.
+        - [x] *   **And** an error message is displayed (auth failed, unreachable, etc.).
+    - [x] *   **Scenario:** Bitcoin RPC using Tor
+        - [x] *   **Given** the RPC host is a .onion address.
+        - [x] *   **When** connection is established via Tor.
+        - [x] *   **Then** a "Tor" badge is displayed next to the RPC status.
+    *   _Note: Implemented by enhancing RPC connection log message in btcmesh_server.py to include host and Tor info. GUI parses log and displays "Bitcoin RPC: Connected (host:port)" or "Bitcoin RPC: Connected (*.onion) [Tor]"._
 
-- [ ] **Story 16.3: Display Network Badge (Mainnet/Testnet)**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see which Bitcoin network the relay is connected to,
-- [ ] *   **So that** I can confirm I'm operating on the intended network.
-    - [ ] *   **Scenario:** Connected to mainnet
-        - [ ] *   **Given** the RPC node is running mainnet.
-        - [ ] *   **When** the server queries `getblockchaininfo`.
-        - [ ] *   **Then** a "MAINNET" badge is displayed prominently.
-        - [ ] *   **And** the badge has an orange/bitcoin color.
-    - [ ] *   **Scenario:** Connected to testnet3
-        - [ ] *   **Given** the RPC node is running testnet3.
-        - [ ] *   **When** the server queries network info.
-        - [ ] *   **Then** a "TESTNET3" badge is displayed.
-        - [ ] *   **And** the badge has a distinct color (e.g., blue).
-    - [ ] *   **Scenario:** Connected to testnet4
-        - [ ] *   **Given** the RPC node is running testnet4.
-        - [ ] *   **When** the server queries network info.
-        - [ ] *   **Then** a "TESTNET4" badge is displayed.
-    - [ ] *   **Scenario:** Connected to signet
-        - [ ] *   **Given** the RPC node is running signet.
-        - [ ] *   **When** the server queries network info.
-        - [ ] *   **Then** a "SIGNET" badge is displayed.
-        - [ ] *   **And** the badge has a distinct color (e.g., purple).
-    *   _Implementation notes:_
-    *   _Use `getblockchaininfo` RPC call to retrieve `chain` field._
-    *   _Map chain values: "main" → MAINNET, "test" → TESTNET3, "testnet4" → TESTNET4, "signet" → SIGNET._
+- [x] **Story 16.3: Display Network Badge (Mainnet/Testnet)**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see which Bitcoin network the relay is connected to,
+- [x] *   **So that** I can confirm I'm operating on the intended network.
+    - [x] *   **Scenario:** Connected to mainnet
+        - [x] *   **Given** the RPC node is running mainnet.
+        - [x] *   **When** the server queries `getblockchaininfo`.
+        - [x] *   **Then** a "MAINNET" badge is displayed prominently.
+        - [x] *   **And** the badge has an orange/bitcoin color.
+    - [x] *   **Scenario:** Connected to testnet3
+        - [x] *   **Given** the RPC node is running testnet3.
+        - [x] *   **When** the server queries network info.
+        - [x] *   **Then** a "TESTNET3" badge is displayed.
+        - [x] *   **And** the badge has a distinct color (e.g., blue).
+    - [x] *   **Scenario:** Connected to testnet4
+        - [x] *   **Given** the RPC node is running testnet4.
+        - [x] *   **When** the server queries network info.
+        - [x] *   **Then** a "TESTNET4" badge is displayed.
+    - [x] *   **Scenario:** Connected to signet
+        - [x] *   **Given** the RPC node is running signet.
+        - [x] *   **When** the server queries network info.
+        - [x] *   **Then** a "SIGNET" badge is displayed.
+        - [x] *   **And** the badge has a distinct color (e.g., purple).
+    *   _Note: Implemented by storing chain from getblockchaininfo in BitcoinRPCClient.chain, including it in RPC log message, parsing in GUI, and displaying "Network: MAINNET/TESTNET3/TESTNET4/SIGNET" with color-coded badge (orange/blue/blue/purple)._
 
 ### 17. Activity Monitoring
 

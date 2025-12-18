@@ -166,6 +166,24 @@ class TestServerGUIStructureStory151(unittest.TestCase):
 
         self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_WARNING'))
 
+    def test_color_mainnet_exists(self):
+        """Given server GUI module, Then COLOR_MAINNET should exist for mainnet badge."""
+        import btcmesh_server_gui
+
+        self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_MAINNET'))
+
+    def test_color_testnet_exists(self):
+        """Given server GUI module, Then COLOR_TESTNET should exist for testnet badge."""
+        import btcmesh_server_gui
+
+        self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_TESTNET'))
+
+    def test_color_signet_exists(self):
+        """Given server GUI module, Then COLOR_SIGNET should exist for signet badge."""
+        import btcmesh_server_gui
+
+        self.assertTrue(hasattr(btcmesh_server_gui, 'COLOR_SIGNET'))
+
     def test_btcmesh_server_app_class_exists(self):
         """Given server GUI module, Then BTCMeshServerApp class should exist."""
         import btcmesh_server_gui
@@ -416,12 +434,34 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertFalse(gui.start_btn.disabled)
 
     def test_handle_result_rpc_connected_updates_label(self):
-        """Given 'rpc_connected' result, Then RPC label should show connected state."""
+        """Given 'rpc_connected' result with host, Then RPC label should show connected with host."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('rpc_connected', None))
+            gui._handle_result(('rpc_connected', {'host': 'localhost:8332', 'is_tor': False}))
+        self.assertIn('Connected', gui.rpc_label.text)
+        self.assertIn('localhost:8332', gui.rpc_label.text)
+        self.assertNotIn('[Tor]', gui.rpc_label.text)
+
+    def test_handle_result_rpc_connected_with_tor(self):
+        """Given 'rpc_connected' result with Tor, Then RPC label should show Tor badge."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': '*.onion', 'is_tor': True}))
+        self.assertIn('Connected', gui.rpc_label.text)
+        self.assertIn('*.onion', gui.rpc_label.text)
+        self.assertIn('[Tor]', gui.rpc_label.text)
+
+    def test_handle_result_rpc_connected_without_host(self):
+        """Given 'rpc_connected' result without host, Then RPC label shows default text."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': None, 'is_tor': False}))
         self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_CONNECTED.text)
 
     def test_handle_result_rpc_failed_updates_label(self):
@@ -434,14 +474,26 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertEqual(gui.rpc_label.text, btcmesh_server_gui.STATE_RPC_FAILED.text)
 
     def test_handle_result_meshtastic_connected_updates_label(self):
-        """Given 'meshtastic_connected' result, Then Meshtastic label should show connected."""
+        """Given 'meshtastic_connected' result with device, Then Meshtastic label should show connected with device."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('meshtastic_connected', '!abcdef12'))
+            gui._handle_result(('meshtastic_connected', {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'}))
         self.assertIn('Connected', gui.meshtastic_label.text)
         self.assertIn('!abcdef12', gui.meshtastic_label.text)
+        self.assertIn('/dev/ttyUSB0', gui.meshtastic_label.text)
+
+    def test_handle_result_meshtastic_connected_without_device(self):
+        """Given 'meshtastic_connected' result without device, Then label shows connected without device path."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('meshtastic_connected', {'node_id': '!abcdef12', 'device': None}))
+        self.assertIn('Connected', gui.meshtastic_label.text)
+        self.assertIn('!abcdef12', gui.meshtastic_label.text)
+        self.assertNotIn(') on ', gui.meshtastic_label.text)  # No device path syntax
 
     def test_handle_result_meshtastic_failed_updates_label(self):
         """Given 'meshtastic_failed' result, Then Meshtastic label should show failed."""
@@ -462,6 +514,68 @@ class TestServerResultHandlingStory152(unittest.TestCase):
             gui._handle_result(('meshtastic_failed', 'No device found'))
         self.assertFalse(gui.start_btn.disabled)
 
+    def test_handle_result_rpc_connected_shows_mainnet_badge(self):
+        """Given 'rpc_connected' result with chain='main', Then network label shows MAINNET."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': 'localhost:8332', 'is_tor': False, 'chain': 'main'}))
+        self.assertIn('MAINNET', gui.network_label.text)
+        self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_MAINNET)
+
+    def test_handle_result_rpc_connected_shows_testnet3_badge(self):
+        """Given 'rpc_connected' result with chain='test', Then network label shows TESTNET3."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': 'localhost:18332', 'is_tor': False, 'chain': 'test'}))
+        self.assertIn('TESTNET3', gui.network_label.text)
+        self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_TESTNET)
+
+    def test_handle_result_rpc_connected_shows_testnet4_badge(self):
+        """Given 'rpc_connected' result with chain='testnet4', Then network label shows TESTNET4."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': 'localhost:48332', 'is_tor': False, 'chain': 'testnet4'}))
+        self.assertIn('TESTNET4', gui.network_label.text)
+        self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_TESTNET)
+
+    def test_handle_result_rpc_connected_shows_signet_badge(self):
+        """Given 'rpc_connected' result with chain='signet', Then network label shows SIGNET."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('rpc_connected', {'host': 'localhost:38332', 'is_tor': False, 'chain': 'signet'}))
+        self.assertIn('SIGNET', gui.network_label.text)
+        self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_SIGNET)
+
+    def test_handle_result_server_stopped_clears_network_badge(self):
+        """Given 'server_stopped' result, Then network label should be cleared."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # First set a network badge
+            gui.network_label.text = 'Network: MAINNET'
+            gui.network_label.color = btcmesh_server_gui.COLOR_MAINNET
+            # Then simulate server stopped
+            gui._handle_result(('server_stopped', None))
+        self.assertEqual(gui.network_label.text, '')
+        self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_DISCONNECTED)
+
+    def test_server_gui_has_network_label(self):
+        """Given server GUI, Then it should have a network_label attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'network_label'))
+
 
 class TestServerLogParsingStory152(unittest.TestCase):
     """Tests for log parsing in Story 15.2."""
@@ -479,13 +593,34 @@ class TestServerLogParsingStory152(unittest.TestCase):
         self.assertTrue(callable(btcmesh_server_gui.parse_log_for_status))
 
     def test_parse_log_detects_rpc_connected(self):
-        """Given RPC connected log message, Then parse_log_for_status returns rpc_connected."""
+        """Given RPC connected log message with host and chain, Then parse_log_for_status returns rpc_connected with dict."""
         import btcmesh_server_gui
 
         result = btcmesh_server_gui.parse_log_for_status(
-            "Connected to Bitcoin Core RPC node successfully."
+            "Connected to Bitcoin Core RPC node successfully. Host: localhost:8332, Tor: False, Chain: main"
         )
-        self.assertEqual(result, ('rpc_connected', None))
+        self.assertEqual(result[0], 'rpc_connected')
+        self.assertEqual(result[1], {'host': 'localhost:8332', 'is_tor': False, 'chain': 'main'})
+
+    def test_parse_log_detects_rpc_connected_with_tor(self):
+        """Given RPC connected log message with Tor, Then parse_log_for_status returns is_tor=True."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Connected to Bitcoin Core RPC node successfully. Host: *.onion, Tor: True, Chain: signet"
+        )
+        self.assertEqual(result[0], 'rpc_connected')
+        self.assertEqual(result[1], {'host': '*.onion', 'is_tor': True, 'chain': 'signet'})
+
+    def test_parse_log_detects_rpc_connected_testnet4(self):
+        """Given RPC connected log message with testnet4, Then parse_log_for_status extracts chain correctly."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Connected to Bitcoin Core RPC node successfully. Host: localhost:48332, Tor: False, Chain: testnet4"
+        )
+        self.assertEqual(result[0], 'rpc_connected')
+        self.assertEqual(result[1]['chain'], 'testnet4')
 
     def test_parse_log_detects_rpc_failed(self):
         """Given RPC failed log message, Then parse_log_for_status returns rpc_failed."""
@@ -498,14 +633,14 @@ class TestServerLogParsingStory152(unittest.TestCase):
         self.assertIn('Connection refused', result[1])
 
     def test_parse_log_detects_meshtastic_connected(self):
-        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected."""
+        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected with dict."""
         import btcmesh_server_gui
 
         result = btcmesh_server_gui.parse_log_for_status(
             "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: !abcdef12"
         )
         self.assertEqual(result[0], 'meshtastic_connected')
-        self.assertEqual(result[1], '!abcdef12')
+        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'})
 
     def test_parse_log_detects_meshtastic_failed(self):
         """Given Meshtastic failed log message, Then parse_log_for_status returns meshtastic_failed."""
@@ -515,6 +650,48 @@ class TestServerLogParsingStory152(unittest.TestCase):
             "Failed to initialize Meshtastic interface. Exiting."
         )
         self.assertEqual(result[0], 'meshtastic_failed')
+
+    def test_parse_log_meshtastic_invalid_device_none_string(self):
+        """Given Meshtastic log with Device='None', Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: None, My Node Num: Unknown Node Num"
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "Invalid device info")
+
+    def test_parse_log_meshtastic_invalid_device_question_mark(self):
+        """Given Meshtastic log with Device='?', Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: ?, My Node Num: !abcdef12"
+        )
+        # Still connected because node_id is valid, just device is None
+        self.assertEqual(result[0], 'meshtastic_connected')
+        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': None})
+
+    def test_parse_log_meshtastic_invalid_node_id(self):
+        """Given Meshtastic log with invalid node ID, Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: Unknown Node Num"
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "Invalid device info")
+
+    def test_parse_log_meshtastic_no_device_connected_error(self):
+        """Given server error about no device connected, Then parse_log_for_status returns meshtastic_failed."""
+        import btcmesh_server_gui
+
+        result = btcmesh_server_gui.parse_log_for_status(
+            "Meshtastic interface created but could not retrieve device info. "
+            "This usually means no Meshtastic device is connected."
+        )
+        self.assertEqual(result[0], 'meshtastic_failed')
+        self.assertEqual(result[1], "No device connected")
 
     def test_parse_log_detects_server_started(self):
         """Given server started log message, Then parse_log_for_status returns server_started."""

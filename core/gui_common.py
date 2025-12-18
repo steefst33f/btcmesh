@@ -34,6 +34,11 @@ COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')   # Lighter background
 COLOR_SECUNDARY = get_color_from_hex("#FFFFFF")  # White text
 COLOR_DISCONNECTED = (0.7, 0.7, 0.7, 1)          # Gray for disconnected
 
+# Network badge colors
+COLOR_MAINNET = get_color_from_hex('#FF6B00')    # Bitcoin orange for mainnet
+COLOR_TESTNET = get_color_from_hex('#2196F3')    # Blue for testnet
+COLOR_SIGNET = get_color_from_hex('#9C27B0')     # Purple for signet
+
 
 # =============================================================================
 # Connection State Dataclass
@@ -326,3 +331,62 @@ def create_refresh_button(text: str, width: int = 90) -> Button:
         background_normal='',
         font_size='14sp',
     )
+
+
+def create_status_row(label_text: str, initial_value: str = '',
+                      initial_color: Tuple = None,
+                      height: int = 30, bold_value: bool = False) -> Tuple[BoxLayout, Label]:
+    """Create a status row with a description label and value label.
+
+    Creates a horizontal layout with an auto-sized description label on the left
+    and a flexible-width value label on the right. The description label
+    automatically sizes to fit its text content. The value label can be updated
+    independently to show status changes.
+
+    Args:
+        label_text: Text for the description label (e.g., 'Meshtastic:')
+        initial_value: Initial text for the value label. Defaults to empty.
+        initial_color: Initial color for the value label. Defaults to COLOR_SECUNDARY.
+        height: Height of the row in pixels. Defaults to 30.
+        bold_value: Whether the value label should be bold. Defaults to False.
+
+    Returns:
+        Tuple of (container BoxLayout, value Label). The value Label can be used
+        to update the status text and color.
+
+    Example:
+        row, value_label = create_status_row('Meshtastic:', 'Not connected')
+        status_section.add_widget(row)
+        # Later, update the status:
+        value_label.text = 'Connected (!abcdef12)'
+        value_label.color = COLOR_SUCCESS
+    """
+    if initial_color is None:
+        initial_color = COLOR_SECUNDARY
+
+    row = BoxLayout(orientation='horizontal', size_hint_y=None, height=height)
+
+    # Description label (auto-sized to fit text)
+    desc_label = Label(
+        text=label_text,
+        size_hint_x=None,
+        halign='left',
+        valign='middle',
+        color=COLOR_SECUNDARY,
+    )
+    # Bind width to texture size so label auto-fits its text content (+ padding for spacing)
+    desc_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 25))
+    row.add_widget(desc_label)
+
+    # Value label (flexible width)
+    value_label = Label(
+        text=initial_value,
+        halign='left',
+        valign='middle',
+        color=initial_color,
+        bold=bold_value,
+    )
+    value_label.bind(size=value_label.setter('text_size'))
+    row.add_widget(value_label)
+
+    return row, value_label

@@ -616,7 +616,7 @@ def initialize_meshtastic_interface(
                 exc_info=True,
             )
         return None
-    node_num_display = "Unknown Node Num"
+    node_num_display = None
     if (
         hasattr(iface, "myInfo")
         and iface.myInfo
@@ -627,9 +627,26 @@ def initialize_meshtastic_interface(
             node_num_display = formatted_node_id
         elif iface.myInfo.my_node_num is not None:
             node_num_display = str(iface.myInfo.my_node_num)
-    device_path_str = str(getattr(iface, "devicePath", getattr(iface, "devPath", "?")))
+
+    # Get device path, filtering out invalid values
+    device_path_raw = getattr(iface, "devicePath", getattr(iface, "devPath", None))
+    device_path_str = str(device_path_raw) if device_path_raw not in (None, "?", "None") else None
+
+    # Validate that we have valid device info before declaring success
+    if not node_num_display or not node_num_display.startswith("!"):
+        server_logger.error(
+            "Meshtastic interface created but could not retrieve device info. "
+            "This usually means no Meshtastic device is connected. "
+            "Please ensure your device is plugged in and recognized by the system."
+        )
+        try:
+            iface.close()
+        except Exception:
+            pass
+        return None
+
     server_logger.info(
-        f"Meshtastic interface initialized successfully. Device: {device_path_str}, My Node Num: {node_num_display}"
+        f"Meshtastic interface initialized successfully. Device: {device_path_str or '?'}, My Node Num: {node_num_display}"
     )
     return iface
 
@@ -665,8 +682,14 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
             global bitcoin_rpc
 
             bitcoin_rpc = BitcoinRPCClient(rpc_config)
-            server_logger.info("Connected to Bitcoin Core RPC node successfully.")
-            server_logger.info(f"rpc: {bitcoin_rpc}.")
+            # Build host display string for GUI status (mask .onion for privacy)
+            host = rpc_config.get('host', 'unknown')
+            port = rpc_config.get('port', '')
+            is_tor = host.endswith('.onion')
+            host_display = "*.onion" if is_tor else f"{host}:{port}"
+            server_logger.info(
+                f"Connected to Bitcoin Core RPC node successfully. Host: {host_display}, Tor: {is_tor}, Chain: {bitcoin_rpc.chain}"
+            )
         except Exception as e:
             bitcoin_rpc = None
             server_logger.error(

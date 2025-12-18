@@ -347,6 +347,19 @@ class TestConnectionStatusStory101(unittest.TestCase):
         self.assertEqual(action.connection_color, COLOR_ERROR)
         self.assertIn('Device not found', action.log_messages[0][0])
 
+    def test_connection_initializing_result(self):
+        """Given 'connection_initializing' result, Then shows initializing message."""
+        result = ('connection_initializing', 'Resource temporarily unavailable', None)
+
+        action = process_result(result)
+
+        # Should show initializing message (not error)
+        self.assertIn('initializing', action.log_messages[0][0].lower())
+        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+        # Should update connection status
+        self.assertEqual(action.connection_text, 'Meshtastic: Initializing...')
+        self.assertEqual(action.connection_color, COLOR_WARNING)
+
 
 # =============================================================================
 # Story 10.2: Implement Scrollable Status Log
