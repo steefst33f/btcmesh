@@ -651,13 +651,16 @@ def initialize_meshtastic_interface(
     return iface
 
 
-def main(stop_event: Optional[threading.Event] = None) -> None:
+def main(stop_event: Optional[threading.Event] = None,
+         rpc_config: Optional[Dict[str, Any]] = None) -> None:
     """
     Main function for the BTC Mesh Server.
 
     Args:
         stop_event: Optional threading.Event to signal server shutdown.
                     If None, runs until KeyboardInterrupt.
+        rpc_config: Optional dict with RPC connection settings (host, port, user, password).
+                    If None, loads from environment/.env file.
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -678,7 +681,9 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
 
         # --- Story 4.2: Connect to Bitcoin RPC ---
         try:
-            rpc_config = load_bitcoin_rpc_config()
+            # Use injected config if provided, otherwise load from environment
+            if rpc_config is None:
+                rpc_config = load_bitcoin_rpc_config()
             global bitcoin_rpc
 
             bitcoin_rpc = BitcoinRPCClient(rpc_config)

@@ -16,6 +16,7 @@ from kivy.graphics import Color, Rectangle
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.utils import get_color_from_hex
@@ -333,6 +334,26 @@ def create_refresh_button(text: str, width: int = 90) -> Button:
     )
 
 
+def create_toggle_button(text: str, width: int = 60) -> Button:
+    """Create a styled toggle button (e.g., Show/Hide for password fields).
+
+    Args:
+        text: Initial button text.
+        width: Button width in pixels. Defaults to 60.
+
+    Returns:
+        A styled Button widget with fixed width.
+    """
+    return Button(
+        text=text,
+        size_hint_x=None,
+        width=width,
+        background_color=COLOR_BG_LIGHT,
+        background_normal='',
+        font_size='12sp',
+    )
+
+
 def create_status_row(label_text: str, initial_value: str = '',
                       initial_color: Tuple = None,
                       height: int = 30, bold_value: bool = False) -> Tuple[BoxLayout, Label]:
@@ -390,3 +411,64 @@ def create_status_row(label_text: str, initial_value: str = '',
     row.add_widget(value_label)
 
     return row, value_label
+
+
+def create_input_row(label_text: str, initial_value: str = '',
+                    hint_text: str = '', height: int = 40,
+                    password: bool = False, input_filter: str = None,
+                    input_size_hint_x: float = 0.7) -> Tuple[BoxLayout, TextInput]:
+    """Create an input row with a description label and text input field.
+
+    Creates a horizontal layout with an auto-sized description label on the left
+    and a styled TextInput on the right. The description label automatically
+    sizes to fit its text content using texture_size binding.
+
+    Args:
+        label_text: Text for the description label (e.g., 'Host:', 'Password:')
+        initial_value: Initial text value for the input. Defaults to empty.
+        hint_text: Placeholder hint text for the input. Defaults to empty.
+        height: Height of the row in pixels. Defaults to 40.
+        password: Whether to mask input as password. Defaults to False.
+        input_filter: Optional input filter (e.g., 'int' for numbers only).
+        input_size_hint_x: Proportional width for the input field. Defaults to 0.7.
+
+    Returns:
+        Tuple of (container BoxLayout, TextInput). The TextInput can be used
+        to access or modify the input value.
+
+    Example:
+        row, host_input = create_input_row('Host:', '127.0.0.1', hint_text='IP address')
+        settings_section.add_widget(row)
+        # Later, get the value:
+        host = host_input.text.strip()
+    """
+    row = BoxLayout(orientation='horizontal', size_hint_y=None, height=height, spacing=5)
+
+    # Description label (auto-sized to fit text)
+    desc_label = Label(
+        text=label_text,
+        size_hint_x=None,
+        halign='right',
+        valign='middle',
+        color=COLOR_SECUNDARY,
+    )
+    # Bind width to texture size so label auto-fits its text content (+ padding for spacing)
+    desc_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 15))
+    row.add_widget(desc_label)
+
+    # Text input with consistent styling
+    text_input = TextInput(
+        text=initial_value,
+        hint_text=hint_text,
+        multiline=False,
+        password=password,
+        size_hint_x=input_size_hint_x,
+        background_color=COLOR_BG_LIGHT,
+        foreground_color=COLOR_SECUNDARY,
+        cursor_color=COLOR_PRIMARY,
+    )
+    if input_filter:
+        text_input.input_filter = input_filter
+    row.add_widget(text_input)
+
+    return row, text_input

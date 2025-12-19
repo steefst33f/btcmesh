@@ -805,28 +805,43 @@ lora/
 
 ### 18. Server Settings Panel
 
-- [ ] **Story 18.1: Implement Bitcoin RPC Settings**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to configure Bitcoin RPC settings through the GUI,
-- [ ] *   **So that** I can set up or change the RPC connection without editing files.
+- [x] **Story 18.1: Implement Bitcoin RPC Settings** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to configure Bitcoin RPC settings through the GUI,
+- [x] *   **So that** I can set up or change the RPC connection without editing files.
     - [ ] *   **Scenario:** Operator configures RPC credentials
-        - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the operator enters RPC host, port, user, and password.
+        - [x] *   **Given** the settings panel is open.
+        - [x] *   **When** the operator enters RPC host, port, user, and password.
         - [ ] *   **Then** the settings are validated and saved.
         - [ ] *   **And** the server reconnects with new credentials.
-    - [ ] *   **Scenario:** Operator tests RPC connection
-        - [ ] *   **Given** RPC credentials are entered.
-        - [ ] *   **When** the operator clicks "Test Connection".
-        - [ ] *   **Then** a test connection is attempted.
-        - [ ] *   **And** success or failure is displayed.
-    - [ ] *   **Scenario:** Password field is masked
-        - [ ] *   **Given** the settings panel shows RPC password field.
-        - [ ] *   **Then** the password is displayed as asterisks.
-        - [ ] *   **And** a "Show" toggle reveals the password.
-    - [ ] *   **Scenario:** Tor detection for .onion addresses
-        - [ ] *   **Given** the operator enters a .onion address as RPC host.
-        - [ ] *   **Then** the GUI indicates Tor will be used.
-        - [ ] *   **And** validates that Tor service is reachable (port 9050).
+        - [x] *   *Note: Input fields load defaults from .env via config_loader*
+    - [x] *   **Scenario:** Operator tests RPC connection
+        - [x] *   **Given** RPC credentials are entered.
+        - [x] *   **When** the operator clicks "Test Connection".
+        - [x] *   **Then** a test connection is attempted (runs in background thread).
+        - [x] *   **And** success or failure is displayed in activity log.
+        - [x] *   *Note: Success message shows "via Tor" suffix for .onion addresses*
+    - [x] *   **Scenario:** Password field is masked
+        - [x] *   **Given** the settings panel shows RPC password field.
+        - [x] *   **Then** the password is displayed as asterisks.
+        - [x] *   **And** a "Show" toggle reveals the password.
+        - [x] *   *Note: Host field is also masked by default with Show/Hide toggle*
+        - [x] *   *Note: Uses create_toggle_button() factory from gui_common.py*
+    - [x] *   **Scenario:** Tor detection for .onion addresses
+        - [x] *   **Given** the operator enters a .onion address as RPC host.
+        - [x] *   **Then** the GUI indicates Tor will be used (success message shows "via Tor").
+        - [x] *   **And** validates that Tor service is reachable (port 9050).
+    - [x] *   **Scenario:** RPC settings disabled when server is running
+        - [x] *   **Given** the server is running.
+        - [x] *   **Then** all RPC input fields are disabled.
+        - [x] *   **And** the Test Connection button is disabled.
+        - [x] *   **When** the server stops (or fails to start).
+        - [x] *   **Then** all RPC settings are re-enabled.
+    - [x] *   **Scenario:** Start Server disabled during Test Connection
+        - [x] *   **Given** the operator clicks "Test Connection".
+        - [x] *   **Then** the Start Server button is disabled.
+        - [x] *   **When** the test completes (success or failure).
+        - [x] *   **Then** the Start Server button is re-enabled.
 
 - [ ] **Story 18.2: Implement Meshtastic Device Settings**
 - [ ] *   **As a** relay operator,

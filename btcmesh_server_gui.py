@@ -12,6 +12,8 @@ import queue
 import re
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
@@ -25,7 +27,7 @@ from core.gui_common import (
     COLOR_ERROR,
     COLOR_WARNING,
     COLOR_BG,
-    COLOR_SECUNDARY,
+    COLOR_BG_LIGHT,
     COLOR_DISCONNECTED,
     COLOR_MAINNET,
     COLOR_TESTNET,
@@ -41,15 +43,18 @@ from core.gui_common import (
     create_action_button,
     create_clear_button,
     create_status_row,
+    create_input_row,
+    create_toggle_button,
 )
 
 # Import server module
 import btcmesh_server
 from core.logger_setup import server_logger
+from core.config_loader import load_app_config
 
 
 # Set window size for desktop
-Window.size = (550, 700)
+Window.size = (550, 850)
 
 # Meshtastic connection states (text only - description is in separate label)
 STATE_MESHTASTIC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
@@ -215,6 +220,14 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after status section
         self.add_widget(create_separator())
 
+        # Bitcoin RPC Settings section
+        self.add_widget(create_section_label('Bitcoin RPC Settings:'))
+        self.add_widget(Widget(size_hint_y=None, height=2))
+        self._build_rpc_settings()
+
+        # Orange separator line after settings section
+        self.add_widget(create_separator())
+
         # Server controls
         controls_section = BoxLayout(orientation='horizontal', size_hint_y=None, height=50, spacing=10)
 
@@ -242,10 +255,185 @@ class BTCMeshServerGUI(BoxLayout):
         # Initial log message
         self.status_log.add_message("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
 
+    def _build_rpc_settings(self):
+        """Build the Bitcoin RPC settings input section."""
+        import os
+
+        # Load defaults from environment
+        load_app_config()
+        default_host = os.getenv("BITCOIN_RPC_HOST", "127.0.0.1")
+        default_port = os.getenv("BITCOIN_RPC_PORT", "8332")
+        default_user = os.getenv("BITCOIN_RPC_USER", "")
+        default_password = os.getenv("BITCOIN_RPC_PASSWORD", "")
+
+        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=215, spacing=5)
+
+        # Row 1: Host input with Show/Hide toggle
+        host_row, self.rpc_host_input = create_input_row(
+            'Host:', default_host, hint_text='127.0.0.1 or xyz.onion', password=True
+        )
+        # Show/Hide host toggle button
+        self.show_host_btn = create_toggle_button('Show')
+        self.show_host_btn.bind(on_press=self._toggle_host_visibility)
+        host_row.add_widget(self.show_host_btn)
+        settings_container.add_widget(host_row)
+
+        # Row 2: Port input
+        port_row, self.rpc_port_input = create_input_row(
+            'Port:', default_port, hint_text='8332', input_filter='int'
+        )
+        # Spacer to align with host row (Show button = 60px)
+        port_row.add_widget(Widget(size_hint_x=None, width=60))
+        settings_container.add_widget(port_row)
+
+        # Row 3: User input
+        user_row, self.rpc_user_input = create_input_row(
+            'User:', default_user, hint_text='rpcuser'
+        )
+        # Spacer to align with host row
+        user_row.add_widget(Widget(size_hint_x=None, width=60))
+        settings_container.add_widget(user_row)
+
+        # Row 4: Password input with Show/Hide toggle
+        pass_row, self.rpc_password_input = create_input_row(
+            'Password:', default_password, hint_text='password', password=True
+        )
+        # Show/Hide password toggle button
+        self.show_password_btn = create_toggle_button('Show')
+        self.show_password_btn.bind(on_press=self._toggle_password_visibility)
+        pass_row.add_widget(self.show_password_btn)
+        settings_container.add_widget(pass_row)
+
+        # add spacer
+        settings_container.add_widget(Widget(size_hint_y=None, height=5))
+
+        # Row 5: Test Connection button
+        test_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+        # Left spacer to center button
+        test_row.add_widget(Widget(size_hint_x=0.3))
+
+        self.test_connection_btn = Button(
+            text='Test Connection',
+            size_hint_x=0.4,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+        )
+        self.test_connection_btn.bind(on_press=self._on_test_connection)
+        test_row.add_widget(self.test_connection_btn)
+
+        # Right spacer
+        test_row.add_widget(Widget(size_hint_x=0.3))
+
+        settings_container.add_widget(test_row)
+
+        self.add_widget(settings_container)
+
+    def _set_rpc_settings_enabled(self, enabled: bool):
+        """Enable or disable all RPC settings inputs."""
+        self.rpc_host_input.disabled = not enabled
+        self.rpc_port_input.disabled = not enabled
+        self.rpc_user_input.disabled = not enabled
+        self.rpc_password_input.disabled = not enabled
+        self.test_connection_btn.disabled = not enabled
+
+    def _toggle_host_visibility(self, instance):
+        """Toggle host field visibility."""
+        self.rpc_host_input.password = not self.rpc_host_input.password
+        self.show_host_btn.text = 'Hide' if not self.rpc_host_input.password else 'Show'
+
+    def _toggle_password_visibility(self, instance):
+        """Toggle password field visibility."""
+        self.rpc_password_input.password = not self.rpc_password_input.password
+        self.show_password_btn.text = 'Hide' if not self.rpc_password_input.password else 'Show'
+
+    def _on_test_connection(self, instance):
+        """Test the RPC connection with current settings."""
+        host = self.rpc_host_input.text.strip()
+        port = self.rpc_port_input.text.strip()
+        user = self.rpc_user_input.text.strip()
+        password = self.rpc_password_input.text
+
+        # Basic validation
+        if not host:
+            self.status_log.add_message("Test failed: Host is required", COLOR_ERROR)
+            return
+        if not port:
+            self.status_log.add_message("Test failed: Port is required", COLOR_ERROR)
+            return
+        if not user:
+            self.status_log.add_message("Test failed: User is required", COLOR_ERROR)
+            return
+        if not password:
+            self.status_log.add_message("Test failed: Password is required", COLOR_ERROR)
+            return
+
+        self.status_log.add_message("Testing RPC connection...", COLOR_WARNING)
+        self.test_connection_btn.disabled = True
+        self.start_btn.disabled = True
+
+        def test_thread():
+            try:
+                # Check for Tor requirement
+                is_tor = host.endswith('.onion')
+                if is_tor:
+                    # Validate Tor is available on port 9050
+                    import socket
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(5)
+                        result = sock.connect_ex(('127.0.0.1', 9050))
+                        sock.close()
+                        if result != 0:
+                            self.result_queue.put(('test_connection_result', False,
+                                                'Tor service not reachable on port 9050'))
+                            return
+                    except Exception as e:
+                        self.result_queue.put(('test_connection_result', False,
+                                            f'Failed to check Tor: {e}'))
+                        return
+
+                # Test RPC connection
+                from core.rpc_client import BitcoinRPCClient
+                config = {
+                    'host': host,
+                    'port': int(port),
+                    'user': user,
+                    'password': password,
+                }
+                client = BitcoinRPCClient(config)
+                chain = client.chain
+                tor_suffix = ' via Tor' if is_tor else ''
+                self.result_queue.put(('test_connection_result', True,
+                                    f'Connected to {chain} network{tor_suffix}'))
+            except Exception as e:
+                self.result_queue.put(('test_connection_result', False, str(e)))
+
+        threading.Thread(target=test_thread, daemon=True).start()
+
     def on_start_pressed(self, instance):
         """Handle Start Server button press."""
+        # Validate required fields before starting
+        host = self.rpc_host_input.text.strip()
+        port = self.rpc_port_input.text.strip()
+        user = self.rpc_user_input.text.strip()
+        password = self.rpc_password_input.text
+
+        if not host or not port or not user or not password:
+            self.status_log.add_message(
+                "Cannot start: Please fill in all RPC settings fields", COLOR_ERROR)
+            return
+
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
+        self._set_rpc_settings_enabled(False)
+
+        # Build RPC config from GUI inputs
+        rpc_config = {
+            'host': host,
+            'port': int(port),
+            'user': user,
+            'password': password,
+        }
 
         # Reset stop event
         self._stop_event.clear()
@@ -258,7 +446,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Start server in background thread
         def run_server():
             try:
-                btcmesh_server.main(stop_event=self._stop_event)
+                btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config)
             except Exception as e:
                 self.result_queue.put(('init_error', str(e), logging.ERROR))
             finally:
@@ -307,6 +495,17 @@ class BTCMeshServerGUI(BoxLayout):
                             'server_stopping', 'pubsub_error', 'init_error'):
             self._apply_status_update((result_type, data))
 
+        elif result_type == 'test_connection_result':
+            # data is success (bool), level is message string
+            success = data
+            message = level  # Third element contains the message
+            self.test_connection_btn.disabled = False
+            self.start_btn.disabled = False
+            if success:
+                self.status_log.add_message(f"RPC test successful: {message}", COLOR_SUCCESS)
+            else:
+                self.status_log.add_message(f"RPC test failed: {message}", COLOR_ERROR)
+
     def _apply_status_update(self, status_update):
         """Apply a status update to the GUI."""
         status_type, data = status_update
@@ -353,12 +552,14 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'meshtastic_failed':
             self.meshtastic_label.text = STATE_MESHTASTIC_FAILED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
-            # Re-enable start button on failure
+            # Re-enable start button and settings on failure
             self.start_btn.disabled = False
+            self._set_rpc_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'pubsub_error':
             self.start_btn.disabled = False
+            self._set_rpc_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'server_started':
@@ -380,11 +581,13 @@ class BTCMeshServerGUI(BoxLayout):
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True
             self.start_btn.disabled = False
+            self._set_rpc_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'init_error':
             self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
+            self._set_rpc_settings_enabled(True)
             self._cleanup_log_handler()
 
     def _cleanup_log_handler(self):
