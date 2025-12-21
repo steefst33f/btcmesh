@@ -1372,5 +1372,169 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                         self.assertEqual(call_kwargs.get('serial_port'), '/dev/ttyUSB0')
 
 
+class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
+    """Tests for Story 18.3: Reassembly Timeout Settings."""
+
+    def test_gui_has_timeout_input(self):
+        """Given server GUI, Then it should have timeout_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'timeout_input'))
+
+    def test_timeout_input_default_is_300(self):
+        """Given server GUI with no env config, Then timeout should default to 300."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.dict('os.environ', {}, clear=True):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertEqual(gui.timeout_input.text, '300')
+
+    def test_timeout_input_uses_env_default(self):
+        """Given REASSEMBLY_TIMEOUT_SECONDS env var, Then timeout input should use it."""
+        import btcmesh_server_gui
+        import os
+
+        original_value = os.environ.get('REASSEMBLY_TIMEOUT_SECONDS')
+        os.environ['REASSEMBLY_TIMEOUT_SECONDS'] = '600'
+        try:
+            with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+            self.assertEqual(gui.timeout_input.text, '600')
+        finally:
+            if original_value is None:
+                os.environ.pop('REASSEMBLY_TIMEOUT_SECONDS', None)
+            else:
+                os.environ['REASSEMBLY_TIMEOUT_SECONDS'] = original_value
+
+    def test_timeout_settings_disabled_when_server_starts(self):
+        """Given server starts, Then timeout settings should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+        self.assertTrue(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_when_server_stops(self):
+        """Given server stops, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            self.assertTrue(gui.timeout_input.disabled)
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_on_init_error(self):
+        """Given init error, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            gui._handle_result(('init_error', 'Some error'))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_start_rejected_with_empty_timeout(self):
+        """Given empty timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = ''
+            gui.on_start_pressed(None)
+        # Start button should not be disabled (rejected early)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_invalid_timeout(self):
+        """Given non-integer timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = 'abc'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_zero_timeout(self):
+        """Given zero timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = '0'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_negative_timeout(self):
+        """Given negative timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = '-10'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_timeout_passed_to_server(self):
+        """Given valid timeout, Then reassembly_timeout should be passed to server."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.timeout_input.text = '120'
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    if target_fn:
+                        target_fn()
+                        mock_main.assert_called_once()
+                        call_kwargs = mock_main.call_args.kwargs
+                        self.assertEqual(call_kwargs.get('reassembly_timeout'), 120)
+
+
 if __name__ == '__main__':
     unittest.main()

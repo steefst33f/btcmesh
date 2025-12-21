@@ -653,7 +653,8 @@ def initialize_meshtastic_interface(
 
 def main(stop_event: Optional[threading.Event] = None,
         rpc_config: Optional[Dict[str, Any]] = None,
-        serial_port: Optional[str] = None) -> None:
+        serial_port: Optional[str] = None,
+        reassembly_timeout: Optional[int] = None) -> None:
     """
     Main function for the BTC Mesh Server.
 
@@ -664,6 +665,8 @@ def main(stop_event: Optional[threading.Event] = None,
                     If None, loads from environment/.env file.
         serial_port: Optional serial port for Meshtastic device.
                     If None, loads from environment or auto-detects.
+        reassembly_timeout: Optional timeout in seconds for transaction reassembly.
+                    If None, loads from environment or uses default (300s).
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -672,15 +675,19 @@ def main(stop_event: Optional[threading.Event] = None,
     tor_process = None
     tor_data_dir = None
     try:
-        # --- Story 5.2: Load reassembly timeout from config ---
-        timeout_seconds, timeout_source = load_reassembly_timeout()
+        # --- Story 5.2 & 18.3: Load reassembly timeout from parameter, env, or default ---
+        if reassembly_timeout is not None:
+            timeout_seconds = reassembly_timeout
+            timeout_source = "gui"
+        else:
+            timeout_seconds, timeout_source = load_reassembly_timeout()
         transaction_reassembler = TransactionReassembler(
             timeout_seconds=timeout_seconds
         )
         server_logger.info(
             f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})"
         )
-        # --- End Story 5.2 integration ---
+        # --- End Story 5.2 & 18.3 integration ---
 
         # --- Story 4.2: Connect to Bitcoin RPC ---
         try:

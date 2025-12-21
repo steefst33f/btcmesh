@@ -871,19 +871,28 @@ lora/
     - [x] *   *Note: Added serial_port parameter to btcmesh_server.main()*
     - [x] *   *Note: Single device found is auto-selected; uses meshtastic_utils.scan_meshtastic_devices()*
 
-- [ ] **Story 18.3: Implement Reassembly Timeout Setting**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to configure the transaction reassembly timeout,
-- [ ] *   **So that** I can adjust how long the server waits for missing chunks.
-    - [ ] *   **Scenario:** Operator adjusts timeout
-        - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the operator enters a new timeout value (in seconds).
-        - [ ] *   **Then** the setting is validated (positive integer).
-        - [ ] *   **And** the new timeout is applied to the TransactionReassembler.
-    - [ ] *   **Scenario:** Default timeout shown
-        - [ ] *   **Given** no custom timeout is configured.
-        - [ ] *   **When** the settings panel opens.
-        - [ ] *   **Then** the default timeout (300 seconds) is displayed.
+- [x] **Story 18.3: Implement Reassembly Timeout Setting** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to configure the transaction reassembly timeout,
+- [x] *   **So that** I can adjust how long the server waits for missing chunks.
+    - [x] *   **Scenario:** Operator adjusts timeout
+        - [x] *   **Given** the settings panel is open.
+        - [x] *   **When** the operator enters a new timeout value (in seconds).
+        - [x] *   **Then** the setting is validated (positive integer).
+        - [x] *   **And** the new timeout is applied to the TransactionReassembler.
+        - [x] *   *Note: Uses create_input_row() with input_filter='int' for number-only input*
+    - [x] *   **Scenario:** Default timeout shown
+        - [x] *   **Given** no custom timeout is configured.
+        - [x] *   **When** the settings panel opens.
+        - [x] *   **Then** the default timeout (300 seconds) is displayed.
+        - [x] *   *Note: Loads from REASSEMBLY_TIMEOUT_SECONDS env var, defaults to 300*
+    - [x] *   **Scenario:** Timeout settings disabled when server is running
+        - [x] *   **Given** the server is running.
+        - [x] *   **Then** the timeout input is disabled.
+        - [x] *   **When** the server stops (or fails to start).
+        - [x] *   **Then** the timeout input is re-enabled.
+    - [x] *   *Note: Added reassembly_timeout parameter to btcmesh_server.main()*
+    - [x] *   *Note: Validation rejects empty, non-integer, zero, and negative values*
 
 - [ ] **Story 18.4: Save and Load Settings**
 - [ ] *   **As a** relay operator,

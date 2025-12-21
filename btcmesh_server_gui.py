@@ -217,6 +217,13 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after Meshtastic settings
         self.add_widget(create_separator())
 
+        # Reassembly timeout setting
+        self.add_widget(create_section_label('Server Settings:'))
+        self._build_timeout_settings()
+
+        # Orange separator line after timeout settings
+        self.add_widget(create_separator())
+
         # Server controls
         self._build_controls_section()
 
@@ -377,6 +384,31 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.add_widget(settings_container)
 
+    def _build_timeout_settings(self):
+        """Build the reassembly timeout settings section."""
+        import os
+
+        # Load default from environment, fallback to 300 seconds
+        load_app_config()
+        env_timeout = os.getenv("REASSEMBLY_TIMEOUT_SECONDS", "")
+        default_timeout = env_timeout if env_timeout else "300"
+
+        # Use create_input_row for consistent styling
+        timeout_row, self.timeout_input = create_input_row(
+            'Reassembly Timeout:',
+            default_timeout,
+            hint_text='seconds',
+            input_filter='int',
+            input_size_hint_x=0.3,
+        )
+        # Add a spacer to balance the row
+        timeout_row.add_widget(Widget(size_hint_x=0.4))
+        self.add_widget(timeout_row)
+
+    def _set_timeout_settings_enabled(self, enabled: bool):
+        """Enable or disable timeout settings."""
+        self.timeout_input.disabled = not enabled
+
     def _build_controls_section(self):
         """Build the server control buttons section."""
         controls_section = BoxLayout(orientation='horizontal', size_hint_y=None, height=50, spacing=10)
@@ -503,10 +535,26 @@ class BTCMeshServerGUI(BoxLayout):
                 "Cannot start: Please fill in all RPC settings fields", COLOR_ERROR)
             return
 
+        # Validate timeout (must be positive integer)
+        timeout_text = self.timeout_input.text.strip()
+        if not timeout_text:
+            self.status_log.add_message(
+                "Cannot start: Reassembly timeout is required", COLOR_ERROR)
+            return
+        try:
+            reassembly_timeout = int(timeout_text)
+            if reassembly_timeout <= 0:
+                raise ValueError()
+        except ValueError:
+            self.status_log.add_message(
+                "Cannot start: Reassembly timeout must be a positive integer", COLOR_ERROR)
+            return
+
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
         self._set_rpc_settings_enabled(False)
         self._set_meshtastic_settings_enabled(False)
+        self._set_timeout_settings_enabled(False)
 
         # Build RPC config from GUI inputs
         rpc_config = {
@@ -532,7 +580,7 @@ class BTCMeshServerGUI(BoxLayout):
         def run_server():
             try:
                 btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config,
-                                    serial_port=serial_port)
+                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout)
             except Exception as e:
                 self.result_queue.put(('init_error', str(e), logging.ERROR))
             finally:
@@ -663,12 +711,14 @@ class BTCMeshServerGUI(BoxLayout):
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
+            self._set_timeout_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'pubsub_error':
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
+            self._set_timeout_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'server_started':
@@ -692,6 +742,7 @@ class BTCMeshServerGUI(BoxLayout):
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
+            self._set_timeout_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'init_error':
@@ -699,6 +750,7 @@ class BTCMeshServerGUI(BoxLayout):
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
+            self._set_timeout_settings_enabled(True)
             self._cleanup_log_handler()
 
     def _cleanup_log_handler(self):
