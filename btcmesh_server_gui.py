@@ -14,6 +14,8 @@ from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.widget import Widget
+from kivy.uix.spinner import Spinner
+from kivy.uix.label import Label
 from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
@@ -45,6 +47,8 @@ from core.gui_common import (
     create_status_row,
     create_input_row,
     create_toggle_button,
+    create_refresh_button,
+    COLOR_SECUNDARY,
 )
 
 # Import server module
@@ -65,6 +69,11 @@ STATE_MESHTASTIC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 STATE_RPC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
 STATE_RPC_CONNECTED = ConnectionState('Connected', COLOR_SUCCESS)
 STATE_RPC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
+
+# Device selection constants
+DEVICE_AUTO_DETECT = "Auto-detect"
+DEVICE_SCANNING = "Scanning..."
+DEVICE_NO_DEVICES = "No devices found"
 
 
 class QueueLogHandler(logging.Handler):
@@ -188,7 +197,46 @@ class BTCMeshServerGUI(BoxLayout):
         self.add_widget(create_separator())
 
         # Connection status section
-        status_section = BoxLayout(orientation='vertical', size_hint_y=None, height=110, spacing=5)
+        self.add_widget(create_section_label('Connection Status:'))
+        self._build_status_section()
+
+        # Orange separator line after status section
+        self.add_widget(create_separator())
+
+        # Bitcoin RPC Settings section
+        self.add_widget(create_section_label('Bitcoin RPC Settings:'))
+        self._build_rpc_settings()
+
+        # Orange separator line after RPC settings section
+        self.add_widget(create_separator())
+
+        # Meshtastic Device Settings section
+        self.add_widget(create_section_label('Meshtastic Settings:'))
+        self._build_meshtastic_settings()
+
+        # Orange separator line after Meshtastic settings
+        self.add_widget(create_separator())
+
+        # Server controls
+        self._build_controls_section()
+
+        # Activity log section
+        self.add_widget(create_section_label('Activity Log:'))
+
+        # Status log (scrollable)
+        self.status_log = StatusLog(size_hint_y=1)
+        self.add_widget(self.status_log)
+
+        # Clear log button
+        self.clear_btn = create_clear_button(self.on_clear_pressed)
+        self.add_widget(self.clear_btn)
+
+        # Initial log message
+        self.status_log.add_message("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
+
+    def _build_status_section(self):
+        """Build the connection status section."""
+        status_section = BoxLayout(orientation='vertical', size_hint_y=None, height=95, spacing=5)
 
         # Network badge row (mainnet/testnet/signet)
         network_row, self.network_label = create_status_row(
@@ -217,44 +265,6 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.add_widget(status_section)
 
-        # Orange separator line after status section
-        self.add_widget(create_separator())
-
-        # Bitcoin RPC Settings section
-        self.add_widget(create_section_label('Bitcoin RPC Settings:'))
-        self.add_widget(Widget(size_hint_y=None, height=2))
-        self._build_rpc_settings()
-
-        # Orange separator line after settings section
-        self.add_widget(create_separator())
-
-        # Server controls
-        controls_section = BoxLayout(orientation='horizontal', size_hint_y=None, height=50, spacing=10)
-
-        self.start_btn = create_action_button('Start Server')
-        self.start_btn.bind(on_press=self.on_start_pressed)
-        controls_section.add_widget(self.start_btn)
-
-        self.stop_btn = create_action_button('Stop Server', color=COLOR_ERROR, disabled=True)
-        self.stop_btn.bind(on_press=self.on_stop_pressed)
-        controls_section.add_widget(self.stop_btn)
-
-        self.add_widget(controls_section)
-
-        # Activity log section
-        self.add_widget(create_section_label('Activity Log:'))
-
-        # Status log (scrollable)
-        self.status_log = StatusLog(size_hint_y=1)
-        self.add_widget(self.status_log)
-
-        # Clear log button
-        self.clear_btn = create_clear_button(self.on_clear_pressed)
-        self.add_widget(self.clear_btn)
-
-        # Initial log message
-        self.status_log.add_message("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
-
     def _build_rpc_settings(self):
         """Build the Bitcoin RPC settings input section."""
         import os
@@ -266,7 +276,7 @@ class BTCMeshServerGUI(BoxLayout):
         default_user = os.getenv("BITCOIN_RPC_USER", "")
         default_password = os.getenv("BITCOIN_RPC_PASSWORD", "")
 
-        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=215, spacing=5)
+        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=225, spacing=5)
 
         # Row 1: Host input with Show/Hide toggle
         host_row, self.rpc_host_input = create_input_row(
@@ -327,6 +337,76 @@ class BTCMeshServerGUI(BoxLayout):
         settings_container.add_widget(test_row)
 
         self.add_widget(settings_container)
+
+    def _build_meshtastic_settings(self):
+        """Build the Meshtastic device settings section."""
+        import os
+
+        # Load default from environment
+        load_app_config()
+        default_device = os.getenv("MESHTASTIC_SERIAL_PORT", "")
+
+        settings_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+
+        # Device label
+        device_label = Label(
+            text='Device:',
+            size_hint_x=None,
+            halign='right',
+            valign='middle',
+            color=COLOR_SECUNDARY,
+        )
+        device_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 15))
+        settings_container.add_widget(device_label)
+
+        # Device dropdown/spinner
+        self.device_spinner = Spinner(
+            text=default_device if default_device else DEVICE_AUTO_DETECT,
+            values=[DEVICE_AUTO_DETECT],
+            size_hint_x=0.75,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            color=COLOR_SECUNDARY,
+        )
+        settings_container.add_widget(self.device_spinner)
+
+        # Scan button
+        self.scan_btn = create_refresh_button('Scan')
+        self.scan_btn.bind(on_press=self._on_scan_devices)
+        settings_container.add_widget(self.scan_btn)
+
+        self.add_widget(settings_container)
+
+    def _build_controls_section(self):
+        """Build the server control buttons section."""
+        controls_section = BoxLayout(orientation='horizontal', size_hint_y=None, height=50, spacing=10)
+
+        self.start_btn = create_action_button('Start Server')
+        self.start_btn.bind(on_press=self.on_start_pressed)
+        controls_section.add_widget(self.start_btn)
+
+        self.stop_btn = create_action_button('Stop Server', color=COLOR_ERROR, disabled=True)
+        self.stop_btn.bind(on_press=self.on_stop_pressed)
+        controls_section.add_widget(self.stop_btn)
+
+        self.add_widget(controls_section)
+
+    def _on_scan_devices(self, instance):
+        """Scan for available Meshtastic devices."""
+        self.device_spinner.text = DEVICE_SCANNING
+        self.scan_btn.disabled = True
+
+        def scan_thread():
+            from core.meshtastic_utils import scan_meshtastic_devices
+            devices = scan_meshtastic_devices()
+            self.result_queue.put(('devices_found', devices))
+
+        threading.Thread(target=scan_thread, daemon=True).start()
+
+    def _set_meshtastic_settings_enabled(self, enabled: bool):
+        """Enable or disable Meshtastic device settings."""
+        self.device_spinner.disabled = not enabled
+        self.scan_btn.disabled = not enabled
 
     def _set_rpc_settings_enabled(self, enabled: bool):
         """Enable or disable all RPC settings inputs."""
@@ -426,6 +506,7 @@ class BTCMeshServerGUI(BoxLayout):
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
         self._set_rpc_settings_enabled(False)
+        self._set_meshtastic_settings_enabled(False)
 
         # Build RPC config from GUI inputs
         rpc_config = {
@@ -434,6 +515,10 @@ class BTCMeshServerGUI(BoxLayout):
             'user': user,
             'password': password,
         }
+
+        # Get selected device (None for auto-detect)
+        selected_device = self.device_spinner.text
+        serial_port = None if selected_device == DEVICE_AUTO_DETECT else selected_device
 
         # Reset stop event
         self._stop_event.clear()
@@ -446,7 +531,8 @@ class BTCMeshServerGUI(BoxLayout):
         # Start server in background thread
         def run_server():
             try:
-                btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config)
+                btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config,
+                                    serial_port=serial_port)
             except Exception as e:
                 self.result_queue.put(('init_error', str(e), logging.ERROR))
             finally:
@@ -506,6 +592,27 @@ class BTCMeshServerGUI(BoxLayout):
             else:
                 self.status_log.add_message(f"RPC test failed: {message}", COLOR_ERROR)
 
+        elif result_type == 'devices_found':
+            devices = data
+            self.scan_btn.disabled = False
+            if devices:
+                # Add Auto-detect as first option, then found devices
+                self.device_spinner.values = [DEVICE_AUTO_DETECT] + devices
+                if len(devices) == 1:
+                    # Auto-select single device
+                    self.device_spinner.text = devices[0]
+                    self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
+                else:
+                    # Multiple devices - keep current selection or show first
+                    if self.device_spinner.text == DEVICE_SCANNING:
+                        self.device_spinner.text = DEVICE_AUTO_DETECT
+                    self.status_log.add_message(
+                        f"Found {len(devices)} devices", COLOR_SUCCESS)
+            else:
+                self.device_spinner.values = [DEVICE_AUTO_DETECT]
+                self.device_spinner.text = DEVICE_AUTO_DETECT
+                self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
+
     def _apply_status_update(self, status_update):
         """Apply a status update to the GUI."""
         status_type, data = status_update
@@ -555,11 +662,13 @@ class BTCMeshServerGUI(BoxLayout):
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
+            self._set_meshtastic_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'pubsub_error':
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
+            self._set_meshtastic_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'server_started':
@@ -582,12 +691,14 @@ class BTCMeshServerGUI(BoxLayout):
             self.stop_btn.disabled = True
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
+            self._set_meshtastic_settings_enabled(True)
             self._cleanup_log_handler()
 
         elif status_type == 'init_error':
             self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
             self._set_rpc_settings_enabled(True)
+            self._set_meshtastic_settings_enabled(True)
             self._cleanup_log_handler()
 
     def _cleanup_log_handler(self):

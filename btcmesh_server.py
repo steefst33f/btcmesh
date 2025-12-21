@@ -652,7 +652,8 @@ def initialize_meshtastic_interface(
 
 
 def main(stop_event: Optional[threading.Event] = None,
-         rpc_config: Optional[Dict[str, Any]] = None) -> None:
+        rpc_config: Optional[Dict[str, Any]] = None,
+        serial_port: Optional[str] = None) -> None:
     """
     Main function for the BTC Mesh Server.
 
@@ -661,6 +662,8 @@ def main(stop_event: Optional[threading.Event] = None,
                     If None, runs until KeyboardInterrupt.
         rpc_config: Optional dict with RPC connection settings (host, port, user, password).
                     If None, loads from environment/.env file.
+        serial_port: Optional serial port for Meshtastic device.
+                    If None, loads from environment or auto-detects.
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -703,8 +706,8 @@ def main(stop_event: Optional[threading.Event] = None,
         # Store bitcoin_rpc for later use (e.g., as a global or pass to handlers)
         # --- End Story 4.2 integration ---
 
-        # initialize_meshtastic_interface will now use the config loader by default
-        meshtastic_iface = initialize_meshtastic_interface()
+        # initialize_meshtastic_interface will use provided port, or fallback to config/auto-detect
+        meshtastic_iface = initialize_meshtastic_interface(port=serial_port)
 
         if not meshtastic_iface:
             server_logger.error("Failed to initialize Meshtastic interface. Exiting.")

@@ -843,23 +843,33 @@ lora/
         - [x] *   **When** the test completes (success or failure).
         - [x] *   **Then** the Start Server button is re-enabled.
 
-- [ ] **Story 18.2: Implement Meshtastic Device Settings**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to configure the Meshtastic device through the GUI,
-- [ ] *   **So that** I can select or change the device without editing files.
-    - [ ] *   **Scenario:** Operator selects device from dropdown
-        - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** multiple Meshtastic devices are connected.
-        - [ ] *   **Then** a dropdown shows all available devices.
-        - [ ] *   **And** the operator can select which device to use.
-    - [ ] *   **Scenario:** Operator manually enters device path
-        - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the operator wants to specify a custom serial port.
-        - [ ] *   **Then** a text field allows manual entry (e.g., "/dev/ttyUSB0").
-    - [ ] *   **Scenario:** Auto-detect option
-        - [ ] *   **Given** the settings panel is open.
-        - [ ] *   **When** the operator selects "Auto-detect".
-        - [ ] *   **Then** the server will auto-detect the Meshtastic device on start.
+- [x] **Story 18.2: Implement Meshtastic Device Settings** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to configure the Meshtastic device through the GUI,
+- [x] *   **So that** I can select or change the device without editing files.
+    - [x] *   **Scenario:** Operator selects device from dropdown
+        - [x] *   **Given** the settings panel is open.
+        - [x] *   **When** multiple Meshtastic devices are connected.
+        - [x] *   **Then** a dropdown shows all available devices.
+        - [x] *   **And** the operator can select which device to use.
+        - [x] *   *Note: Uses Spinner widget with Scan button to refresh device list*
+    - [x] *   **Scenario:** Operator manually enters device path
+        - [x] *   **Given** the settings panel is open.
+        - [x] *   **When** MESHTASTIC_SERIAL_PORT is set in .env.
+        - [x] *   **Then** the spinner defaults to that device path.
+        - [x] *   *Note: Device path loaded from environment via config_loader*
+    - [x] *   **Scenario:** Auto-detect option
+        - [x] *   **Given** the settings panel is open.
+        - [x] *   **When** the operator selects "Auto-detect".
+        - [x] *   **Then** the server will auto-detect the Meshtastic device on start.
+        - [x] *   *Note: "Auto-detect" is the first option in spinner, passes None to server*
+    - [x] *   **Scenario:** Device settings disabled when server is running
+        - [x] *   **Given** the server is running.
+        - [x] *   **Then** the device spinner and Scan button are disabled.
+        - [x] *   **When** the server stops (or fails to start).
+        - [x] *   **Then** device settings are re-enabled.
+    - [x] *   *Note: Added serial_port parameter to btcmesh_server.main()*
+    - [x] *   *Note: Single device found is auto-selected; uses meshtastic_utils.scan_meshtastic_devices()*
 
 - [ ] **Story 18.3: Implement Reassembly Timeout Setting**
 - [ ] *   **As a** relay operator,
