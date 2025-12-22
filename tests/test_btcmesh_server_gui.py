@@ -1727,5 +1727,347 @@ class TestActivityLogDisplayStory171(unittest.TestCase):
         self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
 
 
+class TestSaveLoadSettingsStory184(unittest.TestCase):
+    """Tests for Story 18.4: Save and Load Settings.
+
+    Verifies:
+    - GUI has Save Settings button
+    - Settings are saved to .env file
+    - Existing content is preserved
+    - Auto-detect device is handled properly
+    - Backup is created before saving
+    - Button is disabled when server is running
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_save_button(self):
+        """Given server GUI, Then it should have save_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'save_btn'))
+
+    def test_save_button_initially_enabled(self):
+        """Given server GUI just started, Then save button should be enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_disabled_when_server_starts(self):
+        """Given server starts, Then save button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+        self.assertTrue(gui.save_btn.disabled)
+
+    def test_save_button_enabled_when_server_stops(self):
+        """Given server stops, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_enabled_on_init_error(self):
+        """Given init error occurs, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('init_error', 'Some error'))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_settings_writes_to_env_file(self):
+        """Given settings are filled, When save is clicked, Then .env file is written."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'testhost.local'
+            gui.rpc_port_input.text = '18332'
+            gui.rpc_user_input.text = 'testuser'
+            gui.rpc_password_input.text = 'testpass'
+            gui.timeout_input.text = '120'
+            gui.device_spinner.text = '/dev/ttyUSB0'
+
+            # Mock the .env path to a temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Read and verify content
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                self.assertIn('BITCOIN_RPC_HOST=testhost.local', content)
+                self.assertIn('BITCOIN_RPC_PORT=18332', content)
+                self.assertIn('BITCOIN_RPC_USER=testuser', content)
+                self.assertIn('BITCOIN_RPC_PASSWORD=testpass', content)
+                self.assertIn('REASSEMBLY_TIMEOUT_SECONDS=120', content)
+                self.assertIn('MESHTASTIC_SERIAL_PORT=/dev/ttyUSB0', content)
+
+                # Verify success message was shown
+                gui.status_log.add_message.assert_called()
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_shows_confirmation_message(self):
+        """Given save succeeds, Then confirmation message should be displayed."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Check that success message was shown
+                calls = gui.status_log.add_message.call_args_list
+                messages = [call[0][0] for call in calls]
+                self.assertTrue(any('saved' in msg.lower() for msg in messages))
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_preserves_comments(self):
+        """Given .env has comments, When save is clicked, Then comments are preserved."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                # Write initial content with comments
+                f.write("# This is a comment\n")
+                f.write("BITCOIN_RPC_HOST=oldhost\n")
+                f.write("# Another comment\n")
+                f.write("SOME_OTHER_VAR=keepme\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                # Comments should be preserved
+                self.assertIn('# This is a comment', content)
+                self.assertIn('# Another comment', content)
+                # Other variables should be preserved
+                self.assertIn('SOME_OTHER_VAR=keepme', content)
+                # Value should be updated
+                self.assertIn('BITCOIN_RPC_HOST=localhost', content)
+                self.assertNotIn('BITCOIN_RPC_HOST=oldhost', content)
+            finally:
+                os.unlink(temp_path)
+                # Clean up backup if created
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_creates_backup(self):
+        """Given .env exists, When save is clicked, Then .env.bak backup is created."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                f.write("BITCOIN_RPC_HOST=original\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Backup should exist
+                backup_path = temp_path + '.bak'
+                self.assertTrue(os.path.exists(backup_path))
+
+                # Backup should contain original content
+                with open(backup_path, 'r') as f:
+                    backup_content = f.read()
+                self.assertIn('BITCOIN_RPC_HOST=original', backup_content)
+            finally:
+                os.unlink(temp_path)
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_auto_detect_removes_device_setting(self):
+        """Given Auto-detect is selected, Then MESHTASTIC_SERIAL_PORT should be removed."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+            gui.device_spinner.text = btcmesh_server_gui.DEVICE_AUTO_DETECT
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                # File has an existing device setting
+                f.write("MESHTASTIC_SERIAL_PORT=/dev/ttyOLD\n")
+                f.write("BITCOIN_RPC_HOST=oldhost\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                # Device setting should be removed
+                self.assertNotIn('MESHTASTIC_SERIAL_PORT', content)
+                # Other settings should be present
+                self.assertIn('BITCOIN_RPC_HOST=localhost', content)
+            finally:
+                os.unlink(temp_path)
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_shows_password_warning(self):
+        """Given password is set, When save succeeds, Then warning about plain text is shown."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'secretpassword'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Check that warning about plain text password was shown
+                calls = gui.status_log.add_message.call_args_list
+                messages = [call[0][0] for call in calls]
+                self.assertTrue(any('plain text' in msg.lower() for msg in messages))
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_handles_permission_error(self):
+        """Given .env is not writable, When save is clicked, Then error message is shown."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            # Mock open to raise PermissionError
+            with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', '/nonexistent/path/.env'):
+                with unittest.mock.patch('builtins.open', side_effect=PermissionError("Permission denied")):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+            # Check that error message was shown
+            calls = gui.status_log.add_message.call_args_list
+            messages = [call[0][0] for call in calls]
+            colors = [call[0][1] for call in calls]
+            self.assertTrue(any('permission' in msg.lower() for msg in messages))
+            self.assertIn(btcmesh_server_gui.COLOR_ERROR, colors)
+
+    def test_settings_loaded_on_startup(self):
+        """Given .env has settings, When GUI starts, Then settings are loaded."""
+        import btcmesh_server_gui
+        import os
+
+        # This test verifies the existing behavior - settings are loaded from env vars
+        # which are populated by load_app_config() from .env file
+        original_host = os.environ.get('BITCOIN_RPC_HOST')
+        os.environ['BITCOIN_RPC_HOST'] = 'loaded-from-env.local'
+
+        try:
+            with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Verify the value was loaded
+            self.assertEqual(gui.rpc_host_input.text, 'loaded-from-env.local')
+        finally:
+            if original_host is None:
+                os.environ.pop('BITCOIN_RPC_HOST', None)
+            else:
+                os.environ['BITCOIN_RPC_HOST'] = original_host
+
+
 if __name__ == '__main__':
     unittest.main()

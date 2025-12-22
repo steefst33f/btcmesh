@@ -7,6 +7,8 @@ This GUI wraps the btcmesh_server module, providing visual status displays,
 activity logging, and server controls.
 """
 import logging
+import os
+import shutil
 import threading
 import queue
 import re
@@ -74,6 +76,10 @@ STATE_RPC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 DEVICE_AUTO_DETECT = "Auto-detect"
 DEVICE_SCANNING = "Scanning..."
 DEVICE_NO_DEVICES = "No devices found"
+
+# Path to .env file (same as config_loader.py)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 
 class QueueLogHandler(logging.Handler):
@@ -421,6 +427,10 @@ class BTCMeshServerGUI(BoxLayout):
         self.stop_btn.bind(on_press=self.on_stop_pressed)
         controls_section.add_widget(self.stop_btn)
 
+        self.save_btn = create_action_button('Save Settings', color=COLOR_BG_LIGHT)
+        self.save_btn.bind(on_press=self._on_save_settings)
+        controls_section.add_widget(self.save_btn)
+
         self.add_widget(controls_section)
 
     def _on_scan_devices(self, instance):
@@ -522,6 +532,80 @@ class BTCMeshServerGUI(BoxLayout):
 
         threading.Thread(target=test_thread, daemon=True).start()
 
+    def _on_save_settings(self, instance):
+        """Save current settings to .env file.
+
+        Preserves existing comments and unrelated variables.
+        Creates a backup (.env.bak) before overwriting.
+        """
+        # Collect current settings from GUI
+        settings = {
+            'BITCOIN_RPC_HOST': self.rpc_host_input.text.strip(),
+            'BITCOIN_RPC_PORT': self.rpc_port_input.text.strip(),
+            'BITCOIN_RPC_USER': self.rpc_user_input.text.strip(),
+            'BITCOIN_RPC_PASSWORD': self.rpc_password_input.text,  # Don't strip password
+            'REASSEMBLY_TIMEOUT_SECONDS': self.timeout_input.text.strip(),
+        }
+
+        # Handle Meshtastic device - only save if not Auto-detect
+        selected_device = self.device_spinner.text
+        if selected_device and selected_device not in (DEVICE_AUTO_DETECT, DEVICE_SCANNING, DEVICE_NO_DEVICES):
+            settings['MESHTASTIC_SERIAL_PORT'] = selected_device
+        else:
+            # Mark for removal if currently set
+            settings['MESHTASTIC_SERIAL_PORT'] = None
+
+        try:
+            # Read existing .env content (preserving structure)
+            existing_lines = []
+            existing_keys = set()
+            if os.path.exists(DOTENV_PATH):
+                # Create backup before modifying
+                backup_path = DOTENV_PATH + '.bak'
+                shutil.copy2(DOTENV_PATH, backup_path)
+
+                with open(DOTENV_PATH, 'r') as f:
+                    for line in f:
+                        stripped = line.strip()
+                        # Check if this line sets a variable we want to update
+                        if stripped and not stripped.startswith('#') and '=' in stripped:
+                            key = stripped.split('=', 1)[0].strip()
+                            if key in settings:
+                                existing_keys.add(key)
+                                value = settings[key]
+                                if value is None:
+                                    # Skip this line (remove the setting)
+                                    continue
+                                # Replace the value, preserving the key format
+                                existing_lines.append(f'{key}={value}\n')
+                                continue
+                        # Keep the line as-is (comments, empty lines, other vars)
+                        existing_lines.append(line)
+
+            # Add any new settings that weren't in the file
+            for key, value in settings.items():
+                if key not in existing_keys and value is not None:
+                    existing_lines.append(f'{key}={value}\n')
+
+            # Write updated content
+            with open(DOTENV_PATH, 'w') as f:
+                f.writelines(existing_lines)
+
+            self.status_log.add_message(
+                f"Settings saved to {DOTENV_PATH}", COLOR_SUCCESS)
+
+            # Security note for password
+            if settings.get('BITCOIN_RPC_PASSWORD'):
+                self.status_log.add_message(
+                    "Note: Password is stored in plain text in .env file", COLOR_WARNING)
+
+        except PermissionError:
+            self.status_log.add_message(
+                f"Permission denied: Cannot write to {DOTENV_PATH}", COLOR_ERROR)
+        except Exception as e:
+            self.status_log.add_message(
+                f"Failed to save settings: {e}", COLOR_ERROR)
+
     def on_start_pressed(self, instance):
         """Handle Start Server button press."""
         # Validate required fields before starting
@@ -552,6 +636,7 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
+        self.save_btn.disabled = True
         self._set_rpc_settings_enabled(False)
         self._set_meshtastic_settings_enabled(False)
         self._set_timeout_settings_enabled(False)
@@ -709,6 +794,7 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -716,6 +802,7 @@ class BTCMeshServerGUI(BoxLayout):
 
         elif status_type == 'pubsub_error':
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -740,6 +827,7 @@ class BTCMeshServerGUI(BoxLayout):
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -748,6 +836,7 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'init_error':
             self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)

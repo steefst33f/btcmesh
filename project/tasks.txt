@@ -898,20 +898,33 @@ lora/
     - [x] *   *Note: Added reassembly_timeout parameter to btcmesh_server.main()*
     - [x] *   *Note: Validation rejects empty, non-integer, zero, and negative values*
 
-- [ ] **Story 18.4: Save and Load Settings**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** settings to persist across sessions,
-- [ ] *   **So that** I don't have to reconfigure the server every time.
-    - [ ] *   **Scenario:** Settings saved to file
-        - [ ] *   **Given** the operator changes settings.
-        - [ ] *   **When** the operator clicks "Save".
-        - [ ] *   **Then** settings are written to the .env file or a config file.
-        - [ ] *   **And** a confirmation message is displayed.
-    - [ ] *   **Scenario:** Settings loaded on startup
-        - [ ] *   **Given** settings were previously saved.
-        - [ ] *   **When** the server GUI starts.
-        - [ ] *   **Then** saved settings are loaded and displayed.
-        - [ ] *   **And** the server can start with saved configuration.
+- [x] **Story 18.4: Save and Load Settings** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** settings to persist across sessions,
+- [x] *   **So that** I don't have to reconfigure the server every time.
+    - [x] *   **Scenario:** Settings saved to file
+        - [x] *   **Given** the operator changes settings.
+        - [x] *   **When** the operator clicks "Save".
+        - [x] *   **Then** settings are written to the .env file or a config file.
+        - [x] *   **And** a confirmation message is displayed.
+        - [x] *   *Note: Creates .env.bak backup before saving*
+        - [x] *   *Note: Preserves comments and unrelated variables in .env*
+        - [x] *   *Note: Displays warning that password is stored in plain text*
+    - [x] *   **Scenario:** Settings loaded on startup
+        - [x] *   **Given** settings were previously saved.
+        - [x] *   **When** the server GUI starts.
+        - [x] *   **Then** saved settings are loaded and displayed.
+        - [x] *   **And** the server can start with saved configuration.
+        - [x] *   *Note: Uses existing load_app_config() from config_loader.py*
+    - [x] *   **Scenario:** Auto-detect device handling
+        - [x] *   **Given** Auto-detect is selected for Meshtastic device.
+        - [x] *   **When** settings are saved.
+        - [x] *   **Then** MESHTASTIC_SERIAL_PORT is removed from .env file.
+    - [x] *   **Scenario:** Save button disabled during server run
+        - [x] *   **Given** the server is running.
+        - [x] *   **Then** the Save Settings button is disabled.
+        - [x] *   **When** the server stops or fails.
+        - [x] *   **Then** the Save Settings button is re-enabled.
 
 ### 19. Server Statistics
 
