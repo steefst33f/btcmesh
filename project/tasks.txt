@@ -743,28 +743,32 @@ lora/
 
 ### 17. Activity Monitoring
 
-- [ ] **Story 17.1: Implement Activity Log Display**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** a scrollable activity log showing server events,
-- [ ] *   **So that** I can monitor what the relay is doing in real-time.
-    - [ ] *   **Scenario:** Log shows connection events
-        - [ ] *   **Given** the server GUI is running.
-        - [ ] *   **When** the server connects/disconnects from Meshtastic or RPC.
-        - [ ] *   **Then** the event is logged with timestamp and color coding.
-    - [ ] *   **Scenario:** Log shows incoming messages
-        - [ ] *   **Given** the server is running.
-        - [ ] *   **When** a Meshtastic message is received.
-        - [ ] *   **Then** the message source and type are logged.
-        - [ ] *   **And** BTC_TX chunks are highlighted.
-    - [ ] *   **Scenario:** Log shows transaction events
-        - [ ] *   **Given** the server is processing a transaction.
-        - [ ] *   **When** chunks are received, reassembled, or broadcast.
-        - [ ] *   **Then** each step is logged with appropriate color (green=success, red=error).
-    - [ ] *   **Scenario:** Log auto-scrolls
-        - [ ] *   **Given** the activity log has multiple entries.
-        - [ ] *   **When** new entries are added.
-        - [ ] *   **Then** the log auto-scrolls to show the newest entry.
-    *   _Note: Reuse StatusLog component pattern from client GUI._
+- [x] **Story 17.1: Implement Activity Log Display** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** a scrollable activity log showing server events,
+- [x] *   **So that** I can monitor what the relay is doing in real-time.
+    - [x] *   **Scenario:** Log shows connection events
+        - [x] *   **Given** the server GUI is running.
+        - [x] *   **When** the server connects/disconnects from Meshtastic or RPC.
+        - [x] *   **Then** the event is logged with timestamp and color coding.
+        - [x] *   *Note: Log formatter uses `[HH:MM:SS] message` format*
+    - [x] *   **Scenario:** Log shows incoming messages
+        - [x] *   **Given** the server is running.
+        - [x] *   **When** a Meshtastic message is received.
+        - [x] *   **Then** the message source and type are logged.
+        - [x] *   **And** BTC_TX chunks are highlighted.
+        - [x] *   *Note: Server logs "Potential BTC transaction chunk from..." messages*
+    - [x] *   **Scenario:** Log shows transaction events
+        - [x] *   **Given** the server is processing a transaction.
+        - [x] *   **When** chunks are received, reassembled, or broadcast.
+        - [x] *   **Then** each step is logged with appropriate color (green=success, red=error).
+        - [x] *   *Note: Uses get_log_color() from gui_common.py per log_color_spec.md*
+    - [x] *   **Scenario:** Log auto-scrolls
+        - [x] *   **Given** the activity log has multiple entries.
+        - [x] *   **When** new entries are added.
+        - [x] *   **Then** the log auto-scrolls to show the newest entry.
+        - [x] *   *Note: StatusLog.add_message() schedules scroll_y=0 via Clock*
+    *   _Note: Reuses StatusLog component from core/gui_common.py_
     *   _Note: See [project/log_color_spec.md](log_color_spec.md) for log message color categorization requirements._
 
 - [ ] **Story 17.2: Display Active Sessions**

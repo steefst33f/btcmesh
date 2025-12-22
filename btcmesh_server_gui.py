@@ -248,7 +248,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Network badge row (mainnet/testnet/signet)
         network_row, self.network_label = create_status_row(
             'Network:',
-            '',
+            '--',
             initial_color=COLOR_DISCONNECTED,
             bold_value=True
         )
@@ -571,9 +571,9 @@ class BTCMeshServerGUI(BoxLayout):
         # Reset stop event
         self._stop_event.clear()
 
-        # Set up log handler to capture server logs
+        # Set up log handler to capture server logs with timestamps
         self._log_handler = QueueLogHandler(self.result_queue)
-        self._log_handler.setFormatter(logging.Formatter('%(message)s'))
+        self._log_handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
         server_logger.addHandler(self._log_handler)
 
         # Start server in background thread
@@ -735,7 +735,7 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
             self.rpc_label.color = STATE_RPC_DISCONNECTED.color
-            self.network_label.text = ''
+            self.network_label.text = '--'
             self.network_label.color = COLOR_DISCONNECTED
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True

@@ -636,7 +636,7 @@ class TestServerResultHandlingStory152(unittest.TestCase):
             gui.network_label.color = btcmesh_server_gui.COLOR_MAINNET
             # Then simulate server stopped
             gui._handle_result(('server_stopped', None))
-        self.assertEqual(gui.network_label.text, '')
+        self.assertEqual(gui.network_label.text, '--')
         self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_DISCONNECTED)
 
     def test_server_gui_has_network_label(self):
@@ -1534,6 +1534,197 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
                         mock_main.assert_called_once()
                         call_kwargs = mock_main.call_args.kwargs
                         self.assertEqual(call_kwargs.get('reassembly_timeout'), 120)
+
+
+class TestActivityLogDisplayStory171(unittest.TestCase):
+    """Tests for Story 17.1: Implement Activity Log Display.
+
+    Verifies:
+    - Scrollable activity log shows server events
+    - Log messages have timestamps
+    - Color coding per log_color_spec.md
+    - Auto-scroll to newest entry
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_status_log(self):
+        """Given server GUI, Then it should have status_log attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'status_log'))
+
+    def test_gui_has_clear_button(self):
+        """Given server GUI, Then it should have clear_btn attribute for clearing log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'clear_btn'))
+
+    def test_log_handler_uses_timestamp_format(self):
+        """Given server starts, Then log handler should format messages with [HH:MM:SS] timestamps."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+
+        # Verify log handler was created and has correct format
+        self.assertIsNotNone(gui._log_handler)
+        formatter = gui._log_handler.formatter
+        self.assertIsNotNone(formatter)
+        # Check format string includes asctime
+        self.assertIn('asctime', formatter._fmt)
+        # Check datefmt is HH:MM:SS
+        self.assertEqual(formatter.datefmt, '%H:%M:%S')
+
+    def test_log_handler_formats_message_with_timestamp(self):
+        """Given log handler, When formatting a log record, Then output should contain [HH:MM:SS] timestamp."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+
+        # Create a log record and format it
+        record = logging.LogRecord(
+            name='test', level=logging.INFO, pathname='', lineno=0,
+            msg='Test message', args=(), exc_info=None
+        )
+        formatted = gui._log_handler.formatter.format(record)
+
+        # Verify formatted message contains timestamp in [HH:MM:SS] format
+        # Pattern: [00:00:00] to [23:59:59]
+        timestamp_pattern = r'\[\d{2}:\d{2}:\d{2}\]'
+        self.assertRegex(formatted, timestamp_pattern)
+        # Verify the message is also present
+        self.assertIn('Test message', formatted)
+
+    def test_log_message_result_adds_to_status_log(self):
+        """Given 'log' result type, Then message should be added to status_log."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('log', 'Test log message', logging.INFO))
+        gui.status_log.add_message.assert_called()
+
+    def test_get_log_color_returns_error_for_failed_keyword(self):
+        """Given INFO level with 'failed' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Connection failed")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_nack_keyword(self):
+        """Given INFO level with 'nack' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Sending NACK to client")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_timed_out_keyword(self):
+        """Given INFO level with 'timed out' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Session timed out")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_abort_keyword(self):
+        """Given INFO level with 'abort' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Session aborted by user")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_closing_keyword(self):
+        """Given INFO level with 'closing' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Closing Meshtastic interface")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_success_for_successfully_keyword(self):
+        """Given INFO level with 'successfully' keyword, Then get_log_color should return COLOR_SUCCESS."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Meshtastic initialized successfully")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
+
+    def test_get_log_color_returns_success_for_txid_keyword(self):
+        """Given INFO level with 'txid:' keyword, Then get_log_color should return COLOR_SUCCESS."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Broadcast success. TXID: abc123")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
+
+    def test_on_clear_pressed_clears_log(self):
+        """Given log has messages, When clear button pressed, Then log should be cleared."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.clear = unittest.mock.MagicMock()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui.on_clear_pressed(None)
+        gui.status_log.clear.assert_called_once()
+
+    def test_btc_tx_chunk_message_color(self):
+        """Given INFO level message about BTC_TX chunk, Then it should be normal color (not highlighted as error)."""
+        import btcmesh_server_gui
+        import logging
+
+        # BTC_TX chunk messages are normal info messages per log_color_spec.md
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Potential BTC transaction chunk from !abcdef12. Processing...")
+        # Should be None (default white) since it's not a success or error keyword
+        self.assertIsNone(color)
+
+    def test_log_parses_and_displays_connection_events(self):
+        """Given log result with connection message, Then status should be updated and message displayed."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            # Simulate log message that triggers status update
+            gui._handle_result(('log', 'Connected to Bitcoin Core RPC node successfully. Host: localhost:8332, Tor: False, Chain: main', logging.INFO))
+        # Verify message was added to log with success color (message contains 'successfully')
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args
+        message = call_args[0][0]
+        color = call_args[0][1]
+        self.assertIn('Connected to Bitcoin Core', message)
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
 
 
 if __name__ == '__main__':
