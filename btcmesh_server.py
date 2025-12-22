@@ -651,13 +651,22 @@ def initialize_meshtastic_interface(
     return iface
 
 
-def main(stop_event: Optional[threading.Event] = None) -> None:
+def main(stop_event: Optional[threading.Event] = None,
+        rpc_config: Optional[Dict[str, Any]] = None,
+        serial_port: Optional[str] = None,
+        reassembly_timeout: Optional[int] = None) -> None:
     """
     Main function for the BTC Mesh Server.
 
     Args:
         stop_event: Optional threading.Event to signal server shutdown.
                     If None, runs until KeyboardInterrupt.
+        rpc_config: Optional dict with RPC connection settings (host, port, user, password).
+                    If None, loads from environment/.env file.
+        serial_port: Optional serial port for Meshtastic device.
+                    If None, loads from environment or auto-detects.
+        reassembly_timeout: Optional timeout in seconds for transaction reassembly.
+                    If None, loads from environment or uses default (300s).
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -666,19 +675,25 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
     tor_process = None
     tor_data_dir = None
     try:
-        # --- Story 5.2: Load reassembly timeout from config ---
-        timeout_seconds, timeout_source = load_reassembly_timeout()
+        # --- Story 5.2 & 18.3: Load reassembly timeout from parameter, env, or default ---
+        if reassembly_timeout is not None:
+            timeout_seconds = reassembly_timeout
+            timeout_source = "gui"
+        else:
+            timeout_seconds, timeout_source = load_reassembly_timeout()
         transaction_reassembler = TransactionReassembler(
             timeout_seconds=timeout_seconds
         )
         server_logger.info(
             f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})"
         )
-        # --- End Story 5.2 integration ---
+        # --- End Story 5.2 & 18.3 integration ---
 
         # --- Story 4.2: Connect to Bitcoin RPC ---
         try:
-            rpc_config = load_bitcoin_rpc_config()
+            # Use injected config if provided, otherwise load from environment
+            if rpc_config is None:
+                rpc_config = load_bitcoin_rpc_config()
             global bitcoin_rpc
 
             bitcoin_rpc = BitcoinRPCClient(rpc_config)
@@ -698,8 +713,8 @@ def main(stop_event: Optional[threading.Event] = None) -> None:
         # Store bitcoin_rpc for later use (e.g., as a global or pass to handlers)
         # --- End Story 4.2 integration ---
 
-        # initialize_meshtastic_interface will now use the config loader by default
-        meshtastic_iface = initialize_meshtastic_interface()
+        # initialize_meshtastic_interface will use provided port, or fallback to config/auto-detect
+        meshtastic_iface = initialize_meshtastic_interface(port=serial_port)
 
         if not meshtastic_iface:
             server_logger.error("Failed to initialize Meshtastic interface. Exiting.")

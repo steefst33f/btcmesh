@@ -15,13 +15,10 @@ import logging
 # This allows tests to run in environments without Kivy installed.
 
 class MockCanvas:
-    """Mock canvas for Kivy widgets."""
+    """Mock canvas for Kivy widgets - acts as context manager."""
     def __init__(self):
-        self.before = MockCanvasContext()
+        self.before = self  # self-referential for canvas.before
 
-
-class MockCanvasContext:
-    """Mock canvas context manager."""
     def __enter__(self):
         return self
 
@@ -69,7 +66,13 @@ class MockScrollView:
 class MockWidget:
     """Mock base class for Widget."""
     def __init__(self, **kwargs):
-        self.canvas = unittest.mock.MagicMock()
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = kwargs.get('width', 100)
+        self.height = kwargs.get('height', 100)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.canvas = MockCanvas()
 
     def bind(self, **kwargs):
         pass
@@ -88,12 +91,55 @@ scrollview_mock.ScrollView = MockScrollView
 widget_mock = unittest.mock.MagicMock()
 widget_mock.Widget = MockWidget
 
+
+class MockTextInput:
+    """Mock base class for TextInput that properly stores password attribute."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.hint_text = kwargs.get('hint_text', '')
+        self.password = kwargs.get('password', False)
+        self.multiline = kwargs.get('multiline', True)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.foreground_color = kwargs.get('foreground_color', (0, 0, 0, 1))
+        self.cursor_color = kwargs.get('cursor_color', (0, 0, 0, 1))
+        self.input_filter = kwargs.get('input_filter', None)
+
+    def bind(self, **kwargs):
+        pass
+
+
+class MockButton:
+    """Mock base class for Button that properly stores text attribute."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.width = kwargs.get('width', 100)
+        self.height = kwargs.get('height', 100)
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.background_normal = kwargs.get('background_normal', '')
+        self.font_size = kwargs.get('font_size', '14sp')
+        self.bold = kwargs.get('bold', False)
+        self.disabled = kwargs.get('disabled', False)
+
+    def bind(self, **kwargs):
+        pass
+
+
+textinput_mock = unittest.mock.MagicMock()
+textinput_mock.TextInput = MockTextInput
+
+button_mock = unittest.mock.MagicMock()
+button_mock.Button = MockButton
+
 sys.modules['kivy'] = kivy_mock
 sys.modules['kivy.uix'] = kivy_mock
 sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
 sys.modules['kivy.uix.widget'] = widget_mock
 sys.modules['kivy.uix.label'] = kivy_mock
-sys.modules['kivy.uix.button'] = kivy_mock
+sys.modules['kivy.uix.button'] = button_mock
+sys.modules['kivy.uix.textinput'] = textinput_mock
 sys.modules['kivy.uix.scrollview'] = scrollview_mock
 sys.modules['kivy.graphics'] = kivy_mock
 sys.modules['kivy.clock'] = kivy_mock
@@ -429,6 +475,24 @@ class TestWidgetFactories(unittest.TestCase):
         # We can verify it has expected Label attributes
         self.assertTrue(hasattr(value_label, 'text'))
         self.assertTrue(hasattr(value_label, 'color'))
+
+    def test_create_toggle_button_exists(self):
+        """Given gui_common module, Then create_toggle_button should be defined."""
+        from core import gui_common
+        self.assertTrue(hasattr(gui_common, 'create_toggle_button'))
+        self.assertTrue(callable(gui_common.create_toggle_button))
+
+    def test_create_toggle_button_returns_button(self):
+        """Given create_toggle_button call, Then returns a Button-like object."""
+        from core import gui_common
+        btn = gui_common.create_toggle_button('Show')
+        self.assertTrue(hasattr(btn, 'text'))
+
+    def test_create_toggle_button_uses_provided_text(self):
+        """Given create_toggle_button call with text, Then button text is set correctly."""
+        from core import gui_common
+        btn = gui_common.create_toggle_button('Toggle')
+        self.assertEqual(btn.text, 'Toggle')
 
 
 if __name__ == '__main__':

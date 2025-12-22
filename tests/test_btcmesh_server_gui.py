@@ -16,13 +16,10 @@ import unittest.mock
 
 # Create proper base classes for Kivy widgets to allow class inheritance
 class MockCanvas:
-    """Mock canvas for Kivy widgets."""
+    """Mock canvas for Kivy widgets - acts as context manager."""
     def __init__(self):
-        self.before = MockCanvasContext()
+        self.before = self  # self-referential for canvas.before
 
-
-class MockCanvasContext:
-    """Mock canvas context manager."""
     def __enter__(self):
         return self
 
@@ -67,12 +64,60 @@ class MockScrollView:
         return lambda *args: None
 
 
+class MockWidget:
+    """Mock base class for Widget."""
+    def __init__(self, **kwargs):
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        self.width = kwargs.get('width', 100)
+        self.height = kwargs.get('height', 100)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.canvas = MockCanvas()
+
+    def bind(self, **kwargs):
+        pass
+
+
 class MockApp:
     """Mock base class for App."""
     def __init__(self, **kwargs):
         pass
 
     def run(self):
+        pass
+
+
+class MockTextInput:
+    """Mock base class for TextInput that properly stores password attribute."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.hint_text = kwargs.get('hint_text', '')
+        self.password = kwargs.get('password', False)
+        self.disabled = kwargs.get('disabled', False)
+        self.multiline = kwargs.get('multiline', True)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.foreground_color = kwargs.get('foreground_color', (0, 0, 0, 1))
+        self.cursor_color = kwargs.get('cursor_color', (0, 0, 0, 1))
+        self.input_filter = kwargs.get('input_filter', None)
+
+    def bind(self, **kwargs):
+        pass
+
+
+class MockSpinner:
+    """Mock base class for Spinner that properly stores text and values."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.values = kwargs.get('values', [])
+        self.disabled = kwargs.get('disabled', False)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.background_normal = kwargs.get('background_normal', '')
+        self.color = kwargs.get('color', (0, 0, 0, 1))
+
+    def bind(self, **kwargs):
         pass
 
 
@@ -90,6 +135,15 @@ scrollview_mock.ScrollView = MockScrollView
 app_mock = unittest.mock.MagicMock()
 app_mock.App = MockApp
 
+widget_mock = unittest.mock.MagicMock()
+widget_mock.Widget = MockWidget
+
+textinput_mock = unittest.mock.MagicMock()
+textinput_mock.TextInput = MockTextInput
+
+spinner_mock = unittest.mock.MagicMock()
+spinner_mock.Spinner = MockSpinner
+
 # Properties need to return actual values, not MagicMocks
 properties_mock = unittest.mock.MagicMock()
 properties_mock.StringProperty = lambda default='': default
@@ -100,13 +154,13 @@ sys.modules['kivy.app'] = app_mock
 sys.modules['kivy.uix'] = kivy_mock
 sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
 sys.modules['kivy.uix.label'] = kivy_mock
-sys.modules['kivy.uix.textinput'] = kivy_mock
+sys.modules['kivy.uix.textinput'] = textinput_mock
 sys.modules['kivy.uix.button'] = kivy_mock
 sys.modules['kivy.uix.scrollview'] = scrollview_mock
 sys.modules['kivy.uix.popup'] = kivy_mock
-sys.modules['kivy.uix.widget'] = kivy_mock
+sys.modules['kivy.uix.widget'] = widget_mock
 sys.modules['kivy.uix.togglebutton'] = kivy_mock
-sys.modules['kivy.uix.spinner'] = kivy_mock
+sys.modules['kivy.uix.spinner'] = spinner_mock
 sys.modules['kivy.clock'] = kivy_mock
 sys.modules['kivy.graphics'] = kivy_mock
 sys.modules['kivy.core'] = kivy_mock
@@ -118,6 +172,10 @@ sys.modules['kivy.utils'] = kivy_mock
 # Mock pubsub (used by btcmesh_server)
 pubsub_mock = unittest.mock.MagicMock()
 sys.modules['pubsub'] = pubsub_mock
+
+# Clear cached gui_common to ensure it uses our mocks
+if 'core.gui_common' in sys.modules:
+    del sys.modules['core.gui_common']
 
 # =============================================================================
 # Story 15.1: Create Server GUI Application Structure
@@ -302,7 +360,9 @@ class TestServerStartStopStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        # Reload the module to get fresh state
+        # Reload modules to get fresh state with correct mocks
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -364,12 +424,21 @@ class TestServerStartStopStory152(unittest.TestCase):
         self.assertIsNone(gui._log_handler)
 
     def test_on_start_pressed_disables_start_button(self):
-        """Given operator clicks Start Server, Then start button should be disabled."""
+        """Given operator clicks Start Server with valid settings, Then start button should be disabled."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
                 gui = btcmesh_server_gui.BTCMeshServerGUI()
+                # Create separate mock objects for each input to avoid shared state
+                gui.rpc_host_input = unittest.mock.MagicMock()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input = unittest.mock.MagicMock()
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input = unittest.mock.MagicMock()
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input = unittest.mock.MagicMock()
+                gui.rpc_password_input.text = 'password'
                 mock_instance = unittest.mock.MagicMock()
                 gui.on_start_pressed(mock_instance)
         self.assertTrue(gui.start_btn.disabled)
@@ -392,6 +461,8 @@ class TestServerResultHandlingStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -582,6 +653,8 @@ class TestServerLogParsingStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -735,6 +808,8 @@ class TestQueueLogHandlerStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -764,6 +839,701 @@ class TestQueueLogHandlerStory152(unittest.TestCase):
         self.assertEqual(result[0], 'log')
         self.assertEqual(result[1], 'Test message')
         self.assertEqual(result[2], logging.INFO)
+
+
+class TestRPCSettingsStory181(unittest.TestCase):
+    """Tests for Bitcoin RPC Settings in Story 18.1."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_rpc_host_input(self):
+        """Given server GUI, Then it should have rpc_host_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'rpc_host_input'))
+
+    def test_gui_has_rpc_port_input(self):
+        """Given server GUI, Then it should have rpc_port_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'rpc_port_input'))
+
+    def test_gui_has_rpc_user_input(self):
+        """Given server GUI, Then it should have rpc_user_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'rpc_user_input'))
+
+    def test_gui_has_rpc_password_input(self):
+        """Given server GUI, Then it should have rpc_password_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'rpc_password_input'))
+
+    def test_password_input_is_masked_by_default(self):
+        """Given server GUI, Then password input should be masked (password=True)."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(gui.rpc_password_input.password)
+
+    def test_gui_has_show_password_button(self):
+        """Given server GUI, Then it should have show_password_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'show_password_btn'))
+
+    def test_toggle_password_visibility_shows_password(self):
+        """Given password is masked, When toggle is clicked, Then password is visible."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Initially masked
+            self.assertTrue(gui.rpc_password_input.password)
+            # Toggle
+            gui._toggle_password_visibility(None)
+        # Now visible
+        self.assertFalse(gui.rpc_password_input.password)
+        self.assertEqual(gui.show_password_btn.text, 'Hide')
+
+    def test_toggle_password_visibility_hides_password(self):
+        """Given password is visible, When toggle is clicked, Then password is masked."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # First toggle to show
+            gui._toggle_password_visibility(None)
+            self.assertFalse(gui.rpc_password_input.password)
+            # Toggle again to hide
+            gui._toggle_password_visibility(None)
+        self.assertTrue(gui.rpc_password_input.password)
+        self.assertEqual(gui.show_password_btn.text, 'Show')
+
+    def test_gui_has_test_connection_button(self):
+        """Given server GUI, Then it should have test_connection_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'test_connection_btn'))
+
+    def test_test_connection_validates_empty_host(self):
+        """Given empty host, When Test Connection clicked, Then error is logged."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Create separate mock objects for each input to avoid shared state
+            gui.rpc_host_input = unittest.mock.MagicMock()
+            gui.rpc_host_input.text = ''
+            gui.rpc_port_input = unittest.mock.MagicMock()
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input = unittest.mock.MagicMock()
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input = unittest.mock.MagicMock()
+            gui.rpc_password_input.text = 'pass'
+            # Mock the add_message method
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._on_test_connection(None)
+        # Verify error message was logged
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Host is required', call_args[0])
+
+    def test_test_connection_validates_empty_password(self):
+        """Given empty password, When Test Connection clicked, Then error is logged."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Create separate mock objects for each input to avoid shared state
+            gui.rpc_host_input = unittest.mock.MagicMock()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input = unittest.mock.MagicMock()
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input = unittest.mock.MagicMock()
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input = unittest.mock.MagicMock()
+            gui.rpc_password_input.text = ''
+            # Mock the add_message method
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._on_test_connection(None)
+        # Verify error message was logged
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Password is required', call_args[0])
+
+    def test_handle_result_test_connection_success(self):
+        """Given test_connection_result with success, Then success message logged."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.test_connection_btn.disabled = True
+            gui._handle_result(('test_connection_result', True, 'Connected to main network'))
+        self.assertFalse(gui.test_connection_btn.disabled)
+
+    def test_handle_result_test_connection_failure(self):
+        """Given test_connection_result with failure, Then error message logged."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.test_connection_btn.disabled = True
+            gui._handle_result(('test_connection_result', False, 'Connection refused'))
+        self.assertFalse(gui.test_connection_btn.disabled)
+
+    def test_on_start_validates_empty_fields(self):
+        """Given empty RPC fields, When Start Server clicked, Then error is logged."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Create separate mock objects for each input to avoid shared state
+            gui.rpc_host_input = unittest.mock.MagicMock()
+            gui.rpc_host_input.text = ''
+            gui.rpc_port_input = unittest.mock.MagicMock()
+            gui.rpc_port_input.text = ''
+            gui.rpc_user_input = unittest.mock.MagicMock()
+            gui.rpc_user_input.text = ''
+            gui.rpc_password_input = unittest.mock.MagicMock()
+            gui.rpc_password_input.text = ''
+            # Mock the add_message method
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui.on_start_pressed(None)
+        # Verify error message was logged
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Cannot start', call_args[0])
+
+    def test_host_input_is_masked_by_default(self):
+        """Given server GUI, Then host input should be masked (password=True) for privacy."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(gui.rpc_host_input.password)
+
+    def test_gui_has_show_host_button(self):
+        """Given server GUI, Then it should have show_host_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'show_host_btn'))
+
+    def test_toggle_host_visibility_shows_host(self):
+        """Given host is masked, When toggle is clicked, Then host is visible."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Initially masked
+            self.assertTrue(gui.rpc_host_input.password)
+            # Toggle
+            gui._toggle_host_visibility(None)
+        # Now visible
+        self.assertFalse(gui.rpc_host_input.password)
+        self.assertEqual(gui.show_host_btn.text, 'Hide')
+
+    def test_toggle_host_visibility_hides_host(self):
+        """Given host is visible, When toggle is clicked, Then host is masked."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # First toggle to show
+            gui._toggle_host_visibility(None)
+            self.assertFalse(gui.rpc_host_input.password)
+            # Toggle again to hide
+            gui._toggle_host_visibility(None)
+        self.assertTrue(gui.rpc_host_input.password)
+        self.assertEqual(gui.show_host_btn.text, 'Show')
+
+    def test_rpc_settings_disabled_when_server_starts(self):
+        """Given server starts, Then RPC settings inputs should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                # Create separate mock objects for each input to avoid shared state
+                gui.rpc_host_input = unittest.mock.MagicMock()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input = unittest.mock.MagicMock()
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input = unittest.mock.MagicMock()
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input = unittest.mock.MagicMock()
+                gui.rpc_password_input.text = 'password'
+                gui.test_connection_btn = unittest.mock.MagicMock()
+                gui.on_start_pressed(None)
+        # Verify all inputs are disabled
+        self.assertTrue(gui.rpc_host_input.disabled)
+        self.assertTrue(gui.rpc_port_input.disabled)
+        self.assertTrue(gui.rpc_user_input.disabled)
+        self.assertTrue(gui.rpc_password_input.disabled)
+        self.assertTrue(gui.test_connection_btn.disabled)
+
+    def test_rpc_settings_enabled_when_server_stops(self):
+        """Given server stops, Then RPC settings inputs should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Disable settings (simulating running server)
+            gui._set_rpc_settings_enabled(False)
+            self.assertTrue(gui.rpc_host_input.disabled)
+            # Simulate server stopped
+            gui._handle_result(('server_stopped', None))
+        # Verify all inputs are re-enabled
+        self.assertFalse(gui.rpc_host_input.disabled)
+        self.assertFalse(gui.rpc_port_input.disabled)
+        self.assertFalse(gui.rpc_user_input.disabled)
+        self.assertFalse(gui.rpc_password_input.disabled)
+        self.assertFalse(gui.test_connection_btn.disabled)
+
+    def test_rpc_settings_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then RPC settings inputs should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Disable settings (simulating server start attempt)
+            gui._set_rpc_settings_enabled(False)
+            self.assertTrue(gui.rpc_host_input.disabled)
+            # Simulate meshtastic failure
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        # Verify inputs are re-enabled
+        self.assertFalse(gui.rpc_host_input.disabled)
+        self.assertFalse(gui.test_connection_btn.disabled)
+
+    def test_rpc_settings_enabled_on_init_error(self):
+        """Given init error occurs, Then RPC settings inputs should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Disable settings (simulating server start attempt)
+            gui._set_rpc_settings_enabled(False)
+            self.assertTrue(gui.rpc_host_input.disabled)
+            # Simulate init error
+            gui._handle_result(('init_error', 'Some error'))
+        # Verify inputs are re-enabled
+        self.assertFalse(gui.rpc_host_input.disabled)
+        self.assertFalse(gui.test_connection_btn.disabled)
+
+    def test_start_button_disabled_during_test_connection(self):
+        """Given Test Connection clicked, Then Start button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                # Set valid inputs
+                gui.rpc_host_input = unittest.mock.MagicMock()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input = unittest.mock.MagicMock()
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input = unittest.mock.MagicMock()
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input = unittest.mock.MagicMock()
+                gui.rpc_password_input.text = 'password'
+                gui._on_test_connection(None)
+        # Verify start button is disabled during test
+        self.assertTrue(gui.start_btn.disabled)
+
+    def test_start_button_enabled_after_test_connection_success(self):
+        """Given Test Connection succeeds, Then Start button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.start_btn.disabled = True
+            gui._handle_result(('test_connection_result', True, 'Connected to main network'))
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_button_enabled_after_test_connection_failure(self):
+        """Given Test Connection fails, Then Start button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.start_btn.disabled = True
+            gui._handle_result(('test_connection_result', False, 'Connection refused'))
+        self.assertFalse(gui.start_btn.disabled)
+
+
+class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
+    """Tests for Story 18.2: Meshtastic Device Settings."""
+
+    def test_gui_has_device_spinner(self):
+        """Given server GUI, Then it should have device_spinner attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'device_spinner'))
+
+    def test_gui_has_scan_button(self):
+        """Given server GUI, Then it should have scan_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'scan_btn'))
+
+    def test_device_spinner_default_is_auto_detect(self):
+        """Given server GUI with no env config, Then device spinner should show Auto-detect."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.dict('os.environ', {}, clear=True):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertEqual(gui.device_spinner.text, btcmesh_server_gui.DEVICE_AUTO_DETECT)
+
+    def test_device_spinner_uses_env_default(self):
+        """Given MESHTASTIC_SERIAL_PORT env var, Then device spinner should use it."""
+        import btcmesh_server_gui
+        import os
+
+        # Set the env var before creating GUI (will be used by os.getenv)
+        original_value = os.environ.get('MESHTASTIC_SERIAL_PORT')
+        os.environ['MESHTASTIC_SERIAL_PORT'] = '/dev/ttyUSB0'
+        try:
+            with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+            self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
+        finally:
+            # Restore original value
+            if original_value is None:
+                os.environ.pop('MESHTASTIC_SERIAL_PORT', None)
+            else:
+                os.environ['MESHTASTIC_SERIAL_PORT'] = original_value
+
+    def test_devices_found_updates_spinner_values(self):
+        """Given devices_found result, Then spinner values should include Auto-detect and devices."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('devices_found', ['/dev/ttyUSB0', '/dev/ttyACM0']))
+        self.assertIn(btcmesh_server_gui.DEVICE_AUTO_DETECT, gui.device_spinner.values)
+        self.assertIn('/dev/ttyUSB0', gui.device_spinner.values)
+        self.assertIn('/dev/ttyACM0', gui.device_spinner.values)
+
+    def test_devices_found_single_device_auto_selects(self):
+        """Given single device found, Then spinner should auto-select it."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+        self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
+
+    def test_devices_found_no_devices_shows_auto_detect(self):
+        """Given no devices found, Then spinner should show Auto-detect."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.device_spinner.text = btcmesh_server_gui.DEVICE_SCANNING
+            gui._handle_result(('devices_found', []))
+        self.assertEqual(gui.device_spinner.text, btcmesh_server_gui.DEVICE_AUTO_DETECT)
+
+    def test_meshtastic_settings_disabled_when_server_starts(self):
+        """Given server starts, Then meshtastic settings should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                # Set valid RPC inputs
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+        self.assertTrue(gui.device_spinner.disabled)
+        self.assertTrue(gui.scan_btn.disabled)
+
+    def test_meshtastic_settings_enabled_when_server_stops(self):
+        """Given server stops, Then meshtastic settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_meshtastic_settings_enabled(False)
+            self.assertTrue(gui.device_spinner.disabled)
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.device_spinner.disabled)
+        self.assertFalse(gui.scan_btn.disabled)
+
+    def test_meshtastic_settings_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then meshtastic settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_meshtastic_settings_enabled(False)
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.device_spinner.disabled)
+        self.assertFalse(gui.scan_btn.disabled)
+
+    def test_scan_button_disabled_during_scan(self):
+        """Given Scan button clicked, Then scan button should be disabled during scan."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui._on_scan_devices(None)
+        self.assertTrue(gui.scan_btn.disabled)
+        self.assertEqual(gui.device_spinner.text, btcmesh_server_gui.DEVICE_SCANNING)
+
+    def test_scan_button_enabled_after_devices_found(self):
+        """Given devices_found result, Then scan button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.scan_btn.disabled = True
+            gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+        self.assertFalse(gui.scan_btn.disabled)
+
+    def test_auto_detect_passes_none_to_server(self):
+        """Given Auto-detect selected, Then serial_port should be None when starting server."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.device_spinner.text = btcmesh_server_gui.DEVICE_AUTO_DETECT
+
+                    # Capture the thread target function
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    # Call the target function to trigger btcmesh_server.main
+                    if target_fn:
+                        target_fn()
+                        mock_main.assert_called_once()
+                        call_kwargs = mock_main.call_args.kwargs
+                        self.assertIsNone(call_kwargs.get('serial_port'))
+
+    def test_selected_device_passes_to_server(self):
+        """Given device selected, Then serial_port should be passed to server."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.device_spinner.text = '/dev/ttyUSB0'
+
+                    # Capture the thread target function
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    # Call the target function to trigger btcmesh_server.main
+                    if target_fn:
+                        target_fn()
+                        mock_main.assert_called_once()
+                        call_kwargs = mock_main.call_args.kwargs
+                        self.assertEqual(call_kwargs.get('serial_port'), '/dev/ttyUSB0')
+
+
+class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
+    """Tests for Story 18.3: Reassembly Timeout Settings."""
+
+    def test_gui_has_timeout_input(self):
+        """Given server GUI, Then it should have timeout_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'timeout_input'))
+
+    def test_timeout_input_default_is_300(self):
+        """Given server GUI with no env config, Then timeout should default to 300."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.dict('os.environ', {}, clear=True):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertEqual(gui.timeout_input.text, '300')
+
+    def test_timeout_input_uses_env_default(self):
+        """Given REASSEMBLY_TIMEOUT_SECONDS env var, Then timeout input should use it."""
+        import btcmesh_server_gui
+        import os
+
+        original_value = os.environ.get('REASSEMBLY_TIMEOUT_SECONDS')
+        os.environ['REASSEMBLY_TIMEOUT_SECONDS'] = '600'
+        try:
+            with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+            self.assertEqual(gui.timeout_input.text, '600')
+        finally:
+            if original_value is None:
+                os.environ.pop('REASSEMBLY_TIMEOUT_SECONDS', None)
+            else:
+                os.environ['REASSEMBLY_TIMEOUT_SECONDS'] = original_value
+
+    def test_timeout_settings_disabled_when_server_starts(self):
+        """Given server starts, Then timeout settings should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+        self.assertTrue(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_when_server_stops(self):
+        """Given server stops, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            self.assertTrue(gui.timeout_input.disabled)
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_timeout_settings_enabled_on_init_error(self):
+        """Given init error, Then timeout settings should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._set_timeout_settings_enabled(False)
+            gui._handle_result(('init_error', 'Some error'))
+        self.assertFalse(gui.timeout_input.disabled)
+
+    def test_start_rejected_with_empty_timeout(self):
+        """Given empty timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = ''
+            gui.on_start_pressed(None)
+        # Start button should not be disabled (rejected early)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_invalid_timeout(self):
+        """Given non-integer timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = 'abc'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_zero_timeout(self):
+        """Given zero timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = '0'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_start_rejected_with_negative_timeout(self):
+        """Given negative timeout, Then start should be rejected with error message."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'password'
+            gui.timeout_input.text = '-10'
+            gui.on_start_pressed(None)
+        self.assertFalse(gui.start_btn.disabled)
+
+    def test_timeout_passed_to_server(self):
+        """Given valid timeout, Then reassembly_timeout should be passed to server."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.timeout_input.text = '120'
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    if target_fn:
+                        target_fn()
+                        mock_main.assert_called_once()
+                        call_kwargs = mock_main.call_args.kwargs
+                        self.assertEqual(call_kwargs.get('reassembly_timeout'), 120)
 
 
 if __name__ == '__main__':
