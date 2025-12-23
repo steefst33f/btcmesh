@@ -91,7 +91,7 @@ Android is more feasible with Kivy:
 | Desktop Support | ⚠️ Limited (Electron wrapper) |
 | Code Reuse | None from Python codebase |
 
-### Option 3: Native Development (Swift + Kotlin)
+### Option 3: Native Development (Swift + Kotlin) ⭐ RECOMMENDED
 
 | Aspect | Details |
 |--------|---------|
@@ -99,6 +99,9 @@ Android is more feasible with Kivy:
 | BLE Support | ✅ Best possible (native APIs) |
 | Maintenance | Two separate codebases |
 | Code Reuse | None, but Meshtastic has reference implementations |
+| Team Fit | ✅ Swift developer available on team |
+
+**Key Advantage:** The official Meshtastic iOS app is written in Swift/SwiftUI, providing direct reference code for BLE communication patterns.
 
 ### Option 4: Keep Desktop-Only + Web Companion
 
@@ -113,19 +116,34 @@ Android is more feasible with Kivy:
 
 ## Recommended Strategy
 
-### For Current Project
+### Team Considerations
+
+With a **Swift developer already on the team**, native iOS development becomes the preferred approach:
+
+| Factor | Native Swift | Flutter |
+|--------|--------------|---------|
+| iOS development | ✅ Ready now | ⏳ Learn Dart first |
+| Reference code | ✅ Meshtastic-Apple (Swift) | 🔄 Must translate |
+| BLE reliability | ✅ Best possible | Very good |
+| Android later | Need Kotlin dev or learn Flutter | Same codebase |
+
+### Recommended Approach
+
 1. **Keep Kivy for Desktop/Server** - Works perfectly, well-tested
 2. **Keep Python CLI** - Power users, scripting
-3. **Build separate Flutter mobile app** - If mobile is required
+3. **Build native Swift iOS app** - Leverage existing team expertise
+4. **Decide on Android later** - Either find Kotlin dev, or have Swift dev learn Flutter for unified v2
+
+**Note:** The Meshtastic team maintains both native apps separately (Swift + Kotlin), validating this as a viable approach for BLE-heavy applications.
 
 ### Hybrid Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  Desktop App    │     │   iOS App       │     │  Android App    │
-│  (Kivy/Python)  │     │   (Flutter)     │     │  (Flutter)      │
+│  (Kivy/Python)  │     │   (Swift)       │     │  (TBD)          │
 │                 │     │                 │     │                 │
-│  ✅ KEEP        │     │  🆕 NEW         │     │  🆕 NEW         │
+│  ✅ KEEP        │     │  🆕 NEW         │     │  📋 FUTURE      │
 └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
          │                       │                       │
          │ USB/Serial            │ BLE                   │ BLE/USB
@@ -143,7 +161,7 @@ Android is more feasible with Kivy:
 
 ---
 
-## What Would Need Porting to Flutter
+## What Would Need Implementing in Swift
 
 ### Core Protocol (Simple)
 - Transaction hex chunking (`BTC_TX|session|chunk/total|payload`)
@@ -151,18 +169,22 @@ Android is more feasible with Kivy:
 - Session ID generation
 
 ### BLE Communication
-- Meshtastic service/characteristic UUIDs
-- Read/write to Meshtastic BLE interface
+- Meshtastic service/characteristic UUIDs (reference: Meshtastic-Apple)
+- CoreBluetooth integration for read/write
 - Connection state management
+- Handle iOS UUID-based device identification (no MAC addresses)
 
-### UI Components
-- Transaction input (paste/QR scan)
+### UI Components (SwiftUI)
+- Transaction input (paste from clipboard)
+- QR code scanner (native iOS AVFoundation)
 - Destination node selection
 - Connection status display
 - Activity log
 
 ### Reference Resources
-- Meshtastic iOS app (Swift): https://github.com/meshtastic/Meshtastic-Apple
+- **Meshtastic iOS app (Swift):** https://github.com/meshtastic/Meshtastic-Apple
+  - Primary reference for BLE communication patterns
+  - Shows how to handle CoreBluetooth on iOS
 - Meshtastic Android app (Kotlin): https://github.com/meshtastic/Meshtastic-Android
 - Meshtastic protobuf definitions: https://github.com/meshtastic/protobufs
 
@@ -179,8 +201,11 @@ Android is more feasible with Kivy:
 3. **Validate Dependencies Early**
    Before choosing a framework, verify ALL critical dependencies work on target platforms.
 
-4. **Flutter/React Native for Mobile Hardware**
+4. **Native or Flutter/React Native for Mobile Hardware**
    These frameworks have mature, native BLE libraries that work reliably on iOS and Android.
+
+5. **Consider Team Expertise**
+   When choosing between frameworks, existing team skills can outweigh theoretical advantages. A Swift developer can ship native iOS faster than learning Flutter.
 
 ---
 
@@ -188,9 +213,10 @@ Android is more feasible with Kivy:
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2024-12 | Keep Kivy for desktop | Works well, significant investment |
-| 2024-12 | Defer iOS/Android to Flutter | BLE blocker with Python |
-| 2024-12 | Server remains Python | No mobile requirement |
+| 2025-12 | Keep Kivy for desktop | Works well, significant investment |
+| 2025-12 | Server remains Python | No mobile requirement |
+| 2025-12 | iOS: Native Swift over Flutter | Swift developer on team, direct Meshtastic-Apple reference |
+| 2025-12 | Android: Defer decision | Evaluate Kotlin vs Flutter after iOS ships |
 
 ---
 
