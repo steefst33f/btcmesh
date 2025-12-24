@@ -314,7 +314,7 @@ def on_receive_text_message(
                         # If chunk_info is invalid, leave chunk_number/total_chunks as 1
                         pass
                     reassembled_hex = transaction_reassembler.add_chunk(
-                        sender_raw_key_for_reassembler, message_text
+                        sender_node_id_for_reply, message_text
                     )
 
                     # ACK valid chunk and request next
@@ -654,7 +654,8 @@ def initialize_meshtastic_interface(
 def main(stop_event: Optional[threading.Event] = None,
         rpc_config: Optional[Dict[str, Any]] = None,
         serial_port: Optional[str] = None,
-        reassembly_timeout: Optional[int] = None) -> None:
+        reassembly_timeout: Optional[int] = None,
+        session_update_callback: Optional[Callable[[list], None]] = None) -> None:
     """
     Main function for the BTC Mesh Server.
 
@@ -667,6 +668,9 @@ def main(stop_event: Optional[threading.Event] = None,
                     If None, loads from environment or auto-detects.
         reassembly_timeout: Optional timeout in seconds for transaction reassembly.
                     If None, loads from environment or uses default (300s).
+        session_update_callback: Optional callback called periodically with list of active
+                    session info dicts. Each dict contains: session_id, sender,
+                    chunks_received, total_chunks, elapsed_seconds.
     """
     global meshtastic_interface_instance
     global transaction_reassembler
@@ -748,7 +752,9 @@ def main(stop_event: Optional[threading.Event] = None,
 
         try:
             cleanup_interval = 10  # seconds, same as sleep
+            session_update_interval = 1  # Update session info every second for GUI
             last_cleanup_time = time.time()
+            last_session_update_time = time.time()
 
             while True:
                 # Check for stop signal from GUI
@@ -757,6 +763,13 @@ def main(stop_event: Optional[threading.Event] = None,
                     break
 
                 current_time = time.time()
+
+                # Send session updates to GUI callback
+                if session_update_callback and current_time - last_session_update_time >= session_update_interval:
+                    sessions_info = transaction_reassembler.get_active_sessions_info()
+                    session_update_callback(sessions_info)
+                    last_session_update_time = current_time
+
                 if current_time - last_cleanup_time >= cleanup_interval:
                     server_logger.debug(
                         "Running periodic cleanup of stale reassembly sessions..."

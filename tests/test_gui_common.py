@@ -33,9 +33,17 @@ class MockBoxLayout:
         self.size = (100, 100)
         self.pos = (0, 0)
         self.width = 100
+        self.height = kwargs.get('height', 100)
+        self.children = []
 
     def add_widget(self, widget):
-        pass
+        widget.parent = self
+        self.children.append(widget)
+
+    def remove_widget(self, widget):
+        widget.parent = None
+        if widget in self.children:
+            self.children.remove(widget)
 
     def bind(self, **kwargs):
         pass
@@ -51,9 +59,12 @@ class MockScrollView:
         self.size = (100, 100)
         self.pos = (0, 0)
         self.width = 100
+        self.height = kwargs.get('height', 100)
+        self.children = []
 
     def add_widget(self, widget):
-        pass
+        widget.parent = self
+        self.children.append(widget)
 
     def bind(self, **kwargs):
         pass
@@ -109,6 +120,31 @@ class MockTextInput:
         pass
 
 
+class MockLabel:
+    """Mock base class for Label that properly stores text and parent."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.color = kwargs.get('color', (1, 1, 1, 1))
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.height = kwargs.get('height', 20)
+        self.width = kwargs.get('width', 100)
+        self.halign = kwargs.get('halign', 'left')
+        self.valign = kwargs.get('valign', 'middle')
+        self.parent = None
+        self.texture_size = (100, 20)
+        self.text_size = (None, None)
+        self.size = (100, 20)
+        self.bold = kwargs.get('bold', False)
+
+    def bind(self, **kwargs):
+        pass
+
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
+
+
 class MockButton:
     """Mock base class for Button that properly stores text attribute."""
     def __init__(self, **kwargs):
@@ -133,11 +169,14 @@ textinput_mock.TextInput = MockTextInput
 button_mock = unittest.mock.MagicMock()
 button_mock.Button = MockButton
 
+label_mock = unittest.mock.MagicMock()
+label_mock.Label = MockLabel
+
 sys.modules['kivy'] = kivy_mock
 sys.modules['kivy.uix'] = kivy_mock
 sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
 sys.modules['kivy.uix.widget'] = widget_mock
-sys.modules['kivy.uix.label'] = kivy_mock
+sys.modules['kivy.uix.label'] = label_mock
 sys.modules['kivy.uix.button'] = button_mock
 sys.modules['kivy.uix.textinput'] = textinput_mock
 sys.modules['kivy.uix.scrollview'] = scrollview_mock

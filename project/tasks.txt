@@ -771,24 +771,43 @@ lora/
     *   _Note: Reuses StatusLog component from core/gui_common.py_
     *   _Note: See [project/log_color_spec.md](log_color_spec.md) for log message color categorization requirements._
 
-- [ ] **Story 17.2: Display Active Sessions**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** to see currently active transaction sessions,
-- [ ] *   **So that** I can monitor transactions in progress.
-    - [ ] *   **Scenario:** Active session displayed
-        - [ ] *   **Given** a transaction is being reassembled.
-        - [ ] *   **When** chunks are being received.
-        - [ ] *   **Then** the session is displayed showing: session ID, sender node, chunks received/total, time elapsed.
-    - [ ] *   **Scenario:** Session completes
-        - [ ] *   **Given** an active session is displayed.
-        - [ ] *   **When** all chunks are received and transaction is broadcast.
-        - [ ] *   **Then** the session is removed from active list.
-        - [ ] *   **And** success is logged in activity log.
-    - [ ] *   **Scenario:** Session times out
-        - [ ] *   **Given** an active session is displayed.
-        - [ ] *   **When** the reassembly timeout is reached.
-        - [ ] *   **Then** the session is removed from active list.
-        - [ ] *   **And** timeout error is logged in activity log.
+- [x] **Story 17.2: Display Active Sessions** *(Implemented)*
+- [x] *   **As a** relay operator,
+- [x] *   **I want** to see currently active transaction sessions,
+- [x] *   **So that** I can monitor transactions in progress.
+    - [x] *   **Scenario:** Active session displayed
+        - [x] *   **Given** a transaction is being reassembled.
+        - [x] *   **When** chunks are being received.
+        - [x] *   **Then** the session is displayed showing: session ID, sender node, chunks received/total, time elapsed.
+        - [x] *   *Note: Added get_active_sessions_info() to TransactionReassembler*
+        - [x] *   *Note: Server main() accepts session_update_callback parameter*
+        - [x] *   *Note: GUI displays sessions in "Active Sessions" section with live updates*
+    - [x] *   **Scenario:** Session count always visible
+        - [x] *   **Given** any number of active sessions (0 to many).
+        - [x] *   **Then** a session count label is always visible outside the scroll area.
+        - [x] *   **And** shows "0 active sessions", "1 active session", "5 active sessions" etc.
+        - [x] *   **And** color is gray when 0, amber/warning when >0.
+        - [x] *   *Note: session_count_label added above sessions_scroll ScrollView*
+    - [x] *   **Scenario:** Sessions displayed in ScrollView
+        - [x] *   **Given** more than 3 active sessions.
+        - [x] *   **When** the list exceeds visible space.
+        - [x] *   **Then** sessions are displayed in a fixed-height ScrollView (85px).
+        - [x] *   **And** up to 3 sessions fit without scrolling.
+        - [x] *   **And** orange scrollbar appears for 4+ sessions.
+        - [x] *   *Note: Uses ScrollView with bar_color=COLOR_PRIMARY*
+        - [x] *   *Note: Inner BoxLayout uses minimum_height binding*
+    - [x] *   **Scenario:** Session completes
+        - [x] *   **Given** an active session is displayed.
+        - [x] *   **When** all chunks are received and transaction is broadcast.
+        - [x] *   **Then** the session is removed from active list.
+        - [x] *   **And** success is logged in activity log.
+        - [x] *   *Note: Session automatically removed when not in next update*
+    - [x] *   **Scenario:** Session times out
+        - [x] *   **Given** an active session is displayed.
+        - [x] *   **When** the reassembly timeout is reached.
+        - [x] *   **Then** the session is removed from active list.
+        - [x] *   **And** timeout error is logged in activity log.
+        - [x] *   *Note: Timeout handled by existing cleanup_stale_sessions() with NACK logging*
 
 - [ ] **Story 17.3: Display Transaction History**
 - [ ] *   **As a** relay operator,

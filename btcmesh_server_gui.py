@@ -18,6 +18,7 @@ from kivy.uix.button import Button
 from kivy.uix.widget import Widget
 from kivy.uix.spinner import Spinner
 from kivy.uix.label import Label
+from kivy.uix.scrollview import ScrollView
 from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
@@ -60,7 +61,7 @@ from core.config_loader import load_app_config
 
 
 # Set window size for desktop
-Window.size = (550, 850)
+Window.size = (550, 920)
 
 # Meshtastic connection states (text only - description is in separate label)
 STATE_MESHTASTIC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
@@ -209,6 +210,13 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after status section
         self.add_widget(create_separator())
 
+        # Active Sessions section
+        self.add_widget(create_section_label('Active Sessions:'))
+        self._build_active_sessions_section()
+
+        # Orange separator line after active sessions section
+        self.add_widget(create_separator())
+
         # Bitcoin RPC Settings section
         self.add_widget(create_section_label('Bitcoin RPC Settings:'))
         self._build_rpc_settings()
@@ -277,6 +285,133 @@ class BTCMeshServerGUI(BoxLayout):
         status_section.add_widget(meshtastic_row)
 
         self.add_widget(status_section)
+
+    def _build_active_sessions_section(self):
+        """Build the active sessions display section with ScrollView.
+
+        Displays up to 3 sessions without scrolling (~85px), scrolls for more.
+        Session count is always visible outside the scroll area.
+        """
+        # Session count label (always visible, outside ScrollView)
+        self.session_count_label = Label(
+            text='0 active sessions',
+            size_hint_y=None,
+            height=25,
+            color=COLOR_DISCONNECTED,
+            halign='left',
+            valign='middle',
+        )
+        self.session_count_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        self.add_widget(self.session_count_label)
+
+        # Fixed-height ScrollView to contain sessions
+        # Height: 3 sessions * 25px + 2 * spacing(2) + padding = ~85px
+        self.sessions_scroll = ScrollView(
+            size_hint_y=None,
+            height=85,
+            do_scroll_x=False,
+            bar_width=8,
+            bar_color=COLOR_PRIMARY,
+            bar_inactive_color=(0.5, 0.5, 0.5, 0.3),
+        )
+
+        # Inner container that grows with content
+        self.sessions_container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            spacing=2
+        )
+        # Bind height to minimum height needed for children
+        self.sessions_container.bind(minimum_height=self.sessions_container.setter('height'))
+
+        # Initial "no sessions" label (shown when count is 0)
+        self.no_sessions_label = Label(
+            text='No active sessions',
+            size_hint_y=None,
+            height=30,
+            color=COLOR_DISCONNECTED,
+            halign='left',
+            valign='middle',
+        )
+        self.no_sessions_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        self.sessions_container.add_widget(self.no_sessions_label)
+
+        # Dict to track session display widgets by session_id
+        self._session_widgets = {}
+
+        self.sessions_scroll.add_widget(self.sessions_container)
+        self.add_widget(self.sessions_scroll)
+
+    def _update_active_sessions(self, sessions_info):
+        """Update the active sessions display with new session info.
+
+        Args:
+            sessions_info: List of dicts with session_id, sender, chunks_received,
+                        total_chunks, elapsed_seconds
+        """
+        # Update session count label (always visible)
+        count = len(sessions_info) if sessions_info else 0
+        self.session_count_label.text = f"{count} active session{'s' if count != 1 else ''}"
+        self.session_count_label.color = COLOR_WARNING if count > 0 else COLOR_DISCONNECTED
+
+        # Track which sessions are still active
+        active_session_ids = set()
+
+        if not sessions_info:
+            # No active sessions
+            if self._session_widgets:
+                # Clear all session widgets
+                for widget in self._session_widgets.values():
+                    self.sessions_container.remove_widget(widget)
+                self._session_widgets.clear()
+
+            # Show "no sessions" label
+            if self.no_sessions_label.parent is None:
+                self.sessions_container.add_widget(self.no_sessions_label)
+            return
+
+        # Hide "no sessions" label
+        if self.no_sessions_label.parent is not None:
+            self.sessions_container.remove_widget(self.no_sessions_label)
+
+        # Update or create widgets for each session
+        for session in sessions_info:
+            session_id = session['session_id']
+            active_session_ids.add(session_id)
+
+            # Format elapsed time
+            elapsed = int(session['elapsed_seconds'])
+            elapsed_str = f"{elapsed}s"
+
+            # Format session display text
+            session_text = (
+                f"[{session_id}] from {session['sender']}: "
+                f"{session['chunks_received']}/{session['total_chunks']} chunks, "
+                f"{elapsed_str} ago"
+            )
+
+            if session_id in self._session_widgets:
+                # Update existing widget
+                self._session_widgets[session_id].text = session_text
+            else:
+                # Create new widget
+                session_label = Label(
+                    text=session_text,
+                    size_hint_y=None,
+                    height=25,
+                    color=COLOR_WARNING,
+                    halign='left',
+                    valign='middle',
+                )
+                session_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+                self._session_widgets[session_id] = session_label
+                self.sessions_container.add_widget(session_label)
+
+        # Remove widgets for sessions that are no longer active
+        sessions_to_remove = set(self._session_widgets.keys()) - active_session_ids
+        for session_id in sessions_to_remove:
+            widget = self._session_widgets.pop(session_id)
+            self.sessions_container.remove_widget(widget)
 
     def _build_rpc_settings(self):
         """Build the Bitcoin RPC settings input section."""
@@ -661,11 +796,16 @@ class BTCMeshServerGUI(BoxLayout):
         self._log_handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
         server_logger.addHandler(self._log_handler)
 
+        # Session update callback - puts session info in result queue
+        def session_callback(sessions_info):
+            self.result_queue.put(('active_sessions', sessions_info))
+
         # Start server in background thread
         def run_server():
             try:
                 btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config,
-                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout)
+                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout,
+                                    session_update_callback=session_callback)
             except Exception as e:
                 self.result_queue.put(('init_error', str(e), logging.ERROR))
             finally:
@@ -746,6 +886,10 @@ class BTCMeshServerGUI(BoxLayout):
                 self.device_spinner.text = DEVICE_AUTO_DETECT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
 
+        elif result_type == 'active_sessions':
+            # Update the active sessions display
+            self._update_active_sessions(data)
+
     def _apply_status_update(self, status_update):
         """Apply a status update to the GUI."""
         status_type, data = status_update
@@ -824,6 +968,8 @@ class BTCMeshServerGUI(BoxLayout):
             self.rpc_label.color = STATE_RPC_DISCONNECTED.color
             self.network_label.text = '--'
             self.network_label.color = COLOR_DISCONNECTED
+            # Clear active sessions display
+            self._update_active_sessions([])
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True
             self.start_btn.disabled = False

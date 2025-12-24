@@ -637,9 +637,10 @@ class TestMessageHandling(unittest.TestCase):
 
         on_receive_text_message(packet, self.mock_iface)
 
-        # 1. add_chunk should be called.
+        # 1. add_chunk should be called with formatted sender ID.
+        sender_id_str_for_log = _format_node_id(sender_node_id_int)
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int, chunk_message_text
+            sender_id_str_for_log, chunk_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for logging context.
@@ -649,7 +650,6 @@ class TestMessageHandling(unittest.TestCase):
         self.mock_send_reply.assert_not_called()
 
         # 4. Assert the error log.
-        sender_id_str_for_log = _format_node_id(sender_node_id_int)
         expected_error_log = (
             f"[Sender: {sender_id_str_for_log}, Session: {session_id_for_log}] "
             f"General reassembly error: {exception_message}. "
@@ -685,9 +685,10 @@ class TestMessageHandling(unittest.TestCase):
 
         on_receive_text_message(packet, self.mock_iface)
 
-        # 1. add_chunk should be called.
+        # 1. add_chunk should be called with formatted sender ID.
+        sender_id_str = _format_node_id(sender_node_id_int)
         self.mock_reassembler.add_chunk.assert_called_once_with(
-            sender_node_id_int, chunk_message_text
+            sender_id_str, chunk_message_text
         )
 
         # 2. _extract_session_id_from_raw_chunk should be called for logging context.
@@ -1174,7 +1175,8 @@ class TestTransactionReassemblerStory21(unittest.TestCase):
         self.reassembler = TransactionReassembler(
             timeout_seconds=1
         )  # Short timeout for test
-        self.sender_id = 12345
+        # Use already-formatted sender ID (server layer handles formatting)
+        self.sender_id = "!3039"  # Equivalent to formatting 12345 as !hex
         self.session_id = "story21sess"
 
     def tearDown(self):
@@ -1225,6 +1227,7 @@ class TestTransactionReassemblerStory21(unittest.TestCase):
 
         _time.sleep(1.1)
         self.reassembler.cleanup_stale_sessions()
+        # Timeout log uses the sender_id as provided (already formatted)
         log_ctx = f"[Sender: {self.sender_id}, Session: {self.session_id}]"
         self.mock_logger.warning.assert_any_call(
             f"{log_ctx} Reassembly timeout after 1s. Received 1/2 chunks. Discarding."
@@ -1931,12 +1934,14 @@ class TestMultipleConcurrentSessions(unittest.TestCase):
             on_receive_text_message(
                 packet, self.mock_iface, send_reply_func=self.mock_send_reply
             )
-        # Assert add_chunk was called with correct sender/session for each chunk
+        # Assert add_chunk was called with formatted sender IDs for each chunk
+        client1_id_formatted = _format_node_id(client1_id)
+        client2_id_formatted = _format_node_id(client2_id)
         expected_calls = [
-            call(client1_id, chunk1a),
-            call(client2_id, chunk2a),
-            call(client1_id, chunk1b),
-            call(client2_id, chunk2b),
+            call(client1_id_formatted, chunk1a),
+            call(client2_id_formatted, chunk2a),
+            call(client1_id_formatted, chunk1b),
+            call(client2_id_formatted, chunk2b),
         ]
         self.mock_reassembler.add_chunk.assert_has_calls(expected_calls)
         # Assert that both sessions were reassembled independently (i.e., both reassembled_hex returned)
