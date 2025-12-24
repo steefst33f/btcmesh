@@ -292,6 +292,15 @@ class BTCMeshServerGUI(BoxLayout):
         Displays up to 3 sessions without scrolling (~85px), scrolls for more.
         Session count is always visible outside the scroll area.
         """
+        # Container with left padding for indentation (matches other sections)
+        sessions_section = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=115,  # count label (25) + spacing (5) + scroll (85)
+            padding=[10, 0, 0, 0],  # left indent
+            spacing=5
+        )
+
         # Session count label (always visible, outside ScrollView)
         self.session_count_label = Label(
             text='0 active sessions',
@@ -302,7 +311,7 @@ class BTCMeshServerGUI(BoxLayout):
             valign='middle',
         )
         self.session_count_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
-        self.add_widget(self.session_count_label)
+        sessions_section.add_widget(self.session_count_label)
 
         # Fixed-height ScrollView to contain sessions
         # Height: 3 sessions * 25px + 2 * spacing(2) + padding = ~85px
@@ -312,7 +321,7 @@ class BTCMeshServerGUI(BoxLayout):
             do_scroll_x=False,
             bar_width=8,
             bar_color=COLOR_PRIMARY,
-            bar_inactive_color=(0.5, 0.5, 0.5, 0.3),
+            bar_inactive_color=(0.5, 0.5, 0.3, 0.3),
         )
 
         # Inner container that grows with content
@@ -340,7 +349,8 @@ class BTCMeshServerGUI(BoxLayout):
         self._session_widgets = {}
 
         self.sessions_scroll.add_widget(self.sessions_container)
-        self.add_widget(self.sessions_scroll)
+        sessions_section.add_widget(self.sessions_scroll)
+        self.add_widget(sessions_section)
 
     def _update_active_sessions(self, sessions_info):
         """Update the active sessions display with new session info.
