@@ -207,6 +207,16 @@ With a **Swift developer already on the team**, native iOS development becomes t
 5. **Consider Team Expertise**
    When choosing between frameworks, existing team skills can outweigh theoretical advantages. A Swift developer can ship native iOS faster than learning Flutter.
 
+6. **Desktop GUI: Kivy vs Qt**
+   If starting fresh for desktop-only, **PySide6 (Qt)** would be preferred over Kivy:
+   - Native look and feel on each OS
+   - Better text input handling (OS-native behavior)
+   - Larger community and documentation
+   - Qt Designer for visual layout
+   - No false mobile promises
+
+   However, Kivy works fine for desktop. The issue wasn't Kivy itself—it was choosing Kivy *for the wrong reason* (mobile promise that didn't deliver due to BLE limitations).
+
 ---
 
 ## Decision Record
