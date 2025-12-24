@@ -945,3 +945,153 @@ lora/
 
 ---
 
+## EPIC 3: Architecture Refactoring (Client Core)
+
+**Goal:** Separate protocol logic from UI/CLI concerns to enable clean Swift iOS implementation.
+
+**Priority:** Complete after Server GUI EPIC, before Swift iOS development begins.
+
+**Reference:** See [project/architecture.md](architecture.md) for detailed design.
+
+### 20. Core Protocol Extraction
+
+- [ ] **Story 20.1: Create core/protocol.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** protocol logic in a pure Python module,
+- [ ] *   **So that** it can be easily tested and referenced by Swift implementation.
+    - [ ] *   **Scenario:** Chunking logic extracted
+        - [ ] *   **Given** a raw transaction hex string.
+        - [ ] *   **When** `create_session(tx_hex)` is called.
+        - [ ] *   **Then** a `TransactionSession` dataclass is returned with session_id and chunks.
+    - [ ] *   **Scenario:** Message formatting extracted
+        - [ ] *   **Given** a session and chunk index.
+        - [ ] *   **When** `get_chunk_message(session, index)` is called.
+        - [ ] *   **Then** a formatted `BTC_TX|...` string is returned.
+    - [ ] *   **Scenario:** ACK parsing extracted
+        - [ ] *   **Given** a raw ACK message string.
+        - [ ] *   **When** `parse_ack(message)` is called.
+        - [ ] *   **Then** an `AckMessage` dataclass is returned.
+    - [ ] *   **Scenario:** No I/O in core
+        - [ ] *   **Given** any function in `core/protocol.py`.
+        - [ ] *   **Then** it has no print statements, no logging, no network calls.
+
+- [ ] **Story 20.2: Create core/message_types.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** message types as dataclasses,
+- [ ] *   **So that** the protocol is clearly defined and type-safe.
+    - [ ] *   **Scenario:** TransactionSession dataclass
+        - [ ] *   **Given** the `TransactionSession` class.
+        - [ ] *   **Then** it has fields: session_id (str), chunks (list[str]).
+        - [ ] *   **And** a computed property `total_chunks`.
+    - [ ] *   **Scenario:** ChunkMessage dataclass
+        - [ ] *   **Given** the `ChunkMessage` class.
+        - [ ] *   **Then** it has fields: session_id, chunk_number, total_chunks, payload.
+        - [ ] *   **And** a `format()` method returning the wire protocol string.
+    - [ ] *   **Scenario:** AckMessage and CompletionMessage dataclasses
+        - [ ] *   **Given** parsed server responses.
+        - [ ] *   **Then** they are represented as typed dataclasses.
+
+- [ ] **Story 20.3: Add unit tests for core/protocol.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** comprehensive tests for the protocol module,
+- [ ] *   **So that** refactoring doesn't break functionality.
+    - [ ] *   **Scenario:** Test chunking
+        - [ ] *   **Given** various transaction hex lengths.
+        - [ ] *   **Then** chunks are correctly sized and counted.
+    - [ ] *   **Scenario:** Test message parsing
+        - [ ] *   **Given** valid and invalid ACK/NACK messages.
+        - [ ] *   **Then** parsing succeeds or raises appropriate errors.
+    - [ ] *   **Scenario:** Test edge cases
+        - [ ] *   **Given** empty input, invalid hex, malformed messages.
+        - [ ] *   **Then** appropriate ValueError exceptions are raised.
+
+### 21. Transport Abstraction
+
+- [ ] **Story 21.1: Create transport/base.py interface**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** an abstract transport interface,
+- [ ] *   **So that** different Meshtastic connection methods can be swapped.
+    - [ ] *   **Scenario:** Abstract base class defined
+        - [ ] *   **Given** the `BaseTransport` class.
+        - [ ] *   **Then** it defines abstract methods: connect, disconnect, send, set_message_handler.
+        - [ ] *   **And** properties: is_connected, local_node_id.
+    - [ ] *   **Scenario:** Custom exceptions defined
+        - [ ] *   **Given** transport operations.
+        - [ ] *   **Then** `ConnectionError` and `SendError` exceptions are available.
+
+- [ ] **Story 21.2: Create transport/meshtastic_serial.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** a serial transport implementation,
+- [ ] *   **So that** the CLI and GUI use the abstracted interface.
+    - [ ] *   **Scenario:** Implements BaseTransport
+        - [ ] *   **Given** the `SerialTransport` class.
+        - [ ] *   **Then** it implements all methods from `BaseTransport`.
+    - [ ] *   **Scenario:** Wraps meshtastic library
+        - [ ] *   **Given** the existing Meshtastic serial connection code.
+        - [ ] *   **Then** it is encapsulated in this class.
+
+### 22. Client Sender Refactoring
+
+- [ ] **Story 22.1: Create client/sender.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** sending logic in a reusable class,
+- [ ] *   **So that** CLI and GUI share the same implementation.
+    - [ ] *   **Scenario:** TransactionSender class
+        - [ ] *   **Given** a transport and configuration.
+        - [ ] *   **When** `send(tx_hex, destination)` is called.
+        - [ ] *   **Then** the transaction is chunked and sent with ACK handling.
+    - [ ] *   **Scenario:** Progress callback
+        - [ ] *   **Given** an optional `on_progress` callback.
+        - [ ] *   **Then** it is called with (chunks_sent, total_chunks) during sending.
+    - [ ] *   **Scenario:** Result dataclass
+        - [ ] *   **Given** a completed send operation.
+        - [ ] *   **Then** a `SendResult` dataclass is returned with success, txid, error.
+
+- [ ] **Story 22.2: Refactor btcmesh_cli.py to use client/sender.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** the CLI to use the new sender module,
+- [ ] *   **So that** the CLI becomes a thin wrapper.
+    - [ ] *   **Scenario:** CLI uses TransactionSender
+        - [ ] *   **Given** the refactored CLI.
+        - [ ] *   **Then** it only handles argument parsing and output.
+        - [ ] *   **And** all business logic is delegated to `client/sender.py`.
+    - [ ] *   **Scenario:** Existing behavior preserved
+        - [ ] *   **Given** existing CLI tests.
+        - [ ] *   **Then** all tests continue to pass.
+
+- [ ] **Story 22.3: Refactor btcmesh_gui.py to use client/sender.py**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** the GUI to use the new sender module,
+- [ ] *   **So that** the GUI becomes a thin wrapper.
+    - [ ] *   **Scenario:** GUI uses TransactionSender
+        - [ ] *   **Given** the refactored GUI.
+        - [ ] *   **Then** it only handles UI updates.
+        - [ ] *   **And** all business logic is delegated to `client/sender.py`.
+    - [ ] *   **Scenario:** Progress updates work
+        - [ ] *   **Given** the progress callback.
+        - [ ] *   **Then** the GUI status log shows chunk progress.
+
+### 23. Documentation and Handoff
+
+- [ ] **Story 23.1: Update architecture.md with final implementation**
+- [ ] *   **As a** Swift developer,
+- [ ] *   **I want** accurate documentation of the protocol,
+- [ ] *   **So that** I can implement the iOS version correctly.
+    - [ ] *   **Scenario:** Protocol spec finalized
+        - [ ] *   **Given** the completed refactoring.
+        - [ ] *   **Then** `architecture.md` reflects the actual implementation.
+        - [ ] *   **And** all message formats and constants are documented.
+
+- [ ] **Story 23.2: Create Swift implementation skeleton**
+- [ ] *   **As a** Swift developer,
+- [ ] *   **I want** a Swift project skeleton matching the architecture,
+- [ ] *   **So that** I can start implementing immediately.
+    - [ ] *   **Scenario:** Swift Core folder structure
+        - [ ] *   **Given** the recommended architecture.
+        - [ ] *   **Then** an `ios/BTCMesh/Core/` folder exists with placeholder files.
+    - [ ] *   **Scenario:** Protocol.swift skeleton
+        - [ ] *   **Given** `core/protocol.py` as reference.
+        - [ ] *   **Then** `Protocol.swift` has matching function signatures (empty bodies).
+
+---
+
