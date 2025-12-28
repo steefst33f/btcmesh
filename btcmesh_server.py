@@ -24,6 +24,7 @@ from core.reassembler import (
     CHUNK_PARTS_DELIMITER,
 )
 from core.rpc_client import BitcoinRPCClient
+from core.transaction_history import TransactionHistory
 
 if TYPE_CHECKING:
     import meshtastic.serial_interface
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 # Global instance of the TransactionReassembler
 # Now initialized in main() with config timeout
 transaction_reassembler: TransactionReassembler = None  # type: ignore
+
+# Global instance of TransactionHistory for recording broadcast results
+transaction_history: TransactionHistory = None  # type: ignore
 
 # Placeholder for the main Meshtastic interface, to be set in main()
 # This is needed if on_receive_text_message or other global scope functions
@@ -303,6 +307,7 @@ def on_receive_text_message(
                     f"Potential BTC transaction chunk from {sender_node_id_for_reply}. Processing..."
                 )
                 try:
+                    reassembled_hex = None  # Initialize for exception handler
                     chunk_number = 1
                     total_chunks = 1
                     try:
@@ -348,6 +353,15 @@ def on_receive_text_message(
                             logger.info(
                                 f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Broadcast success. TXID: {txid}"
                             )
+                            # Record successful transaction in history
+                            if transaction_history:
+                                transaction_history.add(
+                                    session_id=session_id,
+                                    sender=sender_node_id_for_reply,
+                                    status="success",
+                                    txid=txid,
+                                    raw_tx=reassembled_hex
+                                )
                         else:
                             # Optimize error message for size constraints
                             error_msg = str(error)
@@ -393,6 +407,15 @@ def on_receive_text_message(
                             logger.error(
                                 f"[Sender: {sender_node_id_for_reply}, Session: {session_id}] Broadcast failed: {error}. Sending NACK."
                             )
+                            # Record failed transaction in history
+                            if transaction_history:
+                                transaction_history.add(
+                                    session_id=session_id,
+                                    sender=sender_node_id_for_reply,
+                                    status="failed",
+                                    error=str(error),
+                                    raw_tx=reassembled_hex
+                                )
                 except (InvalidChunkFormatError, MismatchedTotalChunksError) as e:
                     tx_session_id_for_nack = (
                         session_id
@@ -447,7 +470,7 @@ def on_receive_text_message(
                         f"General reassembly error: {e}. Notifying sender may be needed."
                     )
                     # Decide if a generic NACK is useful here. Current stories might NACK on timeout instead.
-                except Exception as e:  # Catch-all for unexpected errors in add_chunk
+                except Exception as e:  # Catch-all for unexpected errors in add_chunk or broadcast
                     tx_session_id_for_nack = (
                         _extract_session_id_from_raw_chunk(message_text) or "UNKNOWN"
                     )
@@ -456,6 +479,15 @@ def on_receive_text_message(
                         f"Unexpected error processing chunk: {e}. Not NACKing automatically.",
                         exc_info=True,
                     )
+                    # Record failed transaction in history if we had a reassembled tx
+                    if transaction_history:
+                        transaction_history.add(
+                            session_id=tx_session_id_for_nack,
+                            sender=sender_node_id_for_reply,
+                            status="failed",
+                            error=str(e),
+                            raw_tx=reassembled_hex  # Will be None if error was during reassembly
+                        )
             else:
                 server_logger.info(
                     f"Std direct text from {sender_node_id_for_reply} (not BTC_TX): '{message_text}'"
@@ -674,6 +706,7 @@ def main(stop_event: Optional[threading.Event] = None,
     """
     global meshtastic_interface_instance
     global transaction_reassembler
+    global transaction_history
     server_logger.info("Starting BTC Mesh Relay Server...")
 
     tor_process = None
@@ -692,6 +725,12 @@ def main(stop_event: Optional[threading.Event] = None,
             f"TransactionReassembler initialized with timeout: {timeout_seconds}s (source: {timeout_source})"
         )
         # --- End Story 5.2 & 18.3 integration ---
+
+        # --- Story 17.3: Initialize transaction history ---
+        transaction_history = TransactionHistory()
+        server_logger.info(
+            f"TransactionHistory initialized. File: {transaction_history.filepath}"
+        )
 
         # --- Story 4.2: Connect to Bitcoin RPC ---
         try:
@@ -790,6 +829,16 @@ def main(stop_event: Optional[threading.Event] = None,
                             f"[Sender: {session_info['sender_id_str']}, Session: {session_info['tx_session_id']}] "
                             f"Session timed out. Sending NACK: {nack_message}"
                         )
+
+                        # Record timeout in transaction history
+                        if transaction_history:
+                            transaction_history.add(
+                                session_id=session_info['tx_session_id'],
+                                sender=session_info['sender_id_str'],
+                                status="failed",
+                                error=session_info['error_message'],
+                                raw_tx=None  # No complete tx for timeouts
+                            )
                         # Ensure global instance is used here if iface is not available otherwise
                         if meshtastic_interface_instance:
                             on_receive_text_message(

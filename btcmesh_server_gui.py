@@ -19,6 +19,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.spinner import Spinner
 from kivy.uix.label import Label
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.popup import Popup
 from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
@@ -58,6 +59,7 @@ from core.gui_common import (
 import btcmesh_server
 from core.logger_setup import server_logger
 from core.config_loader import load_app_config
+from core.transaction_history import TransactionHistory
 
 
 # Set window size for desktop
@@ -576,6 +578,10 @@ class BTCMeshServerGUI(BoxLayout):
         self.save_btn.bind(on_press=self._on_save_settings)
         controls_section.add_widget(self.save_btn)
 
+        self.history_btn = create_action_button('History', color=COLOR_BG_LIGHT)
+        self.history_btn.bind(on_press=self._on_history_pressed)
+        controls_section.add_widget(self.history_btn)
+
         self.add_widget(controls_section)
 
     def _on_scan_devices(self, instance):
@@ -1003,6 +1009,207 @@ class BTCMeshServerGUI(BoxLayout):
         if self._log_handler:
             server_logger.removeHandler(self._log_handler)
             self._log_handler = None
+
+    def _on_history_pressed(self, instance):
+        """Handle History button press - show transaction history popup."""
+        self._show_history_popup()
+
+    def _show_history_popup(self):
+        """Build and show the transaction history popup."""
+        # Load transaction history
+        history = TransactionHistory()
+        entries = history.get_all()
+
+        # Build popup content
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        # Header with count
+        count = len(entries)
+        header = Label(
+            text=f"Transaction History ({count} entries)",
+            size_hint_y=None,
+            height=30,
+            color=COLOR_PRIMARY,
+            bold=True
+        )
+        content.add_widget(header)
+
+        # Scrollable list of transactions
+        scroll = ScrollView(size_hint_y=1)
+        entries_container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            spacing=5,
+            padding=[0, 5, 0, 5]
+        )
+        entries_container.bind(minimum_height=entries_container.setter('height'))
+
+        if entries:
+            for entry in entries:
+                entry_widget = self._create_history_entry_widget(entry)
+                entries_container.add_widget(entry_widget)
+        else:
+            no_entries = Label(
+                text="No transactions yet",
+                size_hint_y=None,
+                height=40,
+                color=COLOR_DISCONNECTED
+            )
+            entries_container.add_widget(no_entries)
+
+        scroll.add_widget(entries_container)
+        content.add_widget(scroll)
+
+        # Close button
+        close_btn = create_action_button('Close', color=COLOR_BG_LIGHT)
+        close_btn.size_hint_y = None
+        close_btn.height = 40
+
+        content.add_widget(close_btn)
+
+        # Create and show popup
+        popup = Popup(
+            title='Transaction History',
+            content=content,
+            size_hint=(0.95, 0.8),
+            background_color=COLOR_BG,
+            title_color=COLOR_PRIMARY,
+            separator_color=COLOR_PRIMARY
+        )
+        close_btn.bind(on_press=popup.dismiss)
+        popup.open()
+
+    def _create_history_entry_widget(self, entry):
+        """Create a widget to display a single history entry."""
+        # Container for the entry
+        container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=90,
+            spacing=5,
+            padding=[5, 5, 5, 5]
+        )
+
+        # Add background color based on status
+        with container.canvas.before:
+            if entry.get('status') == 'success':
+                Color(0.1, 0.3, 0.1, 1)  # Dark green
+            else:
+                Color(0.3, 0.1, 0.1, 1)  # Dark red
+            container._bg_rect = Rectangle(pos=container.pos, size=container.size)
+        container.bind(pos=self._update_rect, size=self._update_rect)
+
+        # First row: timestamp and status
+        row1 = BoxLayout(orientation='horizontal', size_hint_y=None, height=25)
+
+        # Parse timestamp for display
+        timestamp = entry.get('timestamp', '')
+        if timestamp:
+            try:
+                # Format: 2025-12-26T14:30:00 -> Dec 26 14:30
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp)
+                timestamp_display = dt.strftime('%b %d %H:%M')
+            except (ValueError, TypeError):
+                timestamp_display = timestamp[:16]
+        else:
+            timestamp_display = 'Unknown'
+
+        status = entry.get('status', 'unknown')
+        status_color = COLOR_SUCCESS if status == 'success' else COLOR_ERROR
+
+        time_label = Label(
+            text=timestamp_display,
+            size_hint_x=0.4,
+            halign='left',
+            valign='middle',
+            color=COLOR_SECUNDARY
+        )
+        time_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        status_label = Label(
+            text=status.upper(),
+            size_hint_x=0.6,
+            halign='right',
+            valign='middle',
+            color=status_color,
+            bold=True
+        )
+        status_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row1.add_widget(time_label)
+        row1.add_widget(status_label)
+        container.add_widget(row1)
+
+        # Second row: sender and session
+        row2 = BoxLayout(orientation='horizontal', size_hint_y=None, height=20)
+
+        sender = entry.get('sender', 'Unknown')
+        session_id = entry.get('session_id', '')
+
+        sender_label = Label(
+            text=f"From: {sender}",
+            size_hint_x=0.5,
+            halign='left',
+            valign='middle',
+            color=COLOR_SECUNDARY,
+            font_size='12sp'
+        )
+        sender_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        session_label = Label(
+            text=f"Session: {session_id}",
+            size_hint_x=0.5,
+            halign='right',
+            valign='middle',
+            color=COLOR_SECUNDARY,
+            font_size='12sp'
+        )
+        session_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row2.add_widget(sender_label)
+        row2.add_widget(session_label)
+        container.add_widget(row2)
+
+        # Third row: TXID or error
+        row3 = BoxLayout(orientation='horizontal', size_hint_y=None, height=20)
+
+        if status == 'success':
+            txid = entry.get('txid', '')
+            # Truncate TXID for display
+            txid_display = f"{txid[:16]}...{txid[-8:]}" if len(txid) > 24 else txid
+            result_label = Label(
+                text=f"TXID: {txid_display}",
+                size_hint_x=1,
+                halign='left',
+                valign='middle',
+                color=COLOR_SUCCESS,
+                font_size='11sp'
+            )
+        else:
+            error = entry.get('error', 'Unknown error')
+            # Truncate error for display
+            error_display = error[:50] + '...' if len(error) > 50 else error
+            result_label = Label(
+                text=f"Error: {error_display}",
+                size_hint_x=1,
+                halign='left',
+                valign='middle',
+                color=COLOR_ERROR,
+                font_size='11sp'
+            )
+        result_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row3.add_widget(result_label)
+        container.add_widget(row3)
+
+        return container
+
+    def _update_rect(self, instance, value):
+        """Update rectangle position/size for background."""
+        if hasattr(instance, '_bg_rect'):
+            instance._bg_rect.pos = instance.pos
+            instance._bg_rect.size = instance.size
 
     def on_clear_pressed(self, instance):
         """Handle Clear Log button press."""
