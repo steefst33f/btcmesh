@@ -354,6 +354,54 @@ def create_toggle_button(text: str, width: int = 60) -> Button:
     )
 
 
+def create_popup_button(text: str, primary: bool = True) -> Button:
+    """Create a styled button for use in popups.
+
+    Creates a full-width button with larger font size, suitable for
+    popup dialogs (e.g., Close, OK, Copy buttons).
+
+    Args:
+        text: Button text.
+        primary: If True, uses COLOR_PRIMARY (orange). If False, uses COLOR_BG_LIGHT.
+
+    Returns:
+        A styled Button widget with fixed height.
+    """
+    return Button(
+        text=text,
+        size_hint_y=None,
+        height=50,
+        background_color=COLOR_PRIMARY if primary else COLOR_BG_LIGHT,
+        background_normal='',
+        bold=True,
+        font_size='18sp',
+    )
+
+
+def create_popup_inline_button(text: str, width: int = 120) -> Button:
+    """Create a styled inline button for use in popup rows.
+
+    Creates a fixed-width button matching the style of main screen
+    inline buttons (Scan, Show/Hide), suitable for inline placement
+    within popup content rows (e.g., Copy TXID button).
+
+    Args:
+        text: Button text.
+        width: Button width in pixels. Defaults to 120.
+
+    Returns:
+        A styled Button widget with fixed width.
+    """
+    return Button(
+        text=text,
+        size_hint_x=None,
+        width=width,
+        background_color=COLOR_BG_LIGHT,
+        background_normal='',
+        font_size='14sp',
+    )
+
+
 def create_status_row(label_text: str, initial_value: str = '',
                       initial_color: Tuple = None,
                       height: int = 30, bold_value: bool = False) -> Tuple[BoxLayout, Label]:

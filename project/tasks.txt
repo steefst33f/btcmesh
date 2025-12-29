@@ -823,10 +823,21 @@ lora/
         - [x] *   **Given** a transaction failed (reassembly, validation, or RPC error).
         - [x] *   **When** the operator views transaction history.
         - [x] *   **Then** the entry shows: timestamp, sender node, error message, status (failed).
-    - [ ] *   **Scenario:** Copy TXID from history
-        - [ ] *   **Given** the transaction history is displayed.
-        - [ ] *   **When** the operator clicks copy on a successful transaction.
-        - [ ] *   **Then** the TXID is copied to clipboard.
+    - [x] *   **Scenario:** View transaction details
+        - [x] *   **Given** the transaction history is displayed.
+        - [x] *   **When** the operator clicks on a transaction entry.
+        - [x] *   **Then** a detail popup shows: full timestamp, sender, session ID, status.
+        - [x] *   **And** for success: full TXID with Copy button.
+        - [x] *   **And** for failure: full error message.
+        - [x] *   **And** scrollable raw transaction hex with Copy button.
+    - [x] *   **Scenario:** Copy TXID from history
+        - [x] *   **Given** the transaction detail popup is open for a successful transaction.
+        - [x] *   **When** the operator clicks "Copy TXID".
+        - [x] *   **Then** the full TXID is copied to clipboard.
+    - [x] *   **Scenario:** Copy raw transaction from history
+        - [x] *   **Given** the transaction detail popup is open.
+        - [x] *   **When** the operator clicks "Copy Raw TX".
+        - [x] *   **Then** the raw transaction hex is copied to clipboard.
 
 - [ ] **Story 17.4: Transaction History Enhancements (Future)**
 - [ ] *   **As a** relay operator,

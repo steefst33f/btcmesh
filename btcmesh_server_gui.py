@@ -24,6 +24,7 @@ from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.properties import BooleanProperty
+from kivy.core.clipboard import Clipboard
 
 # Import shared GUI components
 from core.gui_common import (
@@ -38,6 +39,7 @@ from core.gui_common import (
     COLOR_MAINNET,
     COLOR_TESTNET,
     COLOR_SIGNET,
+    COLOR_SECUNDARY,
     # Classes
     ConnectionState,
     StatusLog,
@@ -52,7 +54,8 @@ from core.gui_common import (
     create_input_row,
     create_toggle_button,
     create_refresh_button,
-    COLOR_SECUNDARY,
+    create_popup_button,
+    create_popup_inline_button,
 )
 
 # Import server module
@@ -1061,10 +1064,7 @@ class BTCMeshServerGUI(BoxLayout):
         content.add_widget(scroll)
 
         # Close button
-        close_btn = create_action_button('Close', color=COLOR_BG_LIGHT)
-        close_btn.size_hint_y = None
-        close_btn.height = 40
-
+        close_btn = create_popup_button('Close', primary=True)
         content.add_widget(close_btn)
 
         # Create and show popup
@@ -1080,8 +1080,8 @@ class BTCMeshServerGUI(BoxLayout):
         popup.open()
 
     def _create_history_entry_widget(self, entry):
-        """Create a widget to display a single history entry."""
-        # Container for the entry
+        """Create a clickable widget to display a single history entry."""
+        # Container for the entry - using Button base for touch handling
         container = BoxLayout(
             orientation='vertical',
             size_hint_y=None,
@@ -1089,6 +1089,9 @@ class BTCMeshServerGUI(BoxLayout):
             spacing=5,
             padding=[5, 5, 5, 5]
         )
+
+        # Store entry data for click handler
+        container._entry_data = entry
 
         # Add background color based on status
         with container.canvas.before:
@@ -1098,6 +1101,9 @@ class BTCMeshServerGUI(BoxLayout):
                 Color(0.3, 0.1, 0.1, 1)  # Dark red
             container._bg_rect = Rectangle(pos=container.pos, size=container.size)
         container.bind(pos=self._update_rect, size=self._update_rect)
+
+        # Make container clickable
+        container.bind(on_touch_down=self._on_history_entry_touch)
 
         # First row: timestamp and status
         row1 = BoxLayout(orientation='horizontal', size_hint_y=None, height=25)
@@ -1210,6 +1216,131 @@ class BTCMeshServerGUI(BoxLayout):
         if hasattr(instance, '_bg_rect'):
             instance._bg_rect.pos = instance.pos
             instance._bg_rect.size = instance.size
+
+    def _on_history_entry_touch(self, instance, touch):
+        """Handle touch on a history entry widget."""
+        if instance.collide_point(*touch.pos):
+            if hasattr(instance, '_entry_data'):
+                self._show_transaction_detail(instance._entry_data)
+                return True
+        return False
+
+    def _show_transaction_detail(self, entry):
+        """Show detailed view of a transaction history entry."""
+        from datetime import datetime
+
+        # Build popup content
+        content = BoxLayout(orientation='vertical', spacing=5, padding=10)
+
+        # Status header with color
+        status = entry.get('status', 'unknown')
+        status_color = COLOR_SUCCESS if status == 'success' else COLOR_ERROR
+        header = Label(
+            text=f"Transaction {status.upper()}",
+            size_hint_y=None,
+            height=40,
+            color=status_color,
+            bold=True,
+            font_size='18sp'
+        )
+        content.add_widget(header)
+
+        # Timestamp
+        timestamp = entry.get('timestamp', '')
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp)
+                timestamp_display = dt.strftime('%B %d, %Y at %H:%M:%S')
+            except (ValueError, TypeError):
+                timestamp_display = timestamp
+        else:
+            timestamp_display = 'Unknown'
+
+        time_row, _ = create_status_row('Time:', timestamp_display, COLOR_SECUNDARY)
+        content.add_widget(time_row)
+
+        # Sender
+        sender = entry.get('sender', 'Unknown')
+        sender_row, _ = create_status_row('Sender:', sender, COLOR_SECUNDARY)
+        content.add_widget(sender_row)
+
+        # Session ID
+        session_id = entry.get('session_id', '')
+        session_row, _ = create_status_row('Session:', session_id, COLOR_SECUNDARY)
+        content.add_widget(session_row)
+
+        # TXID (for success) with copy button
+        if status == 'success':
+            txid = entry.get('txid', '')
+            txid_display = f"{txid[:24]}...{txid[-8:]}" if len(txid) > 32 else txid
+            txid_row, _ = create_status_row('TXID:', txid_display, COLOR_SUCCESS, height=35)
+
+            copy_txid_btn = create_popup_inline_button('Copy TXID')
+            copy_txid_btn.bind(on_press=lambda x: self._copy_to_clipboard(txid, "TXID"))
+            txid_row.add_widget(copy_txid_btn)
+            content.add_widget(txid_row)
+
+        # Error (for failure)
+        if status == 'failed':
+            error = entry.get('error', 'Unknown error')
+            error_row, error_label = create_status_row('Error:', error, COLOR_ERROR, height=35)
+            content.add_widget(error_row)
+
+        # Raw TX section
+        raw_tx = entry.get('raw_tx')
+        if raw_tx:
+            raw_tx_row, _ = create_status_row('Raw TX:', '', COLOR_SECUNDARY)
+            content.add_widget(raw_tx_row)
+
+            # Scrollable raw TX display - fills remaining space
+            raw_tx_scroll = ScrollView(size_hint_y=1)
+            raw_tx_label = Label(
+                text=raw_tx,
+                size_hint_y=None,
+                color=COLOR_PRIMARY,
+                halign='left',
+                valign='top',
+                font_size='11sp'
+            )
+            raw_tx_label.bind(texture_size=lambda inst, val: setattr(inst, 'height', val[1]))
+            raw_tx_label.bind(size=lambda inst, val: setattr(inst, 'text_size', (val[0], None)))
+            raw_tx_scroll.add_widget(raw_tx_label)
+            content.add_widget(raw_tx_scroll)
+
+            # Copy Raw TX button
+            copy_raw_btn = create_popup_button('Copy Raw TX', primary=False)
+            copy_raw_btn.bind(on_press=lambda x: self._copy_to_clipboard(raw_tx, "Raw TX"))
+            content.add_widget(copy_raw_btn)
+
+            # Spacer between buttons
+            content.add_widget(Widget(size_hint_y=None, height=10))
+        else:
+            # No raw TX - add spacer to push close button to bottom
+            no_raw_row, _ = create_status_row('Raw TX:', 'Not available (timeout or incomplete)',
+                                            COLOR_DISCONNECTED)
+            no_raw_row.size_hint_y = 1  # Fill remaining space
+            content.add_widget(no_raw_row)
+
+        # Close button
+        close_btn = create_popup_button('Close', primary=True)
+        content.add_widget(close_btn)
+
+        # Create and show popup
+        popup = Popup(
+            title='Transaction Details',
+            content=content,
+            size_hint=(0.95, 0.85),
+            background_color=COLOR_BG,
+            title_color=COLOR_PRIMARY,
+            separator_color=COLOR_PRIMARY
+        )
+        close_btn.bind(on_press=popup.dismiss)
+        popup.open()
+
+    def _copy_to_clipboard(self, text, label):
+        """Copy text to clipboard and show confirmation."""
+        Clipboard.copy(text)
+        self.status_log.add_message(f"{label} copied to clipboard", COLOR_SUCCESS)
 
     def on_clear_pressed(self, instance):
         """Handle Clear Log button press."""

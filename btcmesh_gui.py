@@ -51,6 +51,7 @@ from core.gui_common import (
     create_action_button,
     create_clear_button,
     create_refresh_button,
+    create_popup_button,
 )
 
 # Import Meshtastic utilities from core
@@ -871,13 +872,7 @@ class BTCMeshGUI(BoxLayout):
         btn_row.add_widget(copy_btn)
 
         # OK button styled like app buttons
-        ok_btn = Button(
-            text='OK',
-            background_color=COLOR_PRIMARY,
-            background_normal='',
-            bold=True,
-            font_size=24,
-        )
+        ok_btn = create_popup_button('OK', primary=True)
         btn_row.add_widget(ok_btn)
 
         content.add_widget(btn_row)
