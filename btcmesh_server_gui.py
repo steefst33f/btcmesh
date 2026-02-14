@@ -7,6 +7,8 @@ This GUI wraps the btcmesh_server module, providing visual status displays,
 activity logging, and server controls.
 """
 import logging
+import os
+import shutil
 import threading
 import queue
 import re
@@ -16,10 +18,13 @@ from kivy.uix.button import Button
 from kivy.uix.widget import Widget
 from kivy.uix.spinner import Spinner
 from kivy.uix.label import Label
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.popup import Popup
 from kivy.graphics import Color, Rectangle
 from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.properties import BooleanProperty
+from kivy.core.clipboard import Clipboard
 
 # Import shared GUI components
 from core.gui_common import (
@@ -34,6 +39,7 @@ from core.gui_common import (
     COLOR_MAINNET,
     COLOR_TESTNET,
     COLOR_SIGNET,
+    COLOR_SECUNDARY,
     # Classes
     ConnectionState,
     StatusLog,
@@ -48,17 +54,19 @@ from core.gui_common import (
     create_input_row,
     create_toggle_button,
     create_refresh_button,
-    COLOR_SECUNDARY,
+    create_popup_button,
+    create_popup_inline_button,
 )
 
 # Import server module
 import btcmesh_server
 from core.logger_setup import server_logger
 from core.config_loader import load_app_config
+from core.transaction_history import TransactionHistory
 
 
 # Set window size for desktop
-Window.size = (550, 850)
+Window.size = (550, 920)
 
 # Meshtastic connection states (text only - description is in separate label)
 STATE_MESHTASTIC_DISCONNECTED = ConnectionState('Not connected', COLOR_DISCONNECTED)
@@ -74,6 +82,10 @@ STATE_RPC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 DEVICE_AUTO_DETECT = "Auto-detect"
 DEVICE_SCANNING = "Scanning..."
 DEVICE_NO_DEVICES = "No devices found"
+
+# Path to .env file (same as config_loader.py)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 
 class QueueLogHandler(logging.Handler):
@@ -203,6 +215,13 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after status section
         self.add_widget(create_separator())
 
+        # Active Sessions section
+        self.add_widget(create_section_label('Active Sessions:'))
+        self._build_active_sessions_section()
+
+        # Orange separator line after active sessions section
+        self.add_widget(create_separator())
+
         # Bitcoin RPC Settings section
         self.add_widget(create_section_label('Bitcoin RPC Settings:'))
         self._build_rpc_settings()
@@ -248,7 +267,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Network badge row (mainnet/testnet/signet)
         network_row, self.network_label = create_status_row(
             'Network:',
-            '',
+            '--',
             initial_color=COLOR_DISCONNECTED,
             bold_value=True
         )
@@ -271,6 +290,143 @@ class BTCMeshServerGUI(BoxLayout):
         status_section.add_widget(meshtastic_row)
 
         self.add_widget(status_section)
+
+    def _build_active_sessions_section(self):
+        """Build the active sessions display section with ScrollView.
+
+        Displays up to 3 sessions without scrolling (~85px), scrolls for more.
+        Session count is always visible outside the scroll area.
+        """
+        # Container with left padding for indentation (matches other sections)
+        sessions_section = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=115,  # count label (25) + spacing (5) + scroll (85)
+            padding=[10, 0, 0, 0],  # left indent
+            spacing=5
+        )
+
+        # Session count label (always visible, outside ScrollView)
+        self.session_count_label = Label(
+            text='0 active sessions',
+            size_hint_y=None,
+            height=25,
+            color=COLOR_DISCONNECTED,
+            halign='left',
+            valign='middle',
+        )
+        self.session_count_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        sessions_section.add_widget(self.session_count_label)
+
+        # Fixed-height ScrollView to contain sessions
+        # Height: 3 sessions * 25px + 2 * spacing(2) + padding = ~85px
+        self.sessions_scroll = ScrollView(
+            size_hint_y=None,
+            height=85,
+            do_scroll_x=False,
+            bar_width=8,
+            bar_color=COLOR_PRIMARY,
+            bar_inactive_color=(0.5, 0.5, 0.3, 0.3),
+        )
+
+        # Inner container that grows with content
+        self.sessions_container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            spacing=2
+        )
+        # Bind height to minimum height needed for children
+        self.sessions_container.bind(minimum_height=self.sessions_container.setter('height'))
+
+        # Initial "no sessions" label (shown when count is 0)
+        self.no_sessions_label = Label(
+            text='No active sessions',
+            size_hint_y=None,
+            height=30,
+            color=COLOR_DISCONNECTED,
+            halign='left',
+            valign='middle',
+        )
+        self.no_sessions_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        self.sessions_container.add_widget(self.no_sessions_label)
+
+        # Dict to track session display widgets by session_id
+        self._session_widgets = {}
+
+        self.sessions_scroll.add_widget(self.sessions_container)
+        sessions_section.add_widget(self.sessions_scroll)
+        self.add_widget(sessions_section)
+
+    def _update_active_sessions(self, sessions_info):
+        """Update the active sessions display with new session info.
+
+        Args:
+            sessions_info: List of dicts with session_id, sender, chunks_received,
+                        total_chunks, elapsed_seconds
+        """
+        # Update session count label (always visible)
+        count = len(sessions_info) if sessions_info else 0
+        self.session_count_label.text = f"{count} active session{'s' if count != 1 else ''}"
+        self.session_count_label.color = COLOR_WARNING if count > 0 else COLOR_DISCONNECTED
+
+        # Track which sessions are still active
+        active_session_ids = set()
+
+        if not sessions_info:
+            # No active sessions
+            if self._session_widgets:
+                # Clear all session widgets
+                for widget in self._session_widgets.values():
+                    self.sessions_container.remove_widget(widget)
+                self._session_widgets.clear()
+
+            # Show "no sessions" label
+            if self.no_sessions_label.parent is None:
+                self.sessions_container.add_widget(self.no_sessions_label)
+            return
+
+        # Hide "no sessions" label
+        if self.no_sessions_label.parent is not None:
+            self.sessions_container.remove_widget(self.no_sessions_label)
+
+        # Update or create widgets for each session
+        for session in sessions_info:
+            session_id = session['session_id']
+            active_session_ids.add(session_id)
+
+            # Format elapsed time
+            elapsed = int(session['elapsed_seconds'])
+            elapsed_str = f"{elapsed}s"
+
+            # Format session display text
+            session_text = (
+                f"[{session_id}] from {session['sender']}: "
+                f"{session['chunks_received']}/{session['total_chunks']} chunks, "
+                f"{elapsed_str} ago"
+            )
+
+            if session_id in self._session_widgets:
+                # Update existing widget
+                self._session_widgets[session_id].text = session_text
+            else:
+                # Create new widget
+                session_label = Label(
+                    text=session_text,
+                    size_hint_y=None,
+                    height=25,
+                    color=COLOR_WARNING,
+                    halign='left',
+                    valign='middle',
+                )
+                session_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+                self._session_widgets[session_id] = session_label
+                self.sessions_container.add_widget(session_label)
+
+        # Remove widgets for sessions that are no longer active
+        sessions_to_remove = set(self._session_widgets.keys()) - active_session_ids
+        for session_id in sessions_to_remove:
+            widget = self._session_widgets.pop(session_id)
+            self.sessions_container.remove_widget(widget)
 
     def _build_rpc_settings(self):
         """Build the Bitcoin RPC settings input section."""
@@ -421,6 +577,14 @@ class BTCMeshServerGUI(BoxLayout):
         self.stop_btn.bind(on_press=self.on_stop_pressed)
         controls_section.add_widget(self.stop_btn)
 
+        self.save_btn = create_action_button('Save Settings', color=COLOR_BG_LIGHT)
+        self.save_btn.bind(on_press=self._on_save_settings)
+        controls_section.add_widget(self.save_btn)
+
+        self.history_btn = create_action_button('History', color=COLOR_BG_LIGHT)
+        self.history_btn.bind(on_press=self._on_history_pressed)
+        controls_section.add_widget(self.history_btn)
+
         self.add_widget(controls_section)
 
     def _on_scan_devices(self, instance):
@@ -522,6 +686,80 @@ class BTCMeshServerGUI(BoxLayout):
 
         threading.Thread(target=test_thread, daemon=True).start()
 
+    def _on_save_settings(self, instance):
+        """Save current settings to .env file.
+
+        Preserves existing comments and unrelated variables.
+        Creates a backup (.env.bak) before overwriting.
+        """
+        # Collect current settings from GUI
+        settings = {
+            'BITCOIN_RPC_HOST': self.rpc_host_input.text.strip(),
+            'BITCOIN_RPC_PORT': self.rpc_port_input.text.strip(),
+            'BITCOIN_RPC_USER': self.rpc_user_input.text.strip(),
+            'BITCOIN_RPC_PASSWORD': self.rpc_password_input.text,  # Don't strip password
+            'REASSEMBLY_TIMEOUT_SECONDS': self.timeout_input.text.strip(),
+        }
+
+        # Handle Meshtastic device - only save if not Auto-detect
+        selected_device = self.device_spinner.text
+        if selected_device and selected_device not in (DEVICE_AUTO_DETECT, DEVICE_SCANNING, DEVICE_NO_DEVICES):
+            settings['MESHTASTIC_SERIAL_PORT'] = selected_device
+        else:
+            # Mark for removal if currently set
+            settings['MESHTASTIC_SERIAL_PORT'] = None
+
+        try:
+            # Read existing .env content (preserving structure)
+            existing_lines = []
+            existing_keys = set()
+            if os.path.exists(DOTENV_PATH):
+                # Create backup before modifying
+                backup_path = DOTENV_PATH + '.bak'
+                shutil.copy2(DOTENV_PATH, backup_path)
+
+                with open(DOTENV_PATH, 'r') as f:
+                    for line in f:
+                        stripped = line.strip()
+                        # Check if this line sets a variable we want to update
+                        if stripped and not stripped.startswith('#') and '=' in stripped:
+                            key = stripped.split('=', 1)[0].strip()
+                            if key in settings:
+                                existing_keys.add(key)
+                                value = settings[key]
+                                if value is None:
+                                    # Skip this line (remove the setting)
+                                    continue
+                                # Replace the value, preserving the key format
+                                existing_lines.append(f'{key}={value}\n')
+                                continue
+                        # Keep the line as-is (comments, empty lines, other vars)
+                        existing_lines.append(line)
+
+            # Add any new settings that weren't in the file
+            for key, value in settings.items():
+                if key not in existing_keys and value is not None:
+                    existing_lines.append(f'{key}={value}\n')
+
+            # Write updated content
+            with open(DOTENV_PATH, 'w') as f:
+                f.writelines(existing_lines)
+
+            self.status_log.add_message(
+                f"Settings saved to {DOTENV_PATH}", COLOR_SUCCESS)
+
+            # Security note for password
+            if settings.get('BITCOIN_RPC_PASSWORD'):
+                self.status_log.add_message(
+                    "Note: Password is stored in plain text in .env file", COLOR_WARNING)
+
+        except PermissionError:
+            self.status_log.add_message(
+                f"Permission denied: Cannot write to {DOTENV_PATH}", COLOR_ERROR)
+        except Exception as e:
+            self.status_log.add_message(
+                f"Failed to save settings: {e}", COLOR_ERROR)
+
     def on_start_pressed(self, instance):
         """Handle Start Server button press."""
         # Validate required fields before starting
@@ -552,6 +790,7 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
+        self.save_btn.disabled = True
         self._set_rpc_settings_enabled(False)
         self._set_meshtastic_settings_enabled(False)
         self._set_timeout_settings_enabled(False)
@@ -571,16 +810,21 @@ class BTCMeshServerGUI(BoxLayout):
         # Reset stop event
         self._stop_event.clear()
 
-        # Set up log handler to capture server logs
+        # Set up log handler to capture server logs with timestamps
         self._log_handler = QueueLogHandler(self.result_queue)
-        self._log_handler.setFormatter(logging.Formatter('%(message)s'))
+        self._log_handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
         server_logger.addHandler(self._log_handler)
+
+        # Session update callback - puts session info in result queue
+        def session_callback(sessions_info):
+            self.result_queue.put(('active_sessions', sessions_info))
 
         # Start server in background thread
         def run_server():
             try:
                 btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config,
-                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout)
+                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout,
+                                    session_update_callback=session_callback)
             except Exception as e:
                 self.result_queue.put(('init_error', str(e), logging.ERROR))
             finally:
@@ -661,6 +905,10 @@ class BTCMeshServerGUI(BoxLayout):
                 self.device_spinner.text = DEVICE_AUTO_DETECT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
 
+        elif result_type == 'active_sessions':
+            # Update the active sessions display
+            self._update_active_sessions(data)
+
     def _apply_status_update(self, status_update):
         """Apply a status update to the GUI."""
         status_type, data = status_update
@@ -709,6 +957,7 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -716,6 +965,7 @@ class BTCMeshServerGUI(BoxLayout):
 
         elif status_type == 'pubsub_error':
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -735,11 +985,14 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
             self.rpc_label.color = STATE_RPC_DISCONNECTED.color
-            self.network_label.text = ''
+            self.network_label.text = '--'
             self.network_label.color = COLOR_DISCONNECTED
+            # Clear active sessions display
+            self._update_active_sessions([])
             # Note: stop_btn is set first because in tests, mocked buttons may be same object
             self.stop_btn.disabled = True
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -748,6 +1001,7 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'init_error':
             self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
+            self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
@@ -758,6 +1012,335 @@ class BTCMeshServerGUI(BoxLayout):
         if self._log_handler:
             server_logger.removeHandler(self._log_handler)
             self._log_handler = None
+
+    def _on_history_pressed(self, instance):
+        """Handle History button press - show transaction history popup."""
+        self._show_history_popup()
+
+    def _show_history_popup(self):
+        """Build and show the transaction history popup."""
+        # Load transaction history
+        history = TransactionHistory()
+        entries = history.get_all()
+
+        # Build popup content
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        # Header with count
+        count = len(entries)
+        header = Label(
+            text=f"Transaction History ({count} entries)",
+            size_hint_y=None,
+            height=30,
+            color=COLOR_PRIMARY,
+            bold=True
+        )
+        content.add_widget(header)
+
+        # Scrollable list of transactions
+        scroll = ScrollView(size_hint_y=1)
+        entries_container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            spacing=5,
+            padding=[0, 5, 0, 5]
+        )
+        entries_container.bind(minimum_height=entries_container.setter('height'))
+
+        if entries:
+            for entry in entries:
+                entry_widget = self._create_history_entry_widget(entry)
+                entries_container.add_widget(entry_widget)
+        else:
+            no_entries = Label(
+                text="No transactions yet",
+                size_hint_y=None,
+                height=40,
+                color=COLOR_DISCONNECTED
+            )
+            entries_container.add_widget(no_entries)
+
+        scroll.add_widget(entries_container)
+        content.add_widget(scroll)
+
+        # Close button
+        close_btn = create_popup_button('Close', primary=True)
+        content.add_widget(close_btn)
+
+        # Create and show popup
+        popup = Popup(
+            title='Transaction History',
+            content=content,
+            size_hint=(0.95, 0.8),
+            background_color=COLOR_BG,
+            title_color=COLOR_PRIMARY,
+            separator_color=COLOR_PRIMARY
+        )
+        close_btn.bind(on_press=popup.dismiss)
+        popup.open()
+
+    def _create_history_entry_widget(self, entry):
+        """Create a clickable widget to display a single history entry."""
+        # Container for the entry - using Button base for touch handling
+        container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=90,
+            spacing=5,
+            padding=[5, 5, 5, 5]
+        )
+
+        # Store entry data for click handler
+        container._entry_data = entry
+
+        # Add background color based on status
+        with container.canvas.before:
+            if entry.get('status') == 'success':
+                Color(0.1, 0.3, 0.1, 1)  # Dark green
+            else:
+                Color(0.3, 0.1, 0.1, 1)  # Dark red
+            container._bg_rect = Rectangle(pos=container.pos, size=container.size)
+        container.bind(pos=self._update_rect, size=self._update_rect)
+
+        # Make container clickable
+        container.bind(on_touch_down=self._on_history_entry_touch)
+
+        # First row: timestamp and status
+        row1 = BoxLayout(orientation='horizontal', size_hint_y=None, height=25)
+
+        # Parse timestamp for display
+        timestamp = entry.get('timestamp', '')
+        if timestamp:
+            try:
+                # Format: 2025-12-26T14:30:00 -> Dec 26 14:30
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp)
+                timestamp_display = dt.strftime('%b %d %H:%M')
+            except (ValueError, TypeError):
+                timestamp_display = timestamp[:16]
+        else:
+            timestamp_display = 'Unknown'
+
+        status = entry.get('status', 'unknown')
+        status_color = COLOR_SUCCESS if status == 'success' else COLOR_ERROR
+
+        time_label = Label(
+            text=timestamp_display,
+            size_hint_x=0.4,
+            halign='left',
+            valign='middle',
+            color=COLOR_SECUNDARY
+        )
+        time_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        status_label = Label(
+            text=status.upper(),
+            size_hint_x=0.6,
+            halign='right',
+            valign='middle',
+            color=status_color,
+            bold=True
+        )
+        status_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row1.add_widget(time_label)
+        row1.add_widget(status_label)
+        container.add_widget(row1)
+
+        # Second row: sender and session
+        row2 = BoxLayout(orientation='horizontal', size_hint_y=None, height=20)
+
+        sender = entry.get('sender', 'Unknown')
+        session_id = entry.get('session_id', '')
+
+        sender_label = Label(
+            text=f"From: {sender}",
+            size_hint_x=0.5,
+            halign='left',
+            valign='middle',
+            color=COLOR_SECUNDARY,
+            font_size='12sp'
+        )
+        sender_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        session_label = Label(
+            text=f"Session: {session_id}",
+            size_hint_x=0.5,
+            halign='right',
+            valign='middle',
+            color=COLOR_SECUNDARY,
+            font_size='12sp'
+        )
+        session_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row2.add_widget(sender_label)
+        row2.add_widget(session_label)
+        container.add_widget(row2)
+
+        # Third row: TXID or error
+        row3 = BoxLayout(orientation='horizontal', size_hint_y=None, height=20)
+
+        if status == 'success':
+            txid = entry.get('txid', '')
+            # Truncate TXID for display
+            txid_display = f"{txid[:16]}...{txid[-8:]}" if len(txid) > 24 else txid
+            result_label = Label(
+                text=f"TXID: {txid_display}",
+                size_hint_x=1,
+                halign='left',
+                valign='middle',
+                color=COLOR_SUCCESS,
+                font_size='11sp'
+            )
+        else:
+            error = entry.get('error', 'Unknown error')
+            # Truncate error for display
+            error_display = error[:50] + '...' if len(error) > 50 else error
+            result_label = Label(
+                text=f"Error: {error_display}",
+                size_hint_x=1,
+                halign='left',
+                valign='middle',
+                color=COLOR_ERROR,
+                font_size='11sp'
+            )
+        result_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+
+        row3.add_widget(result_label)
+        container.add_widget(row3)
+
+        return container
+
+    def _update_rect(self, instance, value):
+        """Update rectangle position/size for background."""
+        if hasattr(instance, '_bg_rect'):
+            instance._bg_rect.pos = instance.pos
+            instance._bg_rect.size = instance.size
+
+    def _on_history_entry_touch(self, instance, touch):
+        """Handle touch on a history entry widget."""
+        if instance.collide_point(*touch.pos):
+            if hasattr(instance, '_entry_data'):
+                self._show_transaction_detail(instance._entry_data)
+                return True
+        return False
+
+    def _show_transaction_detail(self, entry):
+        """Show detailed view of a transaction history entry."""
+        from datetime import datetime
+
+        # Build popup content
+        content = BoxLayout(orientation='vertical', spacing=5, padding=10)
+
+        # Status header with color
+        status = entry.get('status', 'unknown')
+        status_color = COLOR_SUCCESS if status == 'success' else COLOR_ERROR
+        header = Label(
+            text=f"Transaction {status.upper()}",
+            size_hint_y=None,
+            height=40,
+            color=status_color,
+            bold=True,
+            font_size='18sp'
+        )
+        content.add_widget(header)
+
+        # Timestamp
+        timestamp = entry.get('timestamp', '')
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp)
+                timestamp_display = dt.strftime('%B %d, %Y at %H:%M:%S')
+            except (ValueError, TypeError):
+                timestamp_display = timestamp
+        else:
+            timestamp_display = 'Unknown'
+
+        time_row, _ = create_status_row('Time:', timestamp_display, COLOR_SECUNDARY)
+        content.add_widget(time_row)
+
+        # Sender
+        sender = entry.get('sender', 'Unknown')
+        sender_row, _ = create_status_row('Sender:', sender, COLOR_SECUNDARY)
+        content.add_widget(sender_row)
+
+        # Session ID
+        session_id = entry.get('session_id', '')
+        session_row, _ = create_status_row('Session:', session_id, COLOR_SECUNDARY)
+        content.add_widget(session_row)
+
+        # TXID (for success) with copy button
+        if status == 'success':
+            txid = entry.get('txid', '')
+            txid_display = f"{txid[:24]}...{txid[-8:]}" if len(txid) > 32 else txid
+            txid_row, _ = create_status_row('TXID:', txid_display, COLOR_SUCCESS, height=35)
+
+            copy_txid_btn = create_popup_inline_button('Copy TXID')
+            copy_txid_btn.bind(on_press=lambda x: self._copy_to_clipboard(txid, "TXID"))
+            txid_row.add_widget(copy_txid_btn)
+            content.add_widget(txid_row)
+
+        # Error (for failure)
+        if status == 'failed':
+            error = entry.get('error', 'Unknown error')
+            error_row, error_label = create_status_row('Error:', error, COLOR_ERROR, height=35)
+            content.add_widget(error_row)
+
+        # Raw TX section
+        raw_tx = entry.get('raw_tx')
+        if raw_tx:
+            raw_tx_row, _ = create_status_row('Raw TX:', '', COLOR_SECUNDARY)
+            content.add_widget(raw_tx_row)
+
+            # Scrollable raw TX display - fills remaining space
+            raw_tx_scroll = ScrollView(size_hint_y=1)
+            raw_tx_label = Label(
+                text=raw_tx,
+                size_hint_y=None,
+                color=COLOR_PRIMARY,
+                halign='left',
+                valign='top',
+                font_size='11sp'
+            )
+            raw_tx_label.bind(texture_size=lambda inst, val: setattr(inst, 'height', val[1]))
+            raw_tx_label.bind(size=lambda inst, val: setattr(inst, 'text_size', (val[0], None)))
+            raw_tx_scroll.add_widget(raw_tx_label)
+            content.add_widget(raw_tx_scroll)
+
+            # Copy Raw TX button
+            copy_raw_btn = create_popup_button('Copy Raw TX', primary=False)
+            copy_raw_btn.bind(on_press=lambda x: self._copy_to_clipboard(raw_tx, "Raw TX"))
+            content.add_widget(copy_raw_btn)
+
+            # Spacer between buttons
+            content.add_widget(Widget(size_hint_y=None, height=10))
+        else:
+            # No raw TX - add spacer to push close button to bottom
+            no_raw_row, _ = create_status_row('Raw TX:', 'Not available (timeout or incomplete)',
+                                            COLOR_DISCONNECTED)
+            no_raw_row.size_hint_y = 1  # Fill remaining space
+            content.add_widget(no_raw_row)
+
+        # Close button
+        close_btn = create_popup_button('Close', primary=True)
+        content.add_widget(close_btn)
+
+        # Create and show popup
+        popup = Popup(
+            title='Transaction Details',
+            content=content,
+            size_hint=(0.95, 0.85),
+            background_color=COLOR_BG,
+            title_color=COLOR_PRIMARY,
+            separator_color=COLOR_PRIMARY
+        )
+        close_btn.bind(on_press=popup.dismiss)
+        popup.open()
+
+    def _copy_to_clipboard(self, text, label):
+        """Copy text to clipboard and show confirmation."""
+        Clipboard.copy(text)
+        self.status_log.add_message(f"{label} copied to clipboard", COLOR_SUCCESS)
 
     def on_clear_pressed(self, instance):
         """Handle Clear Log button press."""

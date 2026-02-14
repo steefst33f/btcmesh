@@ -34,9 +34,17 @@ class MockBoxLayout:
         self.size = (100, 100)
         self.pos = (0, 0)
         self.width = 100
+        self.height = kwargs.get('height', 100)
+        self.children = []
 
     def add_widget(self, widget):
-        pass
+        widget.parent = self
+        self.children.append(widget)
+
+    def remove_widget(self, widget):
+        widget.parent = None
+        if widget in self.children:
+            self.children.remove(widget)
 
     def bind(self, **kwargs):
         pass
@@ -52,9 +60,12 @@ class MockScrollView:
         self.size = (100, 100)
         self.pos = (0, 0)
         self.width = 100
+        self.height = kwargs.get('height', 100)
+        self.children = []
 
     def add_widget(self, widget):
-        pass
+        widget.parent = self
+        self.children.append(widget)
 
     def bind(self, **kwargs):
         pass
@@ -121,6 +132,31 @@ class MockSpinner:
         pass
 
 
+class MockLabel:
+    """Mock base class for Label that properly stores text and parent."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.color = kwargs.get('color', (1, 1, 1, 1))
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.height = kwargs.get('height', 20)
+        self.width = kwargs.get('width', 100)
+        self.halign = kwargs.get('halign', 'left')
+        self.valign = kwargs.get('valign', 'middle')
+        self.parent = None
+        self.texture_size = (100, 20)
+        self.text_size = (None, None)
+        self.size = (100, 20)
+        self.bold = kwargs.get('bold', False)
+
+    def bind(self, **kwargs):
+        pass
+
+    def setter(self, prop):
+        """Mock setter method for property binding."""
+        return lambda *args: None
+
+
 kivy_mock = unittest.mock.MagicMock()
 # get_color_from_hex should return a tuple like (r, g, b, a)
 kivy_mock.get_color_from_hex = lambda _: (1, 1, 1, 1)
@@ -144,6 +180,9 @@ textinput_mock.TextInput = MockTextInput
 spinner_mock = unittest.mock.MagicMock()
 spinner_mock.Spinner = MockSpinner
 
+label_mock = unittest.mock.MagicMock()
+label_mock.Label = MockLabel
+
 # Properties need to return actual values, not MagicMocks
 properties_mock = unittest.mock.MagicMock()
 properties_mock.StringProperty = lambda default='': default
@@ -153,7 +192,7 @@ sys.modules['kivy'] = kivy_mock
 sys.modules['kivy.app'] = app_mock
 sys.modules['kivy.uix'] = kivy_mock
 sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
-sys.modules['kivy.uix.label'] = kivy_mock
+sys.modules['kivy.uix.label'] = label_mock
 sys.modules['kivy.uix.textinput'] = textinput_mock
 sys.modules['kivy.uix.button'] = kivy_mock
 sys.modules['kivy.uix.scrollview'] = scrollview_mock
@@ -636,7 +675,7 @@ class TestServerResultHandlingStory152(unittest.TestCase):
             gui.network_label.color = btcmesh_server_gui.COLOR_MAINNET
             # Then simulate server stopped
             gui._handle_result(('server_stopped', None))
-        self.assertEqual(gui.network_label.text, '')
+        self.assertEqual(gui.network_label.text, '--')
         self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_DISCONNECTED)
 
     def test_server_gui_has_network_label(self):
@@ -1534,6 +1573,841 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
                         mock_main.assert_called_once()
                         call_kwargs = mock_main.call_args.kwargs
                         self.assertEqual(call_kwargs.get('reassembly_timeout'), 120)
+
+
+class TestActivityLogDisplayStory171(unittest.TestCase):
+    """Tests for Story 17.1: Implement Activity Log Display.
+
+    Verifies:
+    - Scrollable activity log shows server events
+    - Log messages have timestamps
+    - Color coding per log_color_spec.md
+    - Auto-scroll to newest entry
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_status_log(self):
+        """Given server GUI, Then it should have status_log attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'status_log'))
+
+    def test_gui_has_clear_button(self):
+        """Given server GUI, Then it should have clear_btn attribute for clearing log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'clear_btn'))
+
+    def test_log_handler_uses_timestamp_format(self):
+        """Given server starts, Then log handler should format messages with [HH:MM:SS] timestamps."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+
+        # Verify log handler was created and has correct format
+        self.assertIsNotNone(gui._log_handler)
+        formatter = gui._log_handler.formatter
+        self.assertIsNotNone(formatter)
+        # Check format string includes asctime
+        self.assertIn('asctime', formatter._fmt)
+        # Check datefmt is HH:MM:SS
+        self.assertEqual(formatter.datefmt, '%H:%M:%S')
+
+    def test_log_handler_formats_message_with_timestamp(self):
+        """Given log handler, When formatting a log record, Then output should contain [HH:MM:SS] timestamp."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+
+        # Create a log record and format it
+        record = logging.LogRecord(
+            name='test', level=logging.INFO, pathname='', lineno=0,
+            msg='Test message', args=(), exc_info=None
+        )
+        formatted = gui._log_handler.formatter.format(record)
+
+        # Verify formatted message contains timestamp in [HH:MM:SS] format
+        # Pattern: [00:00:00] to [23:59:59]
+        timestamp_pattern = r'\[\d{2}:\d{2}:\d{2}\]'
+        self.assertRegex(formatted, timestamp_pattern)
+        # Verify the message is also present
+        self.assertIn('Test message', formatted)
+
+    def test_log_message_result_adds_to_status_log(self):
+        """Given 'log' result type, Then message should be added to status_log."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('log', 'Test log message', logging.INFO))
+        gui.status_log.add_message.assert_called()
+
+    def test_get_log_color_returns_error_for_failed_keyword(self):
+        """Given INFO level with 'failed' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Connection failed")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_nack_keyword(self):
+        """Given INFO level with 'nack' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Sending NACK to client")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_timed_out_keyword(self):
+        """Given INFO level with 'timed out' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Session timed out")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_abort_keyword(self):
+        """Given INFO level with 'abort' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Session aborted by user")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_error_for_closing_keyword(self):
+        """Given INFO level with 'closing' keyword, Then get_log_color should return COLOR_ERROR."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Closing Meshtastic interface")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_ERROR)
+
+    def test_get_log_color_returns_success_for_successfully_keyword(self):
+        """Given INFO level with 'successfully' keyword, Then get_log_color should return COLOR_SUCCESS."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Meshtastic initialized successfully")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
+
+    def test_get_log_color_returns_success_for_txid_keyword(self):
+        """Given INFO level with 'txid:' keyword, Then get_log_color should return COLOR_SUCCESS."""
+        import btcmesh_server_gui
+        import logging
+
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Broadcast success. TXID: abc123")
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
+
+    def test_on_clear_pressed_clears_log(self):
+        """Given log has messages, When clear button pressed, Then log should be cleared."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.clear = unittest.mock.MagicMock()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui.on_clear_pressed(None)
+        gui.status_log.clear.assert_called_once()
+
+    def test_btc_tx_chunk_message_color(self):
+        """Given INFO level message about BTC_TX chunk, Then it should be normal color (not highlighted as error)."""
+        import btcmesh_server_gui
+        import logging
+
+        # BTC_TX chunk messages are normal info messages per log_color_spec.md
+        color = btcmesh_server_gui.get_log_color(logging.INFO, "Potential BTC transaction chunk from !abcdef12. Processing...")
+        # Should be None (default white) since it's not a success or error keyword
+        self.assertIsNone(color)
+
+    def test_log_parses_and_displays_connection_events(self):
+        """Given log result with connection message, Then status should be updated and message displayed."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            # Simulate log message that triggers status update
+            gui._handle_result(('log', 'Connected to Bitcoin Core RPC node successfully. Host: localhost:8332, Tor: False, Chain: main', logging.INFO))
+        # Verify message was added to log with success color (message contains 'successfully')
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args
+        message = call_args[0][0]
+        color = call_args[0][1]
+        self.assertIn('Connected to Bitcoin Core', message)
+        self.assertEqual(color, btcmesh_server_gui.COLOR_SUCCESS)
+
+
+class TestSaveLoadSettingsStory184(unittest.TestCase):
+    """Tests for Story 18.4: Save and Load Settings.
+
+    Verifies:
+    - GUI has Save Settings button
+    - Settings are saved to .env file
+    - Existing content is preserved
+    - Auto-detect device is handled properly
+    - Backup is created before saving
+    - Button is disabled when server is running
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_save_button(self):
+        """Given server GUI, Then it should have save_btn attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'save_btn'))
+
+    def test_save_button_initially_enabled(self):
+        """Given server GUI just started, Then save button should be enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_disabled_when_server_starts(self):
+        """Given server starts, Then save button should be disabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input.text = 'user'
+                gui.rpc_password_input.text = 'password'
+                gui.on_start_pressed(None)
+        self.assertTrue(gui.save_btn.disabled)
+
+    def test_save_button_enabled_when_server_stops(self):
+        """Given server stops, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('server_stopped', None))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_enabled_on_meshtastic_failure(self):
+        """Given meshtastic fails, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_button_enabled_on_init_error(self):
+        """Given init error occurs, Then save button should be re-enabled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.save_btn.disabled = True
+            gui._handle_result(('init_error', 'Some error'))
+        self.assertFalse(gui.save_btn.disabled)
+
+    def test_save_settings_writes_to_env_file(self):
+        """Given settings are filled, When save is clicked, Then .env file is written."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'testhost.local'
+            gui.rpc_port_input.text = '18332'
+            gui.rpc_user_input.text = 'testuser'
+            gui.rpc_password_input.text = 'testpass'
+            gui.timeout_input.text = '120'
+            gui.device_spinner.text = '/dev/ttyUSB0'
+
+            # Mock the .env path to a temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Read and verify content
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                self.assertIn('BITCOIN_RPC_HOST=testhost.local', content)
+                self.assertIn('BITCOIN_RPC_PORT=18332', content)
+                self.assertIn('BITCOIN_RPC_USER=testuser', content)
+                self.assertIn('BITCOIN_RPC_PASSWORD=testpass', content)
+                self.assertIn('REASSEMBLY_TIMEOUT_SECONDS=120', content)
+                self.assertIn('MESHTASTIC_SERIAL_PORT=/dev/ttyUSB0', content)
+
+                # Verify success message was shown
+                gui.status_log.add_message.assert_called()
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_shows_confirmation_message(self):
+        """Given save succeeds, Then confirmation message should be displayed."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Check that success message was shown
+                calls = gui.status_log.add_message.call_args_list
+                messages = [call[0][0] for call in calls]
+                self.assertTrue(any('saved' in msg.lower() for msg in messages))
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_preserves_comments(self):
+        """Given .env has comments, When save is clicked, Then comments are preserved."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                # Write initial content with comments
+                f.write("# This is a comment\n")
+                f.write("BITCOIN_RPC_HOST=oldhost\n")
+                f.write("# Another comment\n")
+                f.write("SOME_OTHER_VAR=keepme\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                # Comments should be preserved
+                self.assertIn('# This is a comment', content)
+                self.assertIn('# Another comment', content)
+                # Other variables should be preserved
+                self.assertIn('SOME_OTHER_VAR=keepme', content)
+                # Value should be updated
+                self.assertIn('BITCOIN_RPC_HOST=localhost', content)
+                self.assertNotIn('BITCOIN_RPC_HOST=oldhost', content)
+            finally:
+                os.unlink(temp_path)
+                # Clean up backup if created
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_creates_backup(self):
+        """Given .env exists, When save is clicked, Then .env.bak backup is created."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                f.write("BITCOIN_RPC_HOST=original\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Backup should exist
+                backup_path = temp_path + '.bak'
+                self.assertTrue(os.path.exists(backup_path))
+
+                # Backup should contain original content
+                with open(backup_path, 'r') as f:
+                    backup_content = f.read()
+                self.assertIn('BITCOIN_RPC_HOST=original', backup_content)
+            finally:
+                os.unlink(temp_path)
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_auto_detect_removes_device_setting(self):
+        """Given Auto-detect is selected, Then MESHTASTIC_SERIAL_PORT should be removed."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+            gui.device_spinner.text = btcmesh_server_gui.DEVICE_AUTO_DETECT
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                # File has an existing device setting
+                f.write("MESHTASTIC_SERIAL_PORT=/dev/ttyOLD\n")
+                f.write("BITCOIN_RPC_HOST=oldhost\n")
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                # Device setting should be removed
+                self.assertNotIn('MESHTASTIC_SERIAL_PORT', content)
+                # Other settings should be present
+                self.assertIn('BITCOIN_RPC_HOST=localhost', content)
+            finally:
+                os.unlink(temp_path)
+                if os.path.exists(temp_path + '.bak'):
+                    os.unlink(temp_path + '.bak')
+
+    def test_save_settings_shows_password_warning(self):
+        """Given password is set, When save succeeds, Then warning about plain text is shown."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'secretpassword'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                # Check that warning about plain text password was shown
+                calls = gui.status_log.add_message.call_args_list
+                messages = [call[0][0] for call in calls]
+                self.assertTrue(any('plain text' in msg.lower() for msg in messages))
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_handles_permission_error(self):
+        """Given .env is not writable, When save is clicked, Then error message is shown."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = 'user'
+            gui.rpc_password_input.text = 'pass'
+            gui.timeout_input.text = '300'
+
+            # Mock open to raise PermissionError
+            with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', '/nonexistent/path/.env'):
+                with unittest.mock.patch('builtins.open', side_effect=PermissionError("Permission denied")):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+            # Check that error message was shown
+            calls = gui.status_log.add_message.call_args_list
+            messages = [call[0][0] for call in calls]
+            colors = [call[0][1] for call in calls]
+            self.assertTrue(any('permission' in msg.lower() for msg in messages))
+            self.assertIn(btcmesh_server_gui.COLOR_ERROR, colors)
+
+    def test_settings_loaded_on_startup(self):
+        """Given .env has settings, When GUI starts, Then settings are loaded."""
+        import btcmesh_server_gui
+        import os
+
+        # This test verifies the existing behavior - settings are loaded from env vars
+        # which are populated by load_app_config() from .env file
+        original_host = os.environ.get('BITCOIN_RPC_HOST')
+        os.environ['BITCOIN_RPC_HOST'] = 'loaded-from-env.local'
+
+        try:
+            with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+            # Verify the value was loaded
+            self.assertEqual(gui.rpc_host_input.text, 'loaded-from-env.local')
+        finally:
+            if original_host is None:
+                os.environ.pop('BITCOIN_RPC_HOST', None)
+            else:
+                os.environ['BITCOIN_RPC_HOST'] = original_host
+
+
+class TestActiveSessionsDisplayStory172(unittest.TestCase):
+    """Tests for Active Sessions Display in Story 17.2."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        if 'core.gui_common' in sys.modules:
+            del sys.modules['core.gui_common']
+        if 'btcmesh_server_gui' in sys.modules:
+            del sys.modules['btcmesh_server_gui']
+
+    def test_gui_has_sessions_container(self):
+        """Given server GUI, Then it should have sessions_container attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'sessions_container'))
+
+    def test_gui_has_sessions_scroll(self):
+        """Given server GUI, Then it should have sessions_scroll ScrollView attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'sessions_scroll'))
+        # ScrollView should have fixed height of 85 (fits ~3 sessions)
+        self.assertEqual(gui.sessions_scroll.height, 85)
+
+    def test_gui_has_session_count_label(self):
+        """Given server GUI, Then it should have session_count_label always visible."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'session_count_label'))
+        self.assertEqual(gui.session_count_label.text, '0 active sessions')
+
+    def test_session_count_updates_with_sessions(self):
+        """Given sessions, When _update_active_sessions called, Then count label updates."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        # Update with 1 session
+        sessions = [{'session_id': 'abc12', 'sender': '!12345678',
+                    'chunks_received': 2, 'total_chunks': 5, 'elapsed_seconds': 10}]
+        gui._update_active_sessions(sessions)
+        self.assertEqual(gui.session_count_label.text, '1 active session')
+
+        # Update with 3 sessions
+        sessions = [
+            {'session_id': 'abc12', 'sender': '!12345678', 'chunks_received': 2, 'total_chunks': 5, 'elapsed_seconds': 10},
+            {'session_id': 'def34', 'sender': '!87654321', 'chunks_received': 1, 'total_chunks': 3, 'elapsed_seconds': 5},
+            {'session_id': 'ghi56', 'sender': '!abcdef00', 'chunks_received': 4, 'total_chunks': 8, 'elapsed_seconds': 20},
+        ]
+        gui._update_active_sessions(sessions)
+        self.assertEqual(gui.session_count_label.text, '3 active sessions')
+
+        # Update with 0 sessions
+        gui._update_active_sessions([])
+        self.assertEqual(gui.session_count_label.text, '0 active sessions')
+
+    def test_gui_has_no_sessions_label(self):
+        """Given server GUI, Then it should have no_sessions_label attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'no_sessions_label'))
+        self.assertEqual(gui.no_sessions_label.text, 'No active sessions')
+
+    def test_gui_has_session_widgets_dict(self):
+        """Given server GUI, Then it should have _session_widgets dict."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, '_session_widgets'))
+        self.assertIsInstance(gui._session_widgets, dict)
+        self.assertEqual(len(gui._session_widgets), 0)
+
+    def test_gui_has_update_active_sessions_method(self):
+        """Given server GUI, Then it should have _update_active_sessions method."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, '_update_active_sessions'))
+        self.assertTrue(callable(gui._update_active_sessions))
+
+    def test_update_active_sessions_with_empty_list_shows_no_sessions(self):
+        """Given empty sessions list, When _update_active_sessions called, Then no_sessions_label is shown."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        # Update with empty list
+        gui._update_active_sessions([])
+
+        # Verify no_sessions_label is shown
+        self.assertIsNotNone(gui.no_sessions_label.parent)
+        self.assertEqual(len(gui._session_widgets), 0)
+
+    def test_update_active_sessions_with_sessions_creates_widgets(self):
+        """Given sessions list, When _update_active_sessions called, Then session widgets are created."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        sessions = [
+            {
+                'session_id': 'abc12',
+                'sender': '!deadbeef',
+                'chunks_received': 2,
+                'total_chunks': 5,
+                'elapsed_seconds': 10.5
+            }
+        ]
+        gui._update_active_sessions(sessions)
+
+        # Verify session widget was created
+        self.assertIn('abc12', gui._session_widgets)
+        self.assertIsNone(gui.no_sessions_label.parent)
+
+    def test_update_active_sessions_updates_existing_widget(self):
+        """Given existing session, When _update_active_sessions called again, Then widget is updated."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        # First update
+        sessions1 = [
+            {
+                'session_id': 'abc12',
+                'sender': '!deadbeef',
+                'chunks_received': 2,
+                'total_chunks': 5,
+                'elapsed_seconds': 10.0
+            }
+        ]
+        gui._update_active_sessions(sessions1)
+        widget1 = gui._session_widgets['abc12']
+
+        # Second update with progress
+        sessions2 = [
+            {
+                'session_id': 'abc12',
+                'sender': '!deadbeef',
+                'chunks_received': 3,
+                'total_chunks': 5,
+                'elapsed_seconds': 15.0
+            }
+        ]
+        gui._update_active_sessions(sessions2)
+
+        # Same widget should be updated
+        self.assertIs(gui._session_widgets['abc12'], widget1)
+        self.assertIn('3/5', widget1.text)
+
+    def test_update_active_sessions_removes_completed_sessions(self):
+        """Given session no longer in list, When _update_active_sessions called, Then widget is removed."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        # First update with two sessions
+        sessions1 = [
+            {'session_id': 'abc12', 'sender': '!deadbeef', 'chunks_received': 2, 'total_chunks': 5, 'elapsed_seconds': 10.0},
+            {'session_id': 'xyz99', 'sender': '!cafebabe', 'chunks_received': 1, 'total_chunks': 3, 'elapsed_seconds': 5.0}
+        ]
+        gui._update_active_sessions(sessions1)
+        self.assertEqual(len(gui._session_widgets), 2)
+
+        # Second update with only one session (abc12 completed)
+        sessions2 = [
+            {'session_id': 'xyz99', 'sender': '!cafebabe', 'chunks_received': 2, 'total_chunks': 3, 'elapsed_seconds': 8.0}
+        ]
+        gui._update_active_sessions(sessions2)
+
+        # Only xyz99 should remain
+        self.assertEqual(len(gui._session_widgets), 1)
+        self.assertNotIn('abc12', gui._session_widgets)
+        self.assertIn('xyz99', gui._session_widgets)
+
+    def test_handle_result_active_sessions_calls_update(self):
+        """Given 'active_sessions' result type, When _handle_result called, Then _update_active_sessions is called."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        sessions = [
+            {'session_id': 'test1', 'sender': '!12345678', 'chunks_received': 1, 'total_chunks': 2, 'elapsed_seconds': 3.0}
+        ]
+
+        # Call _handle_result directly
+        gui._handle_result(('active_sessions', sessions))
+
+        # Verify session widget was created
+        self.assertIn('test1', gui._session_widgets)
+
+    def test_server_stopped_clears_active_sessions(self):
+        """Given active sessions, When server_stopped status received, Then sessions are cleared."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        # Set up some sessions
+        sessions = [
+            {'session_id': 'abc12', 'sender': '!deadbeef', 'chunks_received': 2, 'total_chunks': 5, 'elapsed_seconds': 10.0}
+        ]
+        gui._update_active_sessions(sessions)
+        self.assertEqual(len(gui._session_widgets), 1)
+
+        # Apply server_stopped status
+        gui._apply_status_update(('server_stopped', None))
+
+        # Sessions should be cleared
+        self.assertEqual(len(gui._session_widgets), 0)
+        self.assertIsNotNone(gui.no_sessions_label.parent)
+
+    def test_session_display_format(self):
+        """Given session info, When widget created, Then text format is correct."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+
+        sessions = [
+            {
+                'session_id': 'test1',
+                'sender': '!abcdef12',
+                'chunks_received': 3,
+                'total_chunks': 7,
+                'elapsed_seconds': 45.0
+            }
+        ]
+        gui._update_active_sessions(sessions)
+
+        widget = gui._session_widgets['test1']
+        # Check key parts are in the text
+        self.assertIn('test1', widget.text)
+        self.assertIn('3/7', widget.text)
+        self.assertIn('45s', widget.text)
+
+
+class TestReassemblerGetActiveSessionsInfo(unittest.TestCase):
+    """Tests for TransactionReassembler.get_active_sessions_info method."""
+
+    def test_get_active_sessions_info_empty(self):
+        """Given no active sessions, When get_active_sessions_info called, Then empty list returned."""
+        from core.reassembler import TransactionReassembler
+
+        reassembler = TransactionReassembler(timeout_seconds=60)
+        result = reassembler.get_active_sessions_info()
+
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 0)
+
+    def test_get_active_sessions_info_with_session(self):
+        """Given active session, When get_active_sessions_info called, Then session info returned."""
+        from core.reassembler import TransactionReassembler
+
+        reassembler = TransactionReassembler(timeout_seconds=60)
+
+        # Add a chunk to create a session
+        reassembler.add_chunk('!sender123', 'BTC_TX|sess1|1/3|aabbccdd')
+
+        result = reassembler.get_active_sessions_info()
+
+        self.assertEqual(len(result), 1)
+        session_info = result[0]
+        self.assertEqual(session_info['session_id'], 'sess1')
+        self.assertEqual(session_info['sender'], '!sender123')
+        self.assertEqual(session_info['chunks_received'], 1)
+        self.assertEqual(session_info['total_chunks'], 3)
+        self.assertIsInstance(session_info['elapsed_seconds'], float)
+
+    def test_get_active_sessions_info_multiple_sessions(self):
+        """Given multiple active sessions, When get_active_sessions_info called, Then all sessions returned."""
+        from core.reassembler import TransactionReassembler
+
+        reassembler = TransactionReassembler(timeout_seconds=60)
+
+        # Add chunks to create multiple sessions
+        reassembler.add_chunk('!sender1', 'BTC_TX|sessA|1/2|aabb')
+        reassembler.add_chunk('!sender2', 'BTC_TX|sessB|1/3|ccdd')
+
+        result = reassembler.get_active_sessions_info()
+
+        self.assertEqual(len(result), 2)
+        session_ids = {s['session_id'] for s in result}
+        self.assertIn('sessA', session_ids)
+        self.assertIn('sessB', session_ids)
 
 
 if __name__ == '__main__':
