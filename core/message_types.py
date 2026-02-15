@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from core.constants import (
+    CHUNK_DELIMITER,
+    CHUNK_INDEX_DELIMITER,
     MSG_BTC_TX,
     MSG_CHUNK_ACK,
     MSG_ACK,
@@ -32,7 +34,8 @@ class ChunkMessage:
     payload: str  # hex payload fragment
 
     def format(self) -> str:
-        return f"{MSG_BTC_TX}|{self.session_id}|{self.chunk_number}/{self.total_chunks}|{self.payload}"
+        D, I = CHUNK_DELIMITER, CHUNK_INDEX_DELIMITER
+        return f"{MSG_BTC_TX}{D}{self.session_id}{D}{self.chunk_number}{I}{self.total_chunks}{D}{self.payload}"
 
 
 @dataclass
@@ -51,11 +54,12 @@ class ChunkAckMessage:
     all_received: bool = False
 
     def format(self) -> str:
-        base = f"{MSG_CHUNK_ACK}|{self.session_id}|{self.chunk_number}|{self.status}"
+        D = CHUNK_DELIMITER
+        base = f"{MSG_CHUNK_ACK}{D}{self.session_id}{D}{self.chunk_number}{D}{self.status}"
         if self.all_received:
-            return f"{base}|{ACK_ALL_RECEIVED}"
+            return f"{base}{D}{ACK_ALL_RECEIVED}"
         if self.request_next_chunk is not None:
-            return f"{base}|{ACK_REQUEST_CHUNK}|{self.request_next_chunk}"
+            return f"{base}{D}{ACK_REQUEST_CHUNK}{D}{self.request_next_chunk}"
         return base
 
 
@@ -67,7 +71,8 @@ class AckMessage:
     txid: str
 
     def format(self) -> str:
-        return f"{MSG_ACK}|{self.session_id}|{STATUS_SUCCESS}|{TXID_PREFIX}{self.txid}"
+        D = CHUNK_DELIMITER
+        return f"{MSG_ACK}{D}{self.session_id}{D}{STATUS_SUCCESS}{D}{TXID_PREFIX}{self.txid}"
 
 
 @dataclass
@@ -78,7 +83,8 @@ class NackMessage:
     error_detail: str
 
     def format(self) -> str:
-        return f"{MSG_NACK}|{self.session_id}|{STATUS_ERROR}|{self.error_detail}"
+        D = CHUNK_DELIMITER
+        return f"{MSG_NACK}{D}{self.session_id}{D}{STATUS_ERROR}{D}{self.error_detail}"
 
 
 @dataclass
