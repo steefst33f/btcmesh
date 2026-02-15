@@ -1043,19 +1043,26 @@ lora/
         - [ ] *   **Given** parsed server responses.
         - [ ] *   **Then** they are represented as typed dataclasses.
 
-- [ ] **Story 20.3: Add unit tests for core/protocol.py**
+- [ ] **Story 20.4: Remove redundant status field from response messages**
 - [ ] *   **As a** developer,
-- [ ] *   **I want** comprehensive tests for the protocol module,
-- [ ] *   **So that** refactoring doesn't break functionality.
-    - [ ] *   **Scenario:** Test chunking
-        - [ ] *   **Given** various transaction hex lengths.
-        - [ ] *   **Then** chunks are correctly sized and counted.
-    - [ ] *   **Scenario:** Test message parsing
-        - [ ] *   **Given** valid and invalid ACK/NACK messages.
-        - [ ] *   **Then** parsing succeeds or raises appropriate errors.
-    - [ ] *   **Scenario:** Test edge cases
-        - [ ] *   **Given** empty input, invalid hex, malformed messages.
-        - [ ] *   **Then** appropriate ValueError exceptions are raised.
+- [ ] *   **I want** to remove the always-fixed status field from BTC_CHUNK_ACK, BTC_ACK, and BTC_NACK messages,
+- [ ] *   **So that** the protocol is leaner, simpler to parse, and wastes fewer bytes on LoRa payloads.
+    - [ ] *   **Scenario:** BTC_CHUNK_ACK no longer contains OK field
+        - [ ] *   **Given** the server sends a chunk acknowledgment.
+        - [ ] *   **When** the message is formatted.
+        - [ ] *   **Then** the format is `BTC_CHUNK_ACK|<session>|<chunk>|REQUEST_CHUNK|<next>` or `BTC_CHUNK_ACK|<session>|<chunk>|ALL_CHUNKS_RECEIVED`.
+    - [ ] *   **Scenario:** BTC_ACK no longer contains SUCCESS field
+        - [ ] *   **Given** the server sends a success acknowledgment.
+        - [ ] *   **When** the message is formatted.
+        - [ ] *   **Then** the format is `BTC_ACK|<session>|TXID:<txid>`.
+    - [ ] *   **Scenario:** BTC_NACK no longer contains ERROR field
+        - [ ] *   **Given** the server sends an error response.
+        - [ ] *   **When** the message is formatted.
+        - [ ] *   **Then** the format is `BTC_NACK|<session>|<error_detail>`.
+    - [ ] *   **Scenario:** All existing tests updated
+        - [ ] *   **Given** the protocol change.
+        - [ ] *   **Then** `core/protocol.py`, `core/message_types.py`, `core/reassembler.py`, `btcmesh_server.py`, `btcmesh_cli.py`, `project/protocol_spec.md`, and all related tests are updated.
+    *   _See Issue 7 in project/issues.txt for more info.(story was created from this issue)_
 
 ### 21. Transport Abstraction
 
