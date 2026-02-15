@@ -1027,21 +1027,24 @@ lora/
         - [ ] *   **Given** any function in `core/protocol.py`.
         - [ ] *   **Then** it has no print statements, no logging, no network calls.
 
-- [ ] **Story 20.2: Create core/message_types.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** message types as dataclasses,
-- [ ] *   **So that** the protocol is clearly defined and type-safe.
-    - [ ] *   **Scenario:** TransactionSession dataclass
-        - [ ] *   **Given** the `TransactionSession` class.
-        - [ ] *   **Then** it has fields: session_id (str), chunks (list[str]).
-        - [ ] *   **And** a computed property `total_chunks`.
-    - [ ] *   **Scenario:** ChunkMessage dataclass
-        - [ ] *   **Given** the `ChunkMessage` class.
-        - [ ] *   **Then** it has fields: session_id, chunk_number, total_chunks, payload.
-        - [ ] *   **And** a `format()` method returning the wire protocol string.
-    - [ ] *   **Scenario:** AckMessage and CompletionMessage dataclasses
-        - [ ] *   **Given** parsed server responses.
-        - [ ] *   **Then** they are represented as typed dataclasses.
+- [x] **Story 20.2: Create core/message_types.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** message types as dataclasses,
+- [x] *   **So that** the protocol is clearly defined and type-safe.
+    - [x] *   **Scenario:** TransactionSession dataclass
+        - [x] *   **Given** the `TransactionSession` class.
+        - [x] *   **Then** it has fields: session_id (str), chunks (list[str]).
+        - [x] *   **And** a computed property `total_chunks`.
+    - [x] *   **Scenario:** ChunkMessage dataclass
+        - [x] *   **Given** the `ChunkMessage` class.
+        - [x] *   **Then** it has fields: session_id, chunk_number, total_chunks, payload.
+        - [x] *   **And** a `format()` method returning the wire protocol string.
+    - [x] *   **Scenario:** AckMessage and CompletionMessage dataclasses
+        - [x] *   **Given** parsed server responses.
+        - [x] *   **Then** they are represented as typed dataclasses.
+    *   _Note: Five dataclasses: ChunkMessage, ChunkAckMessage, AckMessage, NackMessage (wire types with `format()` methods), and TransactionSession (internal). Updated `core/reassembler.py` to import constants from `core/constants.py`._
+    *   _Note: Also created `core/constants.py` as single source of truth for all protocol constants. 
+    *   _Note: And Also made the delimiters used as constants so we can use those instead of hardcoded delimiters everywhere from now on.
 
 - [ ] **Story 20.4: Remove redundant status field from response messages**
 - [ ] *   **As a** developer,
