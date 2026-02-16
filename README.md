@@ -36,6 +36,7 @@ btcmesh/
 │   └── reassembler.py     # For reassembling chunked messages
 ├── project/               # Project planning documents
 │   ├── tasks.txt
+│   ├── protocol_spec.md
 │   └── reference_materials.md
 ├── logs/                  # Directory for log files (created at runtime)
 ├── tests/                 # Unit and integration tests

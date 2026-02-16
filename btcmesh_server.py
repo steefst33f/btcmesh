@@ -54,9 +54,6 @@ TRX_CHUNK_BUFFER: Dict[str, Any] = {}  # This will be replaced by reassembler lo
 # Ensure .env is loaded at application startup
 load_app_config()
 
-# --- Reliable Chunked Protocol: Deduplication state ---
-PROCESSED_CHUNKS = set()  # Set of (session_id, chunk_number) tuples
-
 def _format_node_id(node_id_val: Any) -> Optional[str]:
     """Helper to consistently format node IDs to !<hex_string> or return None."""
     if isinstance(node_id_val, int):
@@ -225,68 +222,6 @@ def on_receive_text_message(
             logger.info(
                 f"Direct text from {sender_node_id_for_reply}: '{message_text}'"
             )
-
-            if message_text.startswith("BTC_SESSION_START|"):
-                # Parse: BTC_SESSION_START|<session_id>|<total_chunks>|<chunk_size>
-                try:
-                    parts = message_text.split("|")
-                    if len(parts) != 4:
-                        raise ValueError("Malformed BTC_SESSION_START message")
-                    _, session_id, total_chunks, chunk_size = parts
-                    ack_msg = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
-                except Exception:
-                    session_id = parts[1] if len(parts) > 1 else "unknown"
-                    ack_msg = f"BTC_SESSION_ACK|{session_id}|READY|REQUEST_CHUNK|1"
-                logger.debug(
-                    f"[TEST] send_meshtastic_reply called for session {session_id} to {sender_node_id_for_reply} with: {ack_msg}"
-                )
-                send_reply_func(iface, sender_node_id_for_reply, ack_msg, session_id)
-                return
-
-            if message_text.startswith("BTC_SESSION_ABORT|"):
-                # Parse: BTC_SESSION_ABORT|<session_id>|<reason>
-                try:
-                    parts = message_text.split("|", 2)
-                    if len(parts) < 3:
-                        session_id = parts[1] if len(parts) > 1 else "unknown"
-                        reason = "No reason provided"
-                    else:
-                        _, session_id, reason = parts
-                    logger.info(
-                        f"Session {session_id} aborted by {sender_node_id_for_reply}: {reason}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to parse BTC_SESSION_ABORT message: {e}")
-                return
-
-            if message_text.startswith("BTC_CHUNK|"):
-                # Parse: BTC_CHUNK|<session_id>|<chunk_number>/<total_chunks>|<hex_payload>
-                try:
-                    parts = message_text.split("|", 3)
-                    if len(parts) != 4:
-                        raise ValueError("Malformed BTC_CHUNK message")
-                    _, session_id, chunk_info, hex_payload = parts
-                    chunk_number, total_chunks = chunk_info.split("/")
-                    chunk_number = int(chunk_number)
-                    total_chunks = int(total_chunks)
-                    sender_node_id_for_reply = _format_node_id(
-                        packet.get("from") or packet.get("fromId")
-                    )
-                    # Deduplication: only process first time
-                    global PROCESSED_CHUNKS
-                    chunk_key = (session_id, chunk_number)
-                    if chunk_key in PROCESSED_CHUNKS:
-                        return  # Ignore duplicate
-                    PROCESSED_CHUNKS.add(chunk_key)
-                    if chunk_number == 1:
-                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-                        send_reply_func(
-                            iface, sender_node_id_for_reply, ack_msg, session_id
-                        )
-                        return
-                except Exception as e:
-                    logger.error(f"Failed to parse BTC_CHUNK message: {e}")
-                    return
 
             if message_text.startswith(CHUNK_PREFIX):
                 # Log every received chunk for diagnostics

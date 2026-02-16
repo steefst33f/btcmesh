@@ -640,7 +640,6 @@ class TestCliNackAndAbortHandling(unittest.TestCase):
         self.nack_msg_chunk1 = (
             f"BTC_NACK|{self.session_id}|1|ERROR|NACK for chunk 1 test"
         )
-        self.abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason test"
         self.ack_msg_chunk1 = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
         self.ack_msg_chunk2_final = (
             f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
@@ -710,31 +709,6 @@ class TestCliNackAndAbortHandling(unittest.TestCase):
         self.assertIn(
             f"Retrying chunk 1/2 (attempt 3 of 3) due to NACK", printed_output
         )
-
-    @unittest.skip("Temporarily skipped")
-    def test_abort_message_aborts_immediately(self):
-        # Simulate abort message after first chunk
-        def message_receiver(timeout, session_id):
-            yield self.abort_msg
-
-        Args = type(
-            "Args",
-            (),
-            {
-                "destination": self.dest,
-                "tx": self.tx_hex,
-                "session_id": self.session_id,
-                "dry_run": False,
-            },
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.cli_main(
-                args=Args,
-                injected_iface=self.mock_iface,
-                injected_message_receiver=message_receiver,
-            )
-        self.assertEqual(len(self.sent_chunks), 1)  # Only first chunk sent
-
 
 class TestCliTimeoutAndRetriesOnNoAck(unittest.TestCase):
     def setUp(self):
@@ -849,39 +823,6 @@ class TestCliTimeoutAndRetriesOnNoAck(unittest.TestCase):
         self.mock_logger.warning.assert_any_call(
             f"Retrying chunk 1/2 (attempt 2 of 3) due to NACK"
         )
-
-    @unittest.skip("Temporarily skipped")
-    def test_prints_abort_message_on_session_abort(self):
-        # Simulate session abort message
-        abort_msg = f"BTC_SESSION_ABORT|{self.session_id}|Server abort reason"
-
-        def message_receiver(timeout, session_id):
-            yield abort_msg
-
-        Args = type(
-            "Args",
-            (),
-            {
-                "destination": self.dest,
-                "tx": self.tx_hex,
-                "session_id": self.session_id,
-                "dry_run": False,
-            },
-        )
-        with patch("builtins.print") as mock_print, self.assertRaises(SystemExit):
-            self.cli_main(
-                args=Args,
-                injected_iface=self.mock_iface,
-                injected_logger=self.mock_logger,  # Pass the mock_logger from setUp
-                injected_message_receiver=message_receiver,
-            )
-        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
-        self.assertIn("Session aborted by server: Server abort reason", printed)
-        # Assert logger error call
-        self.mock_logger.error.assert_any_call(
-            f"Session {self.session_id} aborted by server: Server abort reason"
-        )
-
 
 class TestDryRunWithoutMeshtasticStory65(unittest.TestCase):
     """
