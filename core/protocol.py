@@ -180,6 +180,8 @@ def parse_chunk(message: str) -> ChunkMessage:
         raise ValueError(f"Invalid chunk numbering in BTC_TX: {parts[2]}")
     if not (0 < chunk_number <= total_chunks and total_chunks > 0):
         raise ValueError(f"Invalid chunk numbers: {chunk_number}/{total_chunks}")
+    if not parts[3]:
+        raise ValueError("Empty payload in BTC_TX message")
     return ChunkMessage(
         session_id=session_id,
         chunk_number=chunk_number,
@@ -199,7 +201,7 @@ def parse_chunk_ack(message: str) -> ChunkAckMessage:
         ValueError: If format is invalid.
     """
     parts = message.split(CHUNK_DELIMITER)
-    if len(parts) < 4 or parts[0] != MSG_CHUNK_ACK:
+    if len(parts) < 5 or parts[0] != MSG_CHUNK_ACK:
         raise ValueError(f"Invalid BTC_CHUNK_ACK format: {message}")
     session_id = parts[1]
     try:
@@ -214,11 +216,15 @@ def parse_chunk_ack(message: str) -> ChunkAckMessage:
     if len(parts) >= 5:
         if parts[4] == ACK_ALL_RECEIVED:
             all_received = True
-        elif parts[4] == ACK_REQUEST_CHUNK and len(parts) >= 6:
+        elif parts[4] == ACK_REQUEST_CHUNK:
+            if len(parts) < 6:
+                raise ValueError(f"Missing next chunk number in ACK: {message}")
             try:
                 request_next_chunk = int(parts[5])
             except ValueError:
                 raise ValueError(f"Invalid next chunk in ACK: {parts[5]}")
+        else:
+            raise ValueError(f"Unknown ACK sub-command: {parts[4]}")
 
     return ChunkAckMessage(
         session_id=session_id,
