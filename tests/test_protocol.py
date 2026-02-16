@@ -451,5 +451,144 @@ class TestParseChunkAck(unittest.TestCase):
             parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|x")
     
 
+# ---------------------------------------------------------------------------
+# Parsing: BTC_ACK
+# ---------------------------------------------------------------------------
+
+
+class TestParseAck(unittest.TestCase):
+
+    def test_valid(self):
+        msg = parse_ack("BTC_ACK|abc12|SUCCESS|TXID:deadbeef1234")
+        self.assertIsInstance(msg, AckMessage)
+        self.assertEqual(msg.session_id, "abc12")
+        self.assertEqual(msg.txid, "deadbeef1234")
+
+    def test_missing_txid_prefix(self):
+        with self.assertRaises(ValueError):
+            parse_ack("BTC_ACK|abc12|SUCCESS|deadbeef1234")
+
+    def test_non_success_status(self):
+        with self.assertRaises(ValueError):
+            parse_ack("BTC_ACK|abc12|FAILURE|TXID:deadbeef")
+
+    def test_missing_parts(self):
+        with self.assertRaises(ValueError):
+            parse_ack("BTC_ACK|abc12|SUCCESS")
+    
+    def test_extra_parts(self):
+        with self.assertRaises(ValueError):
+            parse_ack("BTC_ACK|abc12|SUCCESS|TXID:deadbeef|extra")
+
+    def test_wrong_prefix(self):
+        with self.assertRaises(ValueError):
+            parse_ack("BTC_NACK|abc12|SUCCESS|TXID:deadbeef")
+
+
+# ---------------------------------------------------------------------------
+# Parsing: BTC_NACK
+# ---------------------------------------------------------------------------
+
+
+class TestParseNack(unittest.TestCase):
+
+    def test_valid(self):
+        msg = parse_nack("BTC_NACK|abc12|ERROR|Invalid transaction")
+        self.assertIsInstance(msg, NackMessage)
+        self.assertEqual(msg.session_id, "abc12")
+        self.assertEqual(msg.error_detail, "Invalid transaction")
+
+    def test_error_with_pipes(self):
+        msg = parse_nack("BTC_NACK|abc12|ERROR|detail|with|pipes")
+        self.assertEqual(msg.error_detail, "detail|with|pipes")
+
+    def test_wrong_status(self):
+        with self.assertRaises(ValueError):
+            parse_nack("BTC_NACK|abc12|WARNING|something")
+
+    def test_missing_detail(self):
+        with self.assertRaises(ValueError):
+            parse_nack("BTC_NACK|abc12|ERROR")
+
+    def test_wrong_prefix(self):
+        with self.assertRaises(ValueError):
+            parse_nack("BTC_ACK|abc12|ERROR|details")
+
+
+# ---------------------------------------------------------------------------
+# Unified message dispatcher
+# ---------------------------------------------------------------------------
+
+
+class TestParseMessageDispatcher(unittest.TestCase):
+
+    def test_dispatches_btc_tx(self):
+        msg = parse_message("BTC_TX|abc12|1/3|deadbeef")
+        self.assertIsInstance(msg, ChunkMessage)
+
+    def test_dispatches_chunk_ack(self):
+        msg = parse_message("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|2")
+        self.assertIsInstance(msg, ChunkAckMessage)
+
+    def test_dispatches_ack(self):
+        msg = parse_message("BTC_ACK|abc12|SUCCESS|TXID:deadbeef")
+        self.assertIsInstance(msg, AckMessage)
+
+    def test_dispatches_nack(self):
+        msg = parse_message("BTC_NACK|abc12|ERROR|details")
+        self.assertIsInstance(msg, NackMessage)
+
+    def test_unknown_type_raises(self):
+        with self.assertRaises(ValueError):
+            parse_message("UNKNOWN_MSG|abc12|data")
+
+    def test_empty_string_raises(self):
+        with self.assertRaises(ValueError):
+            parse_message("")
+
+    def test_no_delimiter_raises(self):
+        with self.assertRaises(ValueError):
+            parse_message("BTC_TX")
+
+
+# ---------------------------------------------------------------------------
+# Format -> Parse round-trips
+# ---------------------------------------------------------------------------
+
+
+class TestFormatRoundTrip(unittest.TestCase):
+    """Verify that format() -> parse() round-trips correctly."""
+
+    def test_chunk_roundtrip(self):
+        original = ChunkMessage("abc12", 2, 5, "deadbeef")
+        parsed = parse_chunk(original.format())
+        self.assertEqual(parsed, original)
+
+    def test_chunk_ack_request_roundtrip(self):
+        original = ChunkAckMessage("abc12", 1, request_next_chunk=2)
+        parsed = parse_chunk_ack(original.format())
+        self.assertEqual(parsed, original)
+
+    def test_chunk_ack_all_received_roundtrip(self):
+        original = ChunkAckMessage("abc12", 3, all_received=True)
+        parsed = parse_chunk_ack(original.format())
+        self.assertEqual(parsed, original)
+
+    def test_ack_roundtrip(self):
+        original = AckMessage("abc12", "txid_deadbeef")
+        parsed = parse_ack(original.format())
+        self.assertEqual(parsed, original)
+
+    def test_nack_roundtrip(self):
+        original = NackMessage("abc12", "some error")
+        parsed = parse_nack(original.format())
+        self.assertEqual(parsed, original)
+
+    def test_nack_with_pipes_roundtrip(self):
+        original = NackMessage("abc12", "error|with|pipes")
+        parsed = parse_nack(original.format())
+        self.assertEqual(parsed, original)
+
+
 if __name__ == "__main__":
     unittest.main()

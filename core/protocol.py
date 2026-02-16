@@ -244,7 +244,7 @@ def parse_ack(message: str) -> AckMessage:
         ValueError: If format is invalid.
     """
     parts = message.split(CHUNK_DELIMITER)
-    if len(parts) < 4 or parts[0] != MSG_ACK:
+    if len(parts) != 4 or parts[0] != MSG_ACK:
         raise ValueError(f"Invalid BTC_ACK format: {message}")
     if parts[2] != STATUS_SUCCESS:
         raise ValueError(f"BTC_ACK with non-SUCCESS status: {parts[2]}")
@@ -265,7 +265,7 @@ def parse_nack(message: str) -> NackMessage:
         ValueError: If format is invalid.
     """
     parts = message.split(CHUNK_DELIMITER, 3)
-    if len(parts) < 4 or parts[0] != MSG_NACK:
+    if len(parts) != 4 or parts[0] != MSG_NACK:
         raise ValueError(f"Invalid BTC_NACK format: {message}")
     if parts[2] != STATUS_ERROR:
         raise ValueError(f"BTC_NACK with non-ERROR status: {parts[2]}")
