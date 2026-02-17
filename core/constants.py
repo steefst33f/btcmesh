@@ -28,13 +28,10 @@ MSG_ACK = "BTC_ACK"
 MSG_NACK = "BTC_NACK"
 
 # --- ACK sub-commands ---
-ACK_OK = "OK"
 ACK_REQUEST_CHUNK = "REQUEST_CHUNK"
 ACK_ALL_RECEIVED = "ALL_CHUNKS_RECEIVED"
 
-# --- Completion statuses ---
-STATUS_SUCCESS = "SUCCESS"
-STATUS_ERROR = "ERROR"
+# --- Completion ---
 TXID_PREFIX = "TXID:"
 
 # --- NACK size limit ---

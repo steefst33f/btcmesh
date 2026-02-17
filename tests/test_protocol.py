@@ -13,7 +13,6 @@ import unittest
 
 from core.constants import (
     ACK_ALL_RECEIVED,
-    ACK_OK,
     ACK_REQUEST_CHUNK,
     CHUNK_INDEX_DELIMITER,
     DEFAULT_CHUNK_SIZE,
@@ -27,8 +26,6 @@ from core.constants import (
     MSG_ACK,
     MSG_NACK,
     MAX_NACK_LENGTH,
-    STATUS_ERROR,
-    STATUS_SUCCESS,
     TXID_PREFIX,
 )
 from core.message_types import (
@@ -92,13 +89,10 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(MSG_NACK, "BTC_NACK")
 
     def test_ack_sub_commands(self):
-        self.assertEqual(ACK_OK, "OK")
         self.assertEqual(ACK_REQUEST_CHUNK, "REQUEST_CHUNK")
         self.assertEqual(ACK_ALL_RECEIVED, "ALL_CHUNKS_RECEIVED")
 
-    def test_completion_statuses(self):
-        self.assertEqual(STATUS_SUCCESS, "SUCCESS")
-        self.assertEqual(STATUS_ERROR, "ERROR")
+    def test_txid_prefix(self):
         self.assertEqual(TXID_PREFIX, "TXID:")
 
 
@@ -120,23 +114,23 @@ class TestMessageTypeFormats(unittest.TestCase):
 
     def test_chunk_ack_request_next(self):
         msg = ChunkAckMessage("abc12", 1, request_next_chunk=2)
-        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|2")
+        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|1|REQUEST_CHUNK|2")
 
     def test_chunk_ack_all_received(self):
         msg = ChunkAckMessage("abc12", 3, all_received=True)
-        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|3|OK|ALL_CHUNKS_RECEIVED")
+        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|3|ALL_CHUNKS_RECEIVED")
 
     def test_chunk_ack_bare(self):
         msg = ChunkAckMessage("abc12", 1)
-        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|1|OK")
+        self.assertEqual(msg.format(), "BTC_CHUNK_ACK|abc12|1")
 
     def test_ack_message_format(self):
         msg = AckMessage("abc12", "txid_hash_here")
-        self.assertEqual(msg.format(), "BTC_ACK|abc12|SUCCESS|TXID:txid_hash_here")
+        self.assertEqual(msg.format(), "BTC_ACK|abc12|TXID:txid_hash_here")
 
     def test_nack_message_format(self):
         msg = NackMessage("abc12", "Invalid transaction")
-        self.assertEqual(msg.format(), "BTC_NACK|abc12|ERROR|Invalid transaction")
+        self.assertEqual(msg.format(), "BTC_NACK|abc12|Invalid transaction")
 
 
 class TestTransactionSession(unittest.TestCase):
@@ -409,26 +403,24 @@ class TestParseChunk(unittest.TestCase):
 class TestParseChunkAck(unittest.TestCase):
 
     def test_request_next(self):
-        msg = parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|2")
+        msg = parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|REQUEST_CHUNK|2")
         self.assertIsInstance(msg, ChunkAckMessage)
         self.assertEqual(msg.session_id, "abc12")
         self.assertEqual(msg.chunk_number, 1)
-        self.assertEqual(msg.status, "OK")
         self.assertEqual(msg.request_next_chunk, 2)
         self.assertFalse(msg.all_received)
 
     def test_all_received(self):
-        msg = parse_chunk_ack("BTC_CHUNK_ACK|def456|3|OK|ALL_CHUNKS_RECEIVED")
+        msg = parse_chunk_ack("BTC_CHUNK_ACK|def456|3|ALL_CHUNKS_RECEIVED")
         self.assertIsInstance(msg, ChunkAckMessage)
         self.assertEqual(msg.session_id, "def456")
         self.assertEqual(msg.chunk_number, 3)
-        self.assertEqual(msg.status, "OK")
         self.assertTrue(msg.all_received)
         self.assertIsNone(msg.request_next_chunk)
 
     def test_invalid_prefix(self):
         with self.assertRaises(ValueError):
-            parse_chunk_ack("NOT_AN_ACK|abc12|1|OK")
+            parse_chunk_ack("NOT_AN_ACK|abc12|1|REQUEST_CHUNK|2")
 
     def test_missing_parts(self):
         with self.assertRaises(ValueError):
@@ -436,19 +428,19 @@ class TestParseChunkAck(unittest.TestCase):
 
     def test_non_numeric_chunk(self):
         with self.assertRaises(ValueError):
-            parse_chunk_ack("BTC_CHUNK_ACK|abc12|x|OK|REQUEST_CHUNK|2")
-    
+            parse_chunk_ack("BTC_CHUNK_ACK|abc12|x|REQUEST_CHUNK|2")
+
     def test_missing_request_next_number(self):
         with self.assertRaises(ValueError):
-            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK")
+            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|REQUEST_CHUNK")
 
     def test_unexpected_extra_parts(self):
         with self.assertRaises(ValueError):
-            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|OK|EXTRA|unexpected")
-    
+            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|EXTRA|unexpected")
+
     def test_non_numeric_request_next(self):
         with self.assertRaises(ValueError):
-            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|x")
+            parse_chunk_ack("BTC_CHUNK_ACK|abc12|1|REQUEST_CHUNK|x")
     
 
 # ---------------------------------------------------------------------------
@@ -459,30 +451,26 @@ class TestParseChunkAck(unittest.TestCase):
 class TestParseAck(unittest.TestCase):
 
     def test_valid(self):
-        msg = parse_ack("BTC_ACK|abc12|SUCCESS|TXID:deadbeef1234")
+        msg = parse_ack("BTC_ACK|abc12|TXID:deadbeef1234")
         self.assertIsInstance(msg, AckMessage)
         self.assertEqual(msg.session_id, "abc12")
         self.assertEqual(msg.txid, "deadbeef1234")
 
     def test_missing_txid_prefix(self):
         with self.assertRaises(ValueError):
-            parse_ack("BTC_ACK|abc12|SUCCESS|deadbeef1234")
-
-    def test_non_success_status(self):
-        with self.assertRaises(ValueError):
-            parse_ack("BTC_ACK|abc12|FAILURE|TXID:deadbeef")
+            parse_ack("BTC_ACK|abc12|deadbeef1234")
 
     def test_missing_parts(self):
         with self.assertRaises(ValueError):
-            parse_ack("BTC_ACK|abc12|SUCCESS")
-    
+            parse_ack("BTC_ACK|abc12")
+
     def test_extra_parts(self):
         with self.assertRaises(ValueError):
-            parse_ack("BTC_ACK|abc12|SUCCESS|TXID:deadbeef|extra")
+            parse_ack("BTC_ACK|abc12|TXID:deadbeef|extra")
 
     def test_wrong_prefix(self):
         with self.assertRaises(ValueError):
-            parse_ack("BTC_NACK|abc12|SUCCESS|TXID:deadbeef")
+            parse_ack("BTC_NACK|abc12|TXID:deadbeef")
 
 
 # ---------------------------------------------------------------------------
@@ -493,26 +481,22 @@ class TestParseAck(unittest.TestCase):
 class TestParseNack(unittest.TestCase):
 
     def test_valid(self):
-        msg = parse_nack("BTC_NACK|abc12|ERROR|Invalid transaction")
+        msg = parse_nack("BTC_NACK|abc12|Invalid transaction")
         self.assertIsInstance(msg, NackMessage)
         self.assertEqual(msg.session_id, "abc12")
         self.assertEqual(msg.error_detail, "Invalid transaction")
 
     def test_error_with_pipes(self):
-        msg = parse_nack("BTC_NACK|abc12|ERROR|detail|with|pipes")
+        msg = parse_nack("BTC_NACK|abc12|detail|with|pipes")
         self.assertEqual(msg.error_detail, "detail|with|pipes")
-
-    def test_wrong_status(self):
-        with self.assertRaises(ValueError):
-            parse_nack("BTC_NACK|abc12|WARNING|something")
 
     def test_missing_detail(self):
         with self.assertRaises(ValueError):
-            parse_nack("BTC_NACK|abc12|ERROR")
+            parse_nack("BTC_NACK|abc12")
 
     def test_wrong_prefix(self):
         with self.assertRaises(ValueError):
-            parse_nack("BTC_ACK|abc12|ERROR|details")
+            parse_nack("BTC_ACK|abc12|details")
 
 
 # ---------------------------------------------------------------------------
@@ -527,15 +511,15 @@ class TestParseMessageDispatcher(unittest.TestCase):
         self.assertIsInstance(msg, ChunkMessage)
 
     def test_dispatches_chunk_ack(self):
-        msg = parse_message("BTC_CHUNK_ACK|abc12|1|OK|REQUEST_CHUNK|2")
+        msg = parse_message("BTC_CHUNK_ACK|abc12|1|REQUEST_CHUNK|2")
         self.assertIsInstance(msg, ChunkAckMessage)
 
     def test_dispatches_ack(self):
-        msg = parse_message("BTC_ACK|abc12|SUCCESS|TXID:deadbeef")
+        msg = parse_message("BTC_ACK|abc12|TXID:deadbeef")
         self.assertIsInstance(msg, AckMessage)
 
     def test_dispatches_nack(self):
-        msg = parse_message("BTC_NACK|abc12|ERROR|details")
+        msg = parse_message("BTC_NACK|abc12|details")
         self.assertIsInstance(msg, NackMessage)
 
     def test_unknown_type_raises(self):

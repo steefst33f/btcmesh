@@ -19,8 +19,6 @@ from core.constants import (
     MSG_NACK,
     ACK_REQUEST_CHUNK,
     ACK_ALL_RECEIVED,
-    STATUS_SUCCESS,
-    STATUS_ERROR,
     TXID_PREFIX,
 )
 from core.message_types import (
@@ -194,42 +192,40 @@ def parse_chunk_ack(message: str) -> ChunkAckMessage:
     """Parse a BTC_CHUNK_ACK message.
 
     Expected formats:
-        BTC_CHUNK_ACK|<session>|<chunk>|OK|REQUEST_CHUNK|<next>
-        BTC_CHUNK_ACK|<session>|<chunk>|OK|ALL_CHUNKS_RECEIVED
+        BTC_CHUNK_ACK|<session>|<chunk>|REQUEST_CHUNK|<next>
+        BTC_CHUNK_ACK|<session>|<chunk>|ALL_CHUNKS_RECEIVED
 
     Raises:
         ValueError: If format is invalid.
     """
     parts = message.split(CHUNK_DELIMITER)
-    if len(parts) < 5 or parts[0] != MSG_CHUNK_ACK:
+    if len(parts) < 4 or parts[0] != MSG_CHUNK_ACK:
         raise ValueError(f"Invalid BTC_CHUNK_ACK format: {message}")
     session_id = parts[1]
     try:
         chunk_number = int(parts[2])
     except ValueError:
         raise ValueError(f"Invalid chunk number in ACK: {parts[2]}")
-    status = parts[3]
 
     request_next_chunk = None
     all_received = False
 
-    if len(parts) >= 5:
-        if parts[4] == ACK_ALL_RECEIVED:
+    if len(parts) >= 4:
+        if parts[3] == ACK_ALL_RECEIVED:
             all_received = True
-        elif parts[4] == ACK_REQUEST_CHUNK:
-            if len(parts) < 6:
+        elif parts[3] == ACK_REQUEST_CHUNK:
+            if len(parts) < 5:
                 raise ValueError(f"Missing next chunk number in ACK: {message}")
             try:
-                request_next_chunk = int(parts[5])
+                request_next_chunk = int(parts[4])
             except ValueError:
-                raise ValueError(f"Invalid next chunk in ACK: {parts[5]}")
+                raise ValueError(f"Invalid next chunk in ACK: {parts[4]}")
         else:
-            raise ValueError(f"Unknown ACK sub-command: {parts[4]}")
+            raise ValueError(f"Unknown ACK sub-command: {parts[3]}")
 
     return ChunkAckMessage(
         session_id=session_id,
         chunk_number=chunk_number,
-        status=status,
         request_next_chunk=request_next_chunk,
         all_received=all_received,
     )
@@ -238,17 +234,15 @@ def parse_chunk_ack(message: str) -> ChunkAckMessage:
 def parse_ack(message: str) -> AckMessage:
     """Parse a BTC_ACK success message.
 
-    Expected format: BTC_ACK|<session>|SUCCESS|TXID:<txid>
+    Expected format: BTC_ACK|<session>|TXID:<txid>
 
     Raises:
         ValueError: If format is invalid.
     """
     parts = message.split(CHUNK_DELIMITER)
-    if len(parts) != 4 or parts[0] != MSG_ACK:
+    if len(parts) != 3 or parts[0] != MSG_ACK:
         raise ValueError(f"Invalid BTC_ACK format: {message}")
-    if parts[2] != STATUS_SUCCESS:
-        raise ValueError(f"BTC_ACK with non-SUCCESS status: {parts[2]}")
-    txid_part = parts[3]
+    txid_part = parts[2]
     if not txid_part.startswith(TXID_PREFIX):
         raise ValueError(f"Missing TXID: prefix in BTC_ACK: {txid_part}")
     txid = txid_part[len(TXID_PREFIX) :]
@@ -258,18 +252,16 @@ def parse_ack(message: str) -> AckMessage:
 def parse_nack(message: str) -> NackMessage:
     """Parse a BTC_NACK error message.
 
-    Expected format: BTC_NACK|<session>|ERROR|<details>
-    Note: error_detail may contain '|' characters, so we split with maxsplit=3.
+    Expected format: BTC_NACK|<session>|<error_detail>
+    Note: error_detail may contain '|' characters, so we split with maxsplit=2.
 
     Raises:
         ValueError: If format is invalid.
     """
-    parts = message.split(CHUNK_DELIMITER, 3)
-    if len(parts) != 4 or parts[0] != MSG_NACK:
+    parts = message.split(CHUNK_DELIMITER, 2)
+    if len(parts) != 3 or parts[0] != MSG_NACK:
         raise ValueError(f"Invalid BTC_NACK format: {message}")
-    if parts[2] != STATUS_ERROR:
-        raise ValueError(f"BTC_NACK with non-ERROR status: {parts[2]}")
-    return NackMessage(session_id=parts[1], error_detail=parts[3])
+    return NackMessage(session_id=parts[1], error_detail=parts[2])
 
 
 # ---------------------------------------------------------------------------

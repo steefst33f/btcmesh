@@ -15,11 +15,8 @@ from core.constants import (
     MSG_CHUNK_ACK,
     MSG_ACK,
     MSG_NACK,
-    ACK_OK,
     ACK_REQUEST_CHUNK,
     ACK_ALL_RECEIVED,
-    STATUS_SUCCESS,
-    STATUS_ERROR,
     TXID_PREFIX,
 )
 
@@ -49,13 +46,12 @@ class ChunkAckMessage:
 
     session_id: str
     chunk_number: int
-    status: str = ACK_OK
     request_next_chunk: Optional[int] = None
     all_received: bool = False
 
     def format(self) -> str:
         D = CHUNK_DELIMITER
-        base = f"{MSG_CHUNK_ACK}{D}{self.session_id}{D}{self.chunk_number}{D}{self.status}"
+        base = f"{MSG_CHUNK_ACK}{D}{self.session_id}{D}{self.chunk_number}"
         if self.all_received:
             return f"{base}{D}{ACK_ALL_RECEIVED}"
         if self.request_next_chunk is not None:
@@ -72,7 +68,7 @@ class AckMessage:
 
     def format(self) -> str:
         D = CHUNK_DELIMITER
-        return f"{MSG_ACK}{D}{self.session_id}{D}{STATUS_SUCCESS}{D}{TXID_PREFIX}{self.txid}"
+        return f"{MSG_ACK}{D}{self.session_id}{D}{TXID_PREFIX}{self.txid}"
 
 
 @dataclass
@@ -84,7 +80,7 @@ class NackMessage:
 
     def format(self) -> str:
         D = CHUNK_DELIMITER
-        return f"{MSG_NACK}{D}{self.session_id}{D}{STATUS_ERROR}{D}{self.error_detail}"
+        return f"{MSG_NACK}{D}{self.session_id}{D}{self.error_detail}"
 
 
 @dataclass

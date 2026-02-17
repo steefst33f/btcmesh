@@ -31,49 +31,46 @@ Transaction chunk containing a fragment of the raw transaction hex.
 
 Server acknowledges receipt of a chunk and requests the next, or confirms all chunks received.
 
-**Format (intermediate):** `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK|REQUEST_CHUNK|<next_chunk>`
+**Format (intermediate):** `BTC_CHUNK_ACK|<session_id>|<chunk_number>|REQUEST_CHUNK|<next_chunk>`
 
-**Format (final):** `BTC_CHUNK_ACK|<session_id>|<chunk_number>|OK|ALL_CHUNKS_RECEIVED`
+**Format (final):** `BTC_CHUNK_ACK|<session_id>|<chunk_number>|ALL_CHUNKS_RECEIVED`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | string | Session being acknowledged |
 | `chunk_number` | integer | Chunk that was received |
-| `status` | string | Always `OK` |
 | `command` | string | `REQUEST_CHUNK` or `ALL_CHUNKS_RECEIVED` |
 | `next_chunk` | integer | Next expected chunk (only with `REQUEST_CHUNK`) |
 
 **Examples:**
-- `BTC_CHUNK_ACK|a1b2c|1|OK|REQUEST_CHUNK|2`
-- `BTC_CHUNK_ACK|a1b2c|3|OK|ALL_CHUNKS_RECEIVED`
+- `BTC_CHUNK_ACK|a1b2c|1|REQUEST_CHUNK|2`
+- `BTC_CHUNK_ACK|a1b2c|3|ALL_CHUNKS_RECEIVED`
 
 ### 3. BTC_ACK (Server → Client)
 
 Confirms transaction was successfully broadcast to the Bitcoin network.
 
-**Format:** `BTC_ACK|<session_id>|SUCCESS|TXID:<txid>`
+**Format:** `BTC_ACK|<session_id>|TXID:<txid>`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | string | Session that was broadcast |
-| `status` | string | Always `SUCCESS` |
 | `txid` | string | Bitcoin transaction ID returned by the node |
 
-**Example:** `BTC_ACK|a1b2c|SUCCESS|TXID:abc123def456789...`
+**Example:** `BTC_ACK|a1b2c|TXID:abc123def456789...`
 
 ### 4. BTC_NACK (Server → Client)
 
 Reports an error during reassembly, validation, or broadcast.
 
-**Format:** `BTC_NACK|<session_id>|ERROR|<error_detail>`
+**Format:** `BTC_NACK|<session_id>|<error_detail>`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | string | Session that failed |
-| `status` | string | Always `ERROR` |
 | `error_detail` | string | Condensed error message (to make sure it fits within payload and protocol) |
 
-**Example:** `BTC_NACK|a1b2c|ERROR|Insufficient fee`
+**Example:** `BTC_NACK|a1b2c|Insufficient fee`
 
 Total NACK message length is capped at 200 characters to fit LoRa payload constraints.
 
