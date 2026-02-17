@@ -298,10 +298,10 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
         args.session_id = session_id
 
         def message_receiver(timeout, session_id):
-            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-            yield f"BTC_CHUNK_ACK|{session_id}|2|OK|REQUEST_CHUNK|3"
-            yield f"BTC_CHUNK_ACK|{session_id}|3|OK|ALL_CHUNKS_RECEIVED"
-            yield f"BTC_ACK|{session_id}|SUCCESS|TXID:testtxid_multi"
+            yield f"BTC_CHUNK_ACK|{session_id}|1|REQUEST_CHUNK|2"
+            yield f"BTC_CHUNK_ACK|{session_id}|2|REQUEST_CHUNK|3"
+            yield f"BTC_CHUNK_ACK|{session_id}|3|ALL_CHUNKS_RECEIVED"
+            yield f"BTC_ACK|{session_id}|TXID:testtxid_multi"
 
         with patch("builtins.print") as mock_print:
             ret = cli_main(
@@ -333,8 +333,8 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
         args.session_id = session_id
 
         def message_receiver(timeout, session_id):
-            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|ALL_CHUNKS_RECEIVED"
-            yield f"BTC_ACK|{session_id}|SUCCESS|TXID:testtxid_single"
+            yield f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED"
+            yield f"BTC_ACK|{session_id}|TXID:testtxid_single"
 
         with patch("builtins.print") as mock_print:
             ret = cli_main(
@@ -396,8 +396,8 @@ class TestMeshtasticCliChunkedSendingStory63(unittest.TestCase):
         args.session_id = session_id
 
         def message_receiver(timeout, session_id):
-            yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
-            yield f"BTC_CHUNK_ACK|{session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+            yield f"BTC_CHUNK_ACK|{session_id}|1|REQUEST_CHUNK|2"
+            yield f"BTC_CHUNK_ACK|{session_id}|2|ALL_CHUNKS_RECEIVED"
 
         with patch("builtins.print") as mock_print:
             cli_main(
@@ -467,10 +467,10 @@ class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
 
         # Message for completing chunk phase (1 chunk)
         chunk_ack_final_msg = (
-            f"BTC_CHUNK_ACK|{self.session_id}|1|OK|ALL_CHUNKS_RECEIVED"
+            f"BTC_CHUNK_ACK|{self.session_id}|1|ALL_CHUNKS_RECEIVED"
         )
         # Message for final session ACK
-        session_ack_msg = f"BTC_ACK|{self.session_id}|SUCCESS|TXID:{txid}"
+        session_ack_msg = f"BTC_ACK|{self.session_id}|TXID:{txid}"
 
         def mock_message_receiver(timeout, session_id):
             yield chunk_ack_final_msg  # Complete chunking phase
@@ -512,10 +512,10 @@ class TestMeshtasticCliAckNackListeningStory64(unittest.TestCase):
 
         # Message for completing chunk phase (1 chunk)
         chunk_ack_final_msg = (
-            f"BTC_CHUNK_ACK|{self.session_id}|1|OK|ALL_CHUNKS_RECEIVED"
+            f"BTC_CHUNK_ACK|{self.session_id}|1|ALL_CHUNKS_RECEIVED"
         )
         # Message for final session NACK
-        session_nack_msg = f"BTC_NACK|{self.session_id}|ERROR|{nack_reason}"
+        session_nack_msg = f"BTC_NACK|{self.session_id}|{nack_reason}"
 
         def mock_message_receiver(timeout, session_id):
             yield chunk_ack_final_msg  # Complete chunking phase
@@ -580,11 +580,11 @@ class TestCliStopAndWaitARQ(unittest.TestCase):
 
     def mock_message_receiver(self, timeout, session_id):
         # For chunk 1
-        yield f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        yield f"BTC_CHUNK_ACK|{session_id}|1|REQUEST_CHUNK|2"
         # For chunk 2
-        yield f"BTC_CHUNK_ACK|{session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+        yield f"BTC_CHUNK_ACK|{session_id}|2|ALL_CHUNKS_RECEIVED"
         # Final session ACK
-        yield f"BTC_ACK|{session_id}|SUCCESS|TXID:stopwait_txid"
+        yield f"BTC_ACK|{session_id}|TXID:stopwait_txid"
 
     def test_cli_stop_and_wait_sends_chunks_in_order(self):
         Args = type(
@@ -638,14 +638,14 @@ class TestCliNackAndAbortHandling(unittest.TestCase):
 
         # Messages used by tests in this class
         self.nack_msg_chunk1 = (
-            f"BTC_NACK|{self.session_id}|1|ERROR|NACK for chunk 1 test"
+            f"BTC_NACK|{self.session_id}|NACK for chunk 1 test"
         )
-        self.ack_msg_chunk1 = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
+        self.ack_msg_chunk1 = f"BTC_CHUNK_ACK|{self.session_id}|1|REQUEST_CHUNK|2"
         self.ack_msg_chunk2_final = (
-            f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+            f"BTC_CHUNK_ACK|{self.session_id}|2|ALL_CHUNKS_RECEIVED"
         )
         self.final_session_ack = (
-            f"BTC_ACK|{self.session_id}|SUCCESS|TXID:final_nack_handling_test"
+            f"BTC_ACK|{self.session_id}|TXID:final_nack_handling_test"
         )
 
     def mock_sendText(self, text, destinationId):
@@ -763,12 +763,12 @@ class TestCliTimeoutAndRetriesOnNoAck(unittest.TestCase):
     @unittest.skip("Temporarily skipped")
     def test_prints_ack_and_nack_messages(self):
         # Simulate NACK for chunk 1, then ACK on retry, then completion
-        nack_msg_chunk1 = f"BTC_NACK|{self.session_id}|1|ERROR|Test NACK for chunk 1"
-        ack_msg_chunk1_retry = f"BTC_CHUNK_ACK|{self.session_id}|1|OK|REQUEST_CHUNK|2"
+        nack_msg_chunk1 = f"BTC_NACK|{self.session_id}|Test NACK for chunk 1"
+        ack_msg_chunk1_retry = f"BTC_CHUNK_ACK|{self.session_id}|1|REQUEST_CHUNK|2"
         ack_msg_chunk2_final = (
-            f"BTC_CHUNK_ACK|{self.session_id}|2|OK|ALL_CHUNKS_RECEIVED"
+            f"BTC_CHUNK_ACK|{self.session_id}|2|ALL_CHUNKS_RECEIVED"
         )
-        final_session_ack = f"BTC_ACK|{self.session_id}|SUCCESS|TXID:acknack_txid"
+        final_session_ack = f"BTC_ACK|{self.session_id}|TXID:acknack_txid"
 
         def message_receiver(timeout, session_id):
             yield nack_msg_chunk1  # NACK for 1st attempt of chunk 1

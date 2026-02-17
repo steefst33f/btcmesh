@@ -391,13 +391,12 @@ def cli_main(
                             raise SystemExit(2)
 
                     # Handle BTC_CHUNK_ACK
-                    if msg_type == "BTC_CHUNK_ACK" and len(msg_parts) >= 5:
+                    if msg_type == "BTC_CHUNK_ACK" and len(msg_parts) >= 4:
                         try:
                             msg_chunk_num_int = int(msg_parts[2])
-                            msg_status = msg_parts[3]
-                            msg_command = msg_parts[4]
+                            msg_command = msg_parts[3]
 
-                            if msg_chunk_num_int == chunk_num and msg_status == "OK":
+                            if msg_chunk_num_int == chunk_num:
                                 print(
                                     f"Received ACK for chunk {chunk_num}/{total_chunks}"
                                 )
@@ -406,9 +405,9 @@ def cli_main(
                                 )
                                 if (
                                     msg_command == "REQUEST_CHUNK"
-                                    and len(msg_parts) >= 6
+                                    and len(msg_parts) >= 5
                                 ):
-                                    next_chunk_req = msg_parts[5]
+                                    next_chunk_req = msg_parts[4]
                                     if (
                                         next_chunk_req.isdigit()
                                         and int(next_chunk_req) == chunk_num + 1
@@ -457,14 +456,13 @@ def cli_main(
                                             if final_msg_session == _current_session_id:
                                                 if (
                                                     final_msg_type == "BTC_ACK"
-                                                    and len(final_msg_parts) >= 4
-                                                    and final_msg_parts[2] == "SUCCESS"
+                                                    and len(final_msg_parts) >= 3
                                                 ):
                                                     txid = (
-                                                        final_msg_parts[3].split(
+                                                        final_msg_parts[2].split(
                                                             "TXID:", 1
                                                         )[-1]
-                                                        if "TXID:" in final_msg_parts[3]
+                                                        if "TXID:" in final_msg_parts[2]
                                                         else "UNKNOWN_TXID"
                                                     )
                                                     print(
@@ -478,10 +476,9 @@ def cli_main(
                                                 elif (
                                                     final_msg_type == "BTC_NACK"
                                                     and len(final_msg_parts) >= 3
-                                                    and final_msg_parts[2] == "ERROR"
                                                 ):
                                                     error_details = "|".join(
-                                                        final_msg_parts[3:]
+                                                        final_msg_parts[2:]
                                                     )
                                                     print(
                                                         f"Relay reported an error broadcasting transaction: {error_details}"
@@ -544,9 +541,9 @@ def cli_main(
                     elif (
                         msg_type == "BTC_NACK" # Session ID implicitly checked by onReceive or earlier
                     ):
-                        # Server NACKs are expected in the format: BTC_NACK|session_id|ERROR|details
-                        if len(msg_parts) >= 4 and msg_parts[2] == "ERROR":
-                            error_details_parts = msg_parts[3:]
+                        # Server NACKs are expected in the format: BTC_NACK|session_id|details
+                        if len(msg_parts) >= 3:
+                            error_details_parts = msg_parts[2:]
                             error_details = "|".join(error_details_parts)
                             
                             print(f"Session {_current_session_id} failed. Server NACK: {error_details}")

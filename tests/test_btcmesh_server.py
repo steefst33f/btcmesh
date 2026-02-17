@@ -471,7 +471,7 @@ class TestMessageHandling(unittest.TestCase):
 
         # 2. Since there is no RPC connection, a NACK should be sent for broadcast failure.
         expected_nack_msg = (
-            f"BTC_NACK|{session_id}|ERROR|Broadcast failed: No RPC connection"
+            f"BTC_NACK|{session_id}|Broadcast failed: No RPC connection"
         )
         self.mock_send_reply.assert_called_once_with(
             self.mock_iface, "!12345", expected_nack_msg, session_id
@@ -528,11 +528,11 @@ class TestMessageHandling(unittest.TestCase):
 
         # 3. A NACK should be sent.
         sender_id_str_for_reply = _format_node_id(sender_node_id_int)
-        # NACK format: BTC_NACK|<tx_session_id>|ERROR|<ErrorTypeString>: <exception_details>
+        # NACK format: BTC_NACK|<tx_session_id>|<ErrorTypeString>: <exception_details>
         # ErrorTypeString for InvalidChunkFormatError is "Invalid ChunkFormat"
         expected_nack_detail = f"Invalid ChunkFormat: {exception_message}"
         expected_nack_message = (
-            f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
+            f"BTC_NACK|{session_id_for_nack}|{expected_nack_detail}"
         )
 
         self.mock_send_reply.assert_called_once_with(
@@ -591,7 +591,7 @@ class TestMessageHandling(unittest.TestCase):
         # ErrorTypeString for MismatchedTotalChunksError is "MismatchedTotalChunks"
         expected_nack_detail = f"MismatchedTotalChunks: {exception_message}"
         expected_nack_message = (
-            f"BTC_NACK|{session_id_for_nack}|ERROR|{expected_nack_detail}"
+            f"BTC_NACK|{session_id_for_nack}|{expected_nack_detail}"
         )
 
         self.mock_send_reply.assert_called_once_with(
@@ -1040,7 +1040,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         dest_id = "!dummyNodeId1"
         session_id = "sess123"
         txid = "sampletxid012345"
-        message = f"BTC_ACK|{session_id}|SUCCESS|TXID:{txid}"
+        message = f"BTC_ACK|{session_id}|TXID:{txid}"
 
         result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
 
@@ -1061,7 +1061,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         """Test sending a successful NACK reply without a session ID."""
         dest_id = "!dummyNodeId2"
         error_details = "Reassembly timeout"
-        message = f"BTC_NACK||ERROR|{error_details}"  # Empty session_id
+        message = f"BTC_NACK||{error_details}"  # Empty session_id
 
         result = send_meshtastic_reply(
             self.mock_iface, dest_id, message, tx_session_id=None
@@ -1080,7 +1080,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
     def test_send_reply_invalid_destination_id_format(self):
         """Test sending reply with an invalid destination_id format."""
         dest_id = "dummyNodeId3"  # Missing '!'
-        message = "BTC_NACK||ERROR|Invalid destination"
+        message = "BTC_NACK||Invalid destination"
         session_id = "sess456"
 
         result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
@@ -1099,7 +1099,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         """Test sending reply when destination node is not found."""
         self.mock_iface.getNode.return_value = None
         dest_id = "!nonExistentNode"
-        message = "BTC_NACK||ERROR|Node not found"
+        message = "BTC_NACK||Node not found"
         session_id = "sess789"
 
         result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
@@ -1117,7 +1117,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
         """Test sending reply when node.sendText() raises an exception."""
         self.mock_node.sendText.side_effect = Exception("Send failed")
         dest_id = "!errorNode"
-        message = "BTC_ACK|sessErr|SUCCESS|TXID:errtxid"
+        message = "BTC_ACK|sessErr|TXID:errtxid"
         session_id = "sessErr"
 
         result = send_meshtastic_reply(self.mock_iface, dest_id, message, session_id)
@@ -1134,7 +1134,7 @@ class TestMeshtasticReplySending(unittest.TestCase):
     def test_send_reply_no_interface(self):
         """Test sending reply when Meshtastic interface is None."""
         dest_id = "!noIfaceNode"
-        message = "BTC_NACK|noIface|ERROR|No interface"
+        message = "BTC_NACK|noIface|No interface"
         session_id = "noIface"
 
         result = send_meshtastic_reply(None, dest_id, message, session_id)
@@ -1836,7 +1836,7 @@ class TestAckNackAndErrorHandling(unittest.TestCase):
             packet, self.mock_iface, send_reply_func=self.mock_send_reply
         )
         # Should ACK chunk 1 and request next
-        expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|OK|REQUEST_CHUNK|2"
+        expected_ack = f"BTC_CHUNK_ACK|{session_id}|1|REQUEST_CHUNK|2"
         self.mock_send_reply.assert_called_with(
             self.mock_iface, "!12345", expected_ack, session_id
         )
@@ -1861,7 +1861,7 @@ class TestAckNackAndErrorHandling(unittest.TestCase):
         on_receive_text_message(
             packet, self.mock_iface, send_reply_func=self.mock_send_reply
         )
-        expected_nack = f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: bad format"
+        expected_nack = f"BTC_NACK|{session_id}|Invalid ChunkFormat: bad format"
         self.mock_send_reply.assert_called_with(
             self.mock_iface, "!23456", expected_nack, session_id
         )
@@ -1894,7 +1894,7 @@ class TestAckNackAndErrorHandling(unittest.TestCase):
         )
         # Should NACK on duplicate
         expected_nack = (
-            f"BTC_NACK|{session_id}|ERROR|Invalid ChunkFormat: Duplicate chunk"
+            f"BTC_NACK|{session_id}|Invalid ChunkFormat: Duplicate chunk"
         )
         self.mock_send_reply.assert_called_with(
             self.mock_iface, "!34567", expected_nack, session_id
