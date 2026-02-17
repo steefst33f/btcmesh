@@ -51,7 +51,7 @@ This document keeps track of the issues found
 
 ## Protocol: Redundant status field in response messages
 
-**Issue 7: Status field carries no information**
+**Issue 7: Status field carries no information** ✅ RESOLVED (Story 20.4)
 
 The three server→client response message types each contain a status field that is always fixed to the same value:
 
@@ -87,4 +87,4 @@ See **Story 20.4** in tasks.txt.
 | 8.3   | Toggle button text differs from story | Minor (cosmetic) | Open |
 | 9.1   | Button text slightly different | Minor (cosmetic) | Open |
 | 10.3  | Success popup never triggered | **Major (functional bug)** | **FIXED** |
-| 20.4  | Redundant status field in response messages | Medium (protocol bloat) | Open |
+| 20.4  | Redundant status field in response messages | Medium (protocol bloat) | **FIXED** |
