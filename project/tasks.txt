@@ -1088,15 +1088,22 @@ lora/
 
 - [ ] **Story 21.1: Create transport/base.py interface**
 - [ ] *   **As a** developer,
-- [ ] *   **I want** an abstract transport interface,
-- [ ] *   **So that** different Meshtastic connection methods can be swapped.
+- [ ] *   **I want** a protocol-agnostic abstract transport interface,
+- [ ] *   **So that** different mesh protocols (Meshtastic, MeshCore, Reticulum, etc.) and connection methods (serial, BLE, WiFi) can be supported without changing core business logic.
     - [ ] *   **Scenario:** Abstract base class defined
         - [ ] *   **Given** the `BaseTransport` class.
-        - [ ] *   **Then** it defines abstract methods: connect, disconnect, send, set_message_handler.
+        - [ ] *   **Then** it defines abstract methods: connect, disconnect, send, set_message_handler, remove_message_handler.
         - [ ] *   **And** properties: is_connected, local_node_id.
+        - [ ] *   **And** context manager support (__enter__/__exit__) with default implementation.
+        - [ ] *   **And** no references to any specific mesh protocol (Meshtastic, etc.).
     - [ ] *   **Scenario:** Custom exceptions defined
         - [ ] *   **Given** transport operations.
-        - [ ] *   **Then** `ConnectionError` and `SendError` exceptions are available.
+        - [ ] *   **Then** `TransportError`, `TransportConnectionError` and `TransportSendError` exceptions are available.
+        - [ ] *   **And** `TransportConnectionError` does not shadow Python's built-in `ConnectionError`.
+    - [ ] *   **Scenario:** MessageHandler type alias defined
+        - [ ] *   **Given** the need for incoming message callbacks.
+        - [ ] *   **Then** `MessageHandler = Callable[[str, str], None]` is defined for (message_text, sender_id).
+    *   _See project/plans/story_21_1.md for implementation plan._
 
 - [ ] **Story 21.2: Create transport/meshtastic_serial.py**
 - [ ] *   **As a** developer,

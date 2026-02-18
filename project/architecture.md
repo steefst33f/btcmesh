@@ -268,12 +268,13 @@ def parse_completion(message: str) -> CompletionMessage:
 
 ### 2. Transport Layer (`transport/`)
 
-**Purpose:** Abstract communication with Meshtastic devices.
+**Purpose:** Abstract communication with mesh network devices. Protocol-agnostic — the same interface supports different mesh protocols (Meshtastic, MeshCore, Reticulum, etc.) and connection methods (serial, BLE, WiFi).
 
 **Rules:**
 - Implements a common interface
 - Handles connection management
-- Does NOT know about protocol (just sends/receives strings)
+- Does NOT know about BTCMesh protocol (just sends/receives strings)
+- Does NOT know about specific mesh protocols (node ID formats, packet structure)
 - Can be mocked for testing
 
 **Example: `transport/base.py`**
@@ -286,71 +287,61 @@ class TransportError(Exception):
     """Base exception for transport errors."""
     pass
 
-class ConnectionError(TransportError):
+class TransportConnectionError(TransportError):
     """Failed to connect to device."""
     pass
 
-class SendError(TransportError):
+class TransportSendError(TransportError):
     """Failed to send message."""
     pass
 
+MessageHandler = Callable[[str, str], None]  # (message_text, sender_id)
 
 class BaseTransport(ABC):
-    """Abstract base class for Meshtastic transports."""
+    """Abstract base class for BTCMesh transport implementations."""
 
     @abstractmethod
     def connect(self, device_path: Optional[str] = None) -> None:
-        """
-        Connect to Meshtastic device.
-
-        Args:
-            device_path: Optional specific device (auto-detect if None)
-
-        Raises:
-            ConnectionError: If connection fails
-        """
-        pass
+        """Connect to a device. Auto-detect if device_path is None."""
+        ...
 
     @abstractmethod
     def disconnect(self) -> None:
-        """Disconnect from device."""
-        pass
+        """Disconnect from device. No-op if not connected."""
+        ...
 
     @abstractmethod
     def send(self, message: str, destination: str) -> None:
-        """
-        Send a message to destination node.
-
-        Args:
-            message: Message string to send
-            destination: Node ID (e.g., '!abcd1234')
-
-        Raises:
-            SendError: If send fails
-        """
-        pass
+        """Send a text message to a destination node."""
+        ...
 
     @abstractmethod
-    def set_message_handler(self, handler: Callable[[str, str], None]) -> None:
-        """
-        Set callback for received messages.
+    def set_message_handler(self, handler: MessageHandler) -> None:
+        """Register callback for incoming messages. Replaces previous handler."""
+        ...
 
-        Args:
-            handler: Callback function(message: str, sender: str)
-        """
-        pass
+    @abstractmethod
+    def remove_message_handler(self) -> None:
+        """Remove the current message handler."""
+        ...
 
     @property
     @abstractmethod
     def is_connected(self) -> bool:
         """Whether currently connected to a device."""
-        pass
+        ...
 
     @property
     @abstractmethod
     def local_node_id(self) -> Optional[str]:
-        """Local node ID if connected, None otherwise."""
-        pass
+        """Local node identifier, or None if not connected."""
+        ...
+
+    def __enter__(self) -> "BaseTransport":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.disconnect()
 ```
 
 ### 3. Client/Server Layer
