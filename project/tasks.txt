@@ -1086,24 +1086,23 @@ lora/
 
 ### 21. Transport Abstraction
 
-- [ ] **Story 21.1: Create transport/base.py interface**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a protocol-agnostic abstract transport interface,
-- [ ] *   **So that** different mesh protocols (Meshtastic, MeshCore, Reticulum, etc.) and connection methods (serial, BLE, WiFi) can be supported without changing core business logic.
-    - [ ] *   **Scenario:** Abstract base class defined
-        - [ ] *   **Given** the `BaseTransport` class.
-        - [ ] *   **Then** it defines abstract methods: connect, disconnect, send, set_message_handler, remove_message_handler.
-        - [ ] *   **And** properties: is_connected, local_node_id.
-        - [ ] *   **And** context manager support (__enter__/__exit__) with default implementation.
-        - [ ] *   **And** no references to any specific mesh protocol (Meshtastic, etc.).
-    - [ ] *   **Scenario:** Custom exceptions defined
-        - [ ] *   **Given** transport operations.
-        - [ ] *   **Then** `TransportError`, `TransportConnectionError` and `TransportSendError` exceptions are available.
-        - [ ] *   **And** `TransportConnectionError` does not shadow Python's built-in `ConnectionError`.
-    - [ ] *   **Scenario:** MessageHandler type alias defined
-        - [ ] *   **Given** the need for incoming message callbacks.
-        - [ ] *   **Then** `MessageHandler = Callable[[str, str], None]` is defined for (message_text, sender_id).
-    *   _See project/plans/story_21_1.md for implementation plan._
+- [x] **Story 21.1: Create transport/base.py interface**
+- [x] *   **As a** developer,
+- [x] *   **I want** a protocol-agnostic abstract transport interface,
+- [x] *   **So that** different mesh protocols (Meshtastic, MeshCore, Reticulum, etc.) and connection methods (serial, BLE, WiFi) can be supported without changing core business logic.
+    - [x] *   **Scenario:** Abstract base class defined
+        - [x] *   **Given** the `BaseTransport` class.
+        - [x] *   **Then** it defines abstract methods: connect, disconnect, send, set_message_handler, remove_message_handler.
+        - [x] *   **And** properties: is_connected, local_node_id.
+        - [x] *   **And** context manager support (__enter__/__exit__) with default implementation.
+        - [x] *   **And** no references to any specific mesh protocol (Meshtastic, etc.).
+    - [x] *   **Scenario:** Custom exceptions defined
+        - [x] *   **Given** transport operations.
+        - [x] *   **Then** `TransportError`, `TransportConnectionError` and `TransportSendError` exceptions are available.
+        - [x] *   **And** `TransportConnectionError` does not shadow Python's built-in `ConnectionError`.
+    - [x] *   **Scenario:** MessageHandler type alias defined
+        - [x] *   **Given** the need for incoming message callbacks.
+        - [x] *   **Then** `MessageHandler = Callable[[str, str], None]` is defined for (message_text, sender_id).
 
 - [ ] **Story 21.2: Create transport/meshtastic_serial.py**
 - [ ] *   **As a** developer,
