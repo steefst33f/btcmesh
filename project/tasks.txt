@@ -1104,16 +1104,16 @@ lora/
         - [x] *   **Given** the need for incoming message callbacks.
         - [x] *   **Then** `MessageHandler = Callable[[str, str], None]` is defined for (message_text, sender_id).
 
-- [ ] **Story 21.2: Create transport/meshtastic_serial.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a serial transport implementation,
-- [ ] *   **So that** the CLI and GUI use the abstracted interface.
-    - [ ] *   **Scenario:** Implements BaseTransport
-        - [ ] *   **Given** the `SerialTransport` class.
-        - [ ] *   **Then** it implements all methods from `BaseTransport`.
-    - [ ] *   **Scenario:** Wraps meshtastic library
-        - [ ] *   **Given** the existing Meshtastic serial connection code.
-        - [ ] *   **Then** it is encapsulated in this class.
+- [x] **Story 21.2: Create transport/meshtastic_serial.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** a serial transport implementation,
+- [x] *   **So that** the CLI and GUI use the abstracted interface.
+    - [x] *   **Scenario:** Implements BaseTransport
+        - [x] *   **Given** the `SerialTransport` class.
+        - [x] *   **Then** it implements all methods from `BaseTransport`.
+    - [x] *   **Scenario:** Wraps meshtastic library
+        - [x] *   **Given** the existing Meshtastic serial connection code.
+        - [x] *   **Then** it is encapsulated in this class.
 
 ### 22. Client Sender Refactoring
 
