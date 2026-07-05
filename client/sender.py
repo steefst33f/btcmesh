@@ -244,11 +244,22 @@ class TransactionSender:
 
         # Send each chunk with retry loop
         for chunk_index in range(total):
+            # Check if session was failed by NACK
+            if send_session.failed:
+                return
+
             chunk_num = chunk_index + 1
             max_attempts = self.max_retries + 1  # +1 for initial attempt
 
             while max_attempts > 0:
+                # Check if session was failed by NACK
+                if send_session.failed:
+                    return
+
                 try:
+                    # Clear event BEFORE sending (clear any stale signal)
+                    send_session.clear_response_event(chunk_num)
+
                     # Get and send chunk
                     chunk_msg = get_chunk_message(protocol_session, chunk_index)
                     wire_format = chunk_msg.format()
@@ -257,6 +268,9 @@ class TransactionSender:
 
                     # Wait for ACK with timeout
                     if self._wait_for_chunk_ack(send_session, chunk_num):
+                        # Check if NACK set failed during wait
+                        if send_session.failed:
+                            return
                         # Got ACK, move to next chunk
                         if on_progress:
                             on_progress(chunk_num, total)
@@ -277,8 +291,10 @@ class TransactionSender:
 
         # All chunks sent, wait for final BTC_ACK
         if not self._wait_for_final_ack(send_session):
-            send_session.error = "No final ACK from relay"
-            send_session.failed = True
+            # Check if NACK set failed during final ACK wait
+            if not send_session.failed:
+                send_session.error = "No final ACK from relay"
+                send_session.failed = True
 
     def _wait_for_chunk_ack(self, send_session: SendSession, chunk_num: int) -> bool:
         """Block waiting for chunk ACK with timeout.
@@ -287,7 +303,6 @@ class TransactionSender:
             True if ACK received, False if timeout
         """
         event = send_session.get_response_event(chunk_num)
-        send_session.clear_response_event(chunk_num)
         return event.wait(timeout=self.timeout_seconds)
 
     def _wait_for_final_ack(self, send_session: SendSession) -> bool:
@@ -337,10 +352,19 @@ class TransactionSender:
         session.signal_final_ack()
 
     def _handle_nack(self, session: SendSession, msg: NackMessage) -> None:
-        """Handle BTC_NACK error message."""
+        """Handle BTC_NACK error message.
+
+        Mark session as failed and signal all waiting threads immediately
+        to unblock them without waiting for timeouts.
+        """
         session.error = msg.error_detail
         session.failed = True
-        session.signal_final_ack()  # Unblock waiter
+        # Signal ALL chunk response events to unblock any waiting chunk ACK waits
+        for chunk_num in range(1, session.total_chunks + 1):
+            event = session.get_response_event(chunk_num)
+            event.set()
+        # Also signal final ACK event
+        session.signal_final_ack()
 
 
 # ---------------------------------------------------------------------------

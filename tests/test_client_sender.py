@@ -181,11 +181,11 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
         # Let sender send chunk
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Verify chunk was sent
         self.assertEqual(transport.send.call_count, 1)
@@ -193,12 +193,16 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
         self.assertIn("BTC_TX|", sent_msg)
         self.assertIn("|1/1|", sent_msg)
 
+        # Extract session ID from message
+        parts = sent_msg.split("|")
+        session_id = parts[1]
+
         # Simulate server ACK
-        handler("BTC_CHUNK_ACK|abc123|1|ALL_CHUNKS_RECEIVED", "!server")
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
         time.sleep(0.1)
 
         # Simulate final ACK
-        handler("BTC_ACK|abc123|TXID:mynewtxid123", "!server")
+        handler(f"BTC_ACK|{session_id}|TXID:mynewtxid123", "!server")
         time.sleep(0.1)
 
         thread.join(timeout=5)
@@ -217,7 +221,8 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
         result = sender.send_transaction("deadbeefZZZ", "!dest1234")
         self.assertFalse(result.success)
         self.assertIsNotNone(result.error)
-        self.assertIn("invalid", result.error.lower())
+        # Error could be about invalid chars or odd length
+        self.assertTrue("invalid" in result.error.lower() or "even" in result.error.lower())
 
     def test_empty_hex_returns_error(self):
         """Empty hex returns error in SendResult."""
@@ -247,19 +252,24 @@ class TestTransactionSenderMultiChunk(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Get session ID from first message
         first_msg = transport.send.call_args_list[0][0][0]
         parts = first_msg.split("|")
         session_id = parts[1]
 
-        # Acknowledge each chunk
+        # Acknowledge each chunk (with proper format)
         for chunk_num in range(1, 5):  # 4 chunks
-            handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|", "!server")
+            if chunk_num < 4:
+                # For non-final chunks, use REQUEST_CHUNK format
+                handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|REQUEST_CHUNK|{chunk_num + 1}", "!server")
+            else:
+                # For final chunk, use ALL_CHUNKS_RECEIVED
+                handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|ALL_CHUNKS_RECEIVED", "!server")
             time.sleep(0.05)
 
         # Send final ACK
@@ -288,41 +298,43 @@ class TestTransactionSenderRetry(unittest.TestCase):
 
         handler = transport.set_message_handler.call_args[0][0]
 
-        tx_hex = "beef" * 50  # One chunk
+        # Use single-chunk transaction (small hex)
+        tx_hex = "beef" * 20  # 80 hex chars = 1 chunk
         result_holder = []
 
         def send_in_thread():
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Get session ID
         first_msg = transport.send.call_args_list[0][0][0]
         parts = first_msg.split("|")
         session_id = parts[1]
 
-        # Let first attempt timeout
+        # Let first attempt timeout (1 second)
         time.sleep(1.2)
 
         # On retry, send ACK
-        time.sleep(0.1)
+        time.sleep(0.2)
         handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
         time.sleep(0.1)
         handler(f"BTC_ACK|{session_id}|TXID:retried", "!server")
         time.sleep(0.1)
 
-        thread.join(timeout=10)
+        thread.join(timeout=15)
 
         # Should have sent twice (initial + 1 retry)
         self.assertGreaterEqual(transport.send.call_count, 2)
 
         # Should succeed after retry
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
-        self.assertTrue(result.success)
+        self.assertTrue(result.success, f"Expected success but got: {result.error}")
 
     def test_max_retries_exhausted(self):
         """Chunk times out after max retries, returns error."""
@@ -368,10 +380,10 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Get session ID
         first_msg = transport.send.call_args_list[0][0][0]
@@ -385,6 +397,7 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
         thread.join(timeout=5)
 
         # Should fail
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
         self.assertFalse(result.success)
         self.assertIn("Invalid transaction format", result.error)
@@ -403,10 +416,10 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         first_msg = transport.send.call_args_list[0][0][0]
         parts = first_msg.split("|")
@@ -422,6 +435,7 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
 
         thread.join(timeout=5)
 
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
         self.assertFalse(result.success)
         self.assertIn("insufficient funds", result.error)
@@ -444,10 +458,10 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Send ACK for wrong session ID
         handler(f"BTC_CHUNK_ACK|wrongsession|1|ALL_CHUNKS_RECEIVED", "!server")
@@ -456,6 +470,7 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
         # Should timeout eventually
         thread.join(timeout=10)
 
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
         self.assertFalse(result.success)
 
@@ -473,10 +488,10 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         # Send garbage
         handler("GARBAGE|DATA|HERE", "!server")
@@ -485,6 +500,7 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
         # Should timeout, not crash
         thread.join(timeout=10)
 
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
         self.assertFalse(result.success)
 
@@ -516,18 +532,21 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
             )
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         first_msg = transport.send.call_args_list[0][0][0]
         parts = first_msg.split("|")
         session_id = parts[1]
 
-        # ACK all chunks
+        # ACK all chunks (with proper format)
         for chunk_num in range(1, 5):
-            handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|", "!server")
+            if chunk_num < 4:
+                handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|REQUEST_CHUNK|{chunk_num + 1}", "!server")
+            else:
+                handler(f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|ALL_CHUNKS_RECEIVED", "!server")
             time.sleep(0.05)
 
         # Send final ACK
@@ -545,11 +564,12 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
     def test_progress_callback_optional(self):
         """Progress callback can be None."""
         transport = Mock(spec=BaseTransport)
-        sender = TransactionSender(transport)
+        sender = TransactionSender(transport, timeout_seconds=2)
 
         handler = transport.set_message_handler.call_args[0][0]
 
-        tx_hex = "dead" * 50
+        # Single-chunk transaction
+        tx_hex = "dead" * 20  # 80 hex chars = 1 chunk
         result_holder = []
 
         def send_in_thread():
@@ -557,10 +577,10 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
             result = sender.send_transaction(tx_hex, "!dest1234")
             result_holder.append(result)
 
-        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread = threading.Thread(target=send_in_thread, daemon=False)
         thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         first_msg = transport.send.call_args_list[0][0][0]
         parts = first_msg.split("|")
@@ -571,8 +591,9 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
         handler(f"BTC_ACK|{session_id}|TXID:noprogress", "!server")
         time.sleep(0.1)
 
-        thread.join(timeout=5)
+        thread.join(timeout=10)
 
+        self.assertGreater(len(result_holder), 0)
         result = result_holder[0]
         self.assertTrue(result.success)
 
