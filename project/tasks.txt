@@ -1117,20 +1117,20 @@ lora/
 
 ### 22. Client Sender Refactoring
 
-- [ ] **Story 22.1: Create client/sender.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** sending logic in a reusable class,
-- [ ] *   **So that** CLI and GUI share the same implementation.
-    - [ ] *   **Scenario:** TransactionSender class
-        - [ ] *   **Given** a transport and configuration.
-        - [ ] *   **When** `send(tx_hex, destination)` is called.
-        - [ ] *   **Then** the transaction is chunked and sent with ACK handling.
-    - [ ] *   **Scenario:** Progress callback
-        - [ ] *   **Given** an optional `on_progress` callback.
-        - [ ] *   **Then** it is called with (chunks_sent, total_chunks) during sending.
-    - [ ] *   **Scenario:** Result dataclass
-        - [ ] *   **Given** a completed send operation.
-        - [ ] *   **Then** a `SendResult` dataclass is returned with success, txid, error.
+- [x] **Story 22.1: Create client/sender.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** sending logic in a reusable class,
+- [x] *   **So that** CLI and GUI share the same implementation.
+    - [x] *   **Scenario:** TransactionSender class
+        - [x] *   **Given** a transport and configuration.
+        - [x] *   **When** `send(tx_hex, destination)` is called.
+        - [x] *   **Then** the transaction is chunked and sent with ACK handling.
+    - [x] *   **Scenario:** Progress callback
+        - [x] *   **Given** an optional `on_progress` callback.
+        - [x] *   **Then** it is called with (chunks_sent, total_chunks) during sending.
+    - [x] *   **Scenario:** Result dataclass
+        - [x] *   **Given** a completed send operation.
+        - [x] *   **Then** a `SendResult` dataclass is returned with success, txid, error.
 
 - [ ] **Story 22.2: Refactor btcmesh_cli.py to use client/sender.py**
 - [ ] *   **As a** developer,
