@@ -5,13 +5,19 @@ from typing import Dict, Optional, Tuple, List, Any
 
 from core.logger_setup import server_logger  # Assuming a logger is available
 
-# Constants for chunk parsing
-CHUNK_PREFIX = "BTC_TX|"
-CHUNK_PARTS_DELIMITER = "|"
-CHUNK_INDEX_TOTAL_DELIMITER = "/"
+from core.constants import (
+    MSG_BTC_TX,
+    CHUNK_DELIMITER,
+    CHUNK_INDEX_DELIMITER,
+    DEFAULT_REASSEMBLY_TIMEOUT,
+)
 
-# Default timeout for reassembly sessions in seconds
-DEFAULT_REASSEMBLY_TIMEOUT_SECONDS = 5 * 60  # 5 minutes
+# Backward-compatibility alias: prefer CHUNK_DELIMITER going forward.
+CHUNK_PARTS_DELIMITER = CHUNK_DELIMITER
+# Derived constant: the BTC_TX prefix including the delimiter, used for
+# detecting and stripping the prefix when parsing incoming chunk messages.
+# TODO: Remove later when we refactor the server to use the constants directly and avoid hardcoded strings.
+CHUNK_PREFIX = MSG_BTC_TX + CHUNK_PARTS_DELIMITER
 
 
 class ReassemblyError(Exception):
@@ -43,7 +49,7 @@ class TransactionReassembler:
     Manages the reassembly of chunked Bitcoin transaction messages received via Meshtastic.
     """
 
-    def __init__(self, timeout_seconds: int = DEFAULT_REASSEMBLY_TIMEOUT_SECONDS):
+    def __init__(self, timeout_seconds: int = DEFAULT_REASSEMBLY_TIMEOUT):
         """
         Initializes the TransactionReassembler.
 
@@ -111,7 +117,7 @@ class TransactionReassembler:
 
         try:
             chunk_num_str, total_chunks_str = chunk_index_part.split(
-                CHUNK_INDEX_TOTAL_DELIMITER
+                CHUNK_INDEX_DELIMITER
             )
             chunk_num = int(chunk_num_str)
             total_chunks = int(total_chunks_str)
