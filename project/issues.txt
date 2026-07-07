@@ -1,0 +1,90 @@
+# BTCMesh GUI - Story vs Implementation Discrepancies
+
+This document keeps track of the issues found
+
+---
+
+## Story 8.2: Implement Input Fields for Transaction Data
+
+**Issue 1: Destination field hint text mismatch**
+- Story says: placeholder hint "!node_id"
+- Code has: hint_text='!abcdef12' (line 318)
+
+**Issue 2: Transaction hex field hint text mismatch**
+- Story says: hint "Raw transaction hex"
+- Code has: hint_text='Paste raw transaction hex here...' (line 338)
+
+---
+
+## Story 8.3: Add Dry Run Toggle Control
+
+**Issue 3: Dry run toggle text mismatch (enabled state)**
+- Story says: button displays "Dry Run: ON" with orange background
+- Code has: button displays "YES" with orange background (line 373)
+
+**Issue 4: Dry run toggle text mismatch (disabled state)**
+- Story says: button displays "Dry Run: OFF" with dark background
+- Code has: button displays "NO" with dark background (line 376)
+
+---
+
+## Story 9.1: Implement Send Transaction Button
+
+**Issue 5: Send button text mismatch (minor)**
+- Story says: button text "Send"
+- Code has: text='Send Transaction' (line 397)
+
+---
+
+## Story 10.3: Implement Success Popup
+
+**Issue 6: Success popup never triggered** - FIXED
+- Story says: "Given the relay returns a SUCCESS ACK with TXID" triggers success popup
+- Problem: The 'tx_success' result type that triggers the popup was never generated
+- Fix: Modified process_result() to detect success message with TXID in 'print' result type
+  - CLI prints: "Transaction successfully broadcast by relay. TXID: <txid>"
+  - The 'print' handler now detects this pattern and extracts the TXID
+  - Sets show_success_popup to trigger the popup
+- Tests added: test_print_with_txid_success_triggers_popup, test_print_with_txid_only_does_not_trigger_popup
+
+---
+
+## Protocol: Redundant status field in response messages
+
+**Issue 7: Status field carries no information**
+
+The three server→client response message types each contain a status field that is always fixed to the same value:
+
+| Message type | Status field | Always |
+|-------------|-------------|--------|
+| `BTC_CHUNK_ACK\|<session>\|<chunk>\|OK\|...` | `OK` | Always OK — being an ACK already implies success |
+| `BTC_ACK\|<session>\|SUCCESS\|TXID:<txid>` | `SUCCESS` | Always SUCCESS — the ACK prefix already means success |
+| `BTC_NACK\|<session>\|ERROR\|<detail>` | `ERROR` | Always ERROR — the NACK prefix already means error |
+
+The message type prefix already communicates the status. The status field is redundant and:
+- Wastes bytes in every response (relevant for LoRa payload constraints)
+- Adds unnecessary parsing complexity
+- Introduces impossible invalid states (e.g. `BTC_ACK` with non-`SUCCESS` status) that parsers must guard against
+
+**Proposed fix:** Remove the status field from all three response types. Simplified formats:
+
+```
+BTC_CHUNK_ACK|<session>|<chunk>|REQUEST_CHUNK|<next>
+BTC_CHUNK_ACK|<session>|<chunk>|ALL_CHUNKS_RECEIVED
+BTC_ACK|<session>|TXID:<txid>
+BTC_NACK|<session>|<error_detail>
+```
+
+See **Story 20.4** in tasks.txt.
+
+---
+
+## Summary
+
+| Story | Issue | Severity | Status |
+|-------|-------|----------|--------|
+| 8.2   | Hint text differences | Minor (cosmetic) | Open |
+| 8.3   | Toggle button text differs from story | Minor (cosmetic) | Open |
+| 9.1   | Button text slightly different | Minor (cosmetic) | Open |
+| 10.3  | Success popup never triggered | **Major (functional bug)** | **FIXED** |
+| 20.4  | Redundant status field in response messages | Medium (protocol bloat) | Open |
