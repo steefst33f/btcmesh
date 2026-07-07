@@ -259,9 +259,9 @@ def on_receive_text_message(
 
                     # ACK valid chunk and request next
                     if chunk_number < total_chunks:
-                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|OK|REQUEST_CHUNK|{chunk_number+1}"
+                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|REQUEST_CHUNK|{chunk_number+1}"
                     elif chunk_number == total_chunks:
-                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|OK|ALL_CHUNKS_RECEIVED"
+                        ack_msg = f"BTC_CHUNK_ACK|{session_id}|{chunk_number}|ALL_CHUNKS_RECEIVED"
                     send_reply_func(
                         iface, sender_node_id_for_reply, ack_msg, session_id
                     )
@@ -281,7 +281,7 @@ def on_receive_text_message(
                                 reassembled_hex
                         )
                         if txid:
-                            ack_msg = f"BTC_ACK|{session_id}|SUCCESS|TXID:{txid}"
+                            ack_msg = f"BTC_ACK|{session_id}|TXID:{txid}"
                             send_reply_func(
                                 iface, sender_node_id_for_reply, ack_msg, session_id
                             )
@@ -335,7 +335,7 @@ def on_receive_text_message(
                             elif "absurdly-high-fee" in error_msg.lower():
                                 error_msg = "Absurd fee"
                             # Keep original error in logs but use concise version in NACK
-                            nack_msg = f"BTC_NACK|{session_id}|ERROR|{error_msg}"
+                            nack_msg = f"BTC_NACK|{session_id}|{error_msg}"
                             send_reply_func(
                                 iface, sender_node_id_for_reply, nack_msg, session_id
                             )
@@ -364,12 +364,12 @@ def on_receive_text_message(
                     )
                     nack_message_detail = f"{error_type_str}: {str(e)}"
                     nack_message = (
-                        f"BTC_NACK|{tx_session_id_for_nack}|ERROR|{nack_message_detail}"
+                        f"BTC_NACK|{tx_session_id_for_nack}|{nack_message_detail}"
                     )
                     max_nack_len = 200
                     if len(nack_message) > max_nack_len:
                         available_len_for_detail = max_nack_len - len(
-                            f"BTC_NACK|{tx_session_id_for_nack}|ERROR|...e"
+                            f"BTC_NACK|{tx_session_id_for_nack}|...e"
                         )
                         if available_len_for_detail > 0:
                             nack_message_detail = (
@@ -377,7 +377,7 @@ def on_receive_text_message(
                             )
                         else:
                             nack_message_detail = "Error detail too long"
-                        nack_message = f"BTC_NACK|{tx_session_id_for_nack}|ERROR|{nack_message_detail}"
+                        nack_message = f"BTC_NACK|{tx_session_id_for_nack}|{nack_message_detail}"
                     logger.error(
                         f"[Sender: {sender_node_id_for_reply}, Session: {tx_session_id_for_nack}] "
                         f"Reassembly error: {str(e)}. Sending NACK."
@@ -753,7 +753,7 @@ def main(stop_event: Optional[threading.Event] = None,
                     )
                     for session_info in timed_out_sessions:
                         nack_message = (
-                            f"BTC_NACK|{session_info['tx_session_id']}|ERROR|"
+                            f"BTC_NACK|{session_info['tx_session_id']}|"
                             f"{session_info['error_message']}"
                         )
                         max_nack_len = 200  # Arbitrary safe length

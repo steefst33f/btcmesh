@@ -47,6 +47,11 @@ Ensure reliable, in-order, lossless transmission of large Bitcoin transactions o
 
 ### 8. Reliable Session-Based Chunk Transfer
 
+> **Cleanup note (Story 20):** Stories 8.1 (BTC_SESSION_START), 8.4 (BTC_SESSION_ABORT),
+> and the BTC_CHUNK handler were removed as dead code. The CLI implements ARQ directly
+> via `BTC_TX` chunks (Story 8A). Server and CLI handlers, the `PROCESSED_CHUNKS set,
+> and related tests were all removed. See `project/protocol_spec.md` for the active protocol.
+
 - [x] **Story 8.1: Session Initialization (Client/Server)**
     - [x] *   **As a** client,
     - [x] *   **I want** to initiate a session with a unique session ID, total chunk count, and chunk size,
