@@ -18,7 +18,7 @@ This document defines the recommended architecture for BTCMesh to ensure:
 ### Current Structure (Issues)
 
 ```
-btcmesh_cli.py          # Mixed: CLI parsing + protocol logic + transport + output
+btcmesh_cli.py          # Mixed: CLI parsing + client logic + protocol logic + transport + output
 btcmesh_gui.py          # Wraps CLI, some duplicated logic
 btcmesh_server.py       # Mixed: server logic + transport + reassembly
 ```
@@ -29,6 +29,45 @@ btcmesh_server.py       # Mixed: server logic + transport + reassembly
 - Hard to test in isolation
 - Swift iOS must reimplement everything from scratch
 - Protocol changes require updates in multiple places
+
+### Current vs Recommended (Visual)
+
+```mermaid
+graph TB
+    subgraph CURRENT["❌ Current (Mixed)"]
+        CLI["btcmesh_cli.py<br/>Parse args + chunking<br/>+ transport + output"]
+        GUI["btcmesh_gui.py<br/>UI + chunking<br/>+ transport"]
+        SERVER["btcmesh_server.py<br/>Server + reassembly<br/>+ transport"]
+
+        CLI -.->|duplicated| GUI
+        CLI -.->|duplicated| SERVER
+    end
+
+    subgraph RECOMMENDED["✅ Recommended (Layered)"]
+        UI2["UI Layer<br/>CLI / GUI<br/>User interaction only"]
+        CLIENT2["Client Layer<br/>sender.py<br/>Orchestration"]
+        SERVER2["Server Layer<br/>receiver.py<br/>Orchestration"]
+        CORE2["Core Layer<br/>protocol.py<br/>Pure logic"]
+        TRANSPORT2["Transport Layer<br/>base.py<br/>Abstraction"]
+
+        UI2 --> CLIENT2
+        UI2 --> SERVER2
+        CLIENT2 --> CORE2
+        SERVER2 --> CORE2
+        CLIENT2 --> TRANSPORT2
+        SERVER2 --> TRANSPORT2
+    end
+
+    style CLI fill:#FFB6C6,color:#000
+    style GUI fill:#FFB6C6,color:#000
+    style SERVER fill:#FFB6C6,color:#000
+
+    style UI2 fill:#FFE5CC,color:#000
+    style CLIENT2 fill:#90EE90,color:#000
+    style SERVER2 fill:#90EE90,color:#000
+    style CORE2 fill:#DDA0DD,color:#000
+    style TRANSPORT2 fill:#87CEEB,color:#000
+```
 
 ### Recommended Structure
 
@@ -54,13 +93,97 @@ btcmesh/
 │   ├── reassembler.py          # Transaction reassembly (already exists in core/)
 │   └── broadcaster.py          # RPC broadcast logic
 │
-├── btcmesh_cli.py              # Thin CLI layer - argument parsing + output
-├── btcmesh_gui.py              # Thin GUI layer - UI only
-├── btcmesh_server.py           # Thin server entry point
+├── btcmesh_client_cli.py       # Thin CLI layer - argument parsing + output
+├── btcmesh_client_gui.py       # Thin GUI layer - UI only
+├── btcmesh_server_cli.py       # Thin server CLI entry point
 └── btcmesh_server_gui.py       # Thin server GUI layer
 ```
 
+### Layer Dependencies
+
+```mermaid
+graph BT
+    UI["UI Layer"]
+    CLIENT["Client Layer<br/>sender.py"]
+    SERVER["Server Layer<br/>receiver.py"]
+    CORE["Core Layer"]
+    TRANSPORT["Transport Layer"]
+    DEVICE["Mesh Device"]
+    RPC["Bitcoin RPC"]
+
+    UI -->|calls| CLIENT
+    UI -->|calls| SERVER
+    CLIENT -->|uses| CORE
+    SERVER -->|uses| CORE
+    CLIENT -->|uses| TRANSPORT
+    SERVER -->|uses| TRANSPORT
+    TRANSPORT -->|communicates| DEVICE
+    SERVER -->|broadcasts| RPC
+
+    style UI fill:#FFE5CC,color:#000,stroke:#333,stroke-width:2px
+    style CLIENT fill:#90EE90,color:#000,stroke:#333,stroke-width:2px
+    style SERVER fill:#90EE90,color:#000,stroke:#333,stroke-width:2px
+    style CORE fill:#DDA0DD,color:#000,stroke:#333,stroke-width:2px
+    style TRANSPORT fill:#87CEEB,color:#000,stroke:#333,stroke-width:2px
+    style DEVICE fill:#D3D3D3,color:#000,stroke:#333,stroke-width:2px
+    style RPC fill:#FFA07A,color:#FFF,stroke:#333,stroke-width:2px
+```
+
+### Data Flow Through Layers
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as UI Layer<br/>CLI/GUI
+    participant Client as Client Layer<br/>sender.py
+    participant Core as Core Layer<br/>protocol.py
+    participant Transport as Transport Layer<br/>base.py
+    participant Device as Mesh Device
+
+    User->>UI: Send TX (args or button)
+    UI->>Client: send_transaction(tx_hex)
+    Client->>Core: create_session(tx_hex)
+    Core->>Core: validate + chunk
+    Core-->>Client: TransactionSession
+    Client->>Transport: send(chunk_msg)
+    Transport->>Device: [LoRa packet]
+```
+
+> For the full protocol flow including ACKs and server-side handling, see [Protocol Specification](protocol_spec.md).
+
 ---
+
+## Terminology: CLI vs Client vs Server
+
+### Current Naming (Confusing)
+
+The original codebase uses `btcmesh_cli.py` for the client entry point — mixing the terms **CLI** and **Client** as if they are the same thing. This causes confusion because the file contains both UI concerns (argument parsing) and business logic (chunking, retries, transport). Similarly `btcmesh_server.py` mixes server logic with transport and reassembly.
+
+| File | What it's called | What it actually contains |
+|------|-----------------|--------------------------|
+| `btcmesh_cli.py` | "CLI" | CLI parsing + client logic + transport + protocol |
+| `btcmesh_gui.py` | "GUI" | GUI widgets + client logic + transport |
+| `btcmesh_server.py` | "Server" | Server logic + transport + reassembly + RPC |
+
+### Recommended Naming (Clear)
+
+In the target architecture, each file name reflects its actual responsibility:
+
+| File | Layer | Responsibility |
+|------|-------|---------------|
+| `btcmesh_client_cli.py` | UI | Client entry point, Argument parsing, terminal output only |
+| `btcmesh_client_gui.py` | UI | Client Widgets, user interaction only |
+| `btcmesh_server_cli.py` | UI | Server entry point, terminal output only |
+| `btcmesh_server_gui.py` | UI | Server widgets, user interaction only |
+| `client/sender.py` | Client | Transaction sending, retries, state management |
+| `server/receiver.py` | Server | Receiving, reassembly, broadcasting |
+
+**Key distinction:**
+- **CLI / GUI** = UI layer — how the user interacts with the app (terminal vs graphical)
+- **Client** = business logic for sending — independent of UI
+- **Server** = business logic for receiving and broadcasting — independent of UI
+- Both CLI and GUI use the same Client/Server logic beneath them
+
 
 ## Layer Responsibilities
 
@@ -510,6 +633,8 @@ if __name__ == '__main__':
 
 To ensure consistency between Python and Swift implementations, maintain a protocol specification.
 
+> For the full protocol specification including state machines and sequence diagrams, see [Protocol Specification](protocol_spec.md).
+
 ### Message Formats
 
 | Message | Format | Example |
@@ -560,12 +685,60 @@ ios/BTCMesh/
     └── Views/...               # SwiftUI views
 ```
 
-**Key principle:** The `Core/` folder should be functionally equivalent to Python `core/`. When the protocol changes:
+### Architecture Comparison: Python vs Swift
+
+```mermaid
+graph LR
+    subgraph PYTHON["Python Implementation"]
+        PUI["UI Layer<br/>btcmesh_client_cli.py<br/>btcmesh_client_gui.py"]
+        PCLIENT["Client Layer<br/>client/sender.py"]
+        PCORE["Core Layer<br/>core/protocol.py<br/>core/message_types.py"]
+        PTRANSPORT["Transport Layer<br/>transport/base.py<br/>transport/meshtastic_serial.py"]
+        PDEV["Meshtastic<br/>Device"]
+
+        PUI --> PCLIENT
+        PCLIENT --> PCORE
+        PCLIENT --> PTRANSPORT
+        PTRANSPORT --> PDEV
+    end
+
+    subgraph SWIFT["Swift Implementation (iOS)"]
+        SUI["UI Layer<br/>SwiftUI Views"]
+        SCLIENT["Client Layer<br/>TransactionSender.swift"]
+        SCORE["Core Layer<br/>Protocol.swift<br/>MessageTypes.swift"]
+        STRANSPORT["Transport Layer<br/>TransportProtocol.swift<br/>MeshtasticBLE.swift"]
+        SDEV["Meshtastic<br/>BLE Device"]
+
+        SUI --> SCLIENT
+        SCLIENT --> SCORE
+        SCLIENT --> STRANSPORT
+        STRANSPORT --> SDEV
+    end
+
+    PCORE -.->|same logic| SCORE
+    PTRANSPORT -.->|same interface| STRANSPORT
+
+    style PUI fill:#FFE5CC,color:#000
+    style PCLIENT fill:#90EE90,color:#000
+    style PCORE fill:#DDA0DD,color:#000
+    style PTRANSPORT fill:#87CEEB,color:#000
+    style PDEV fill:#D3D3D3,color:#000
+
+    style SUI fill:#FFE5CC,color:#000
+    style SCLIENT fill:#90EE90,color:#000
+    style SCORE fill:#DDA0DD,color:#000
+    style STRANSPORT fill:#87CEEB,color:#000
+    style SDEV fill:#D3D3D3,color:#000
+```
+
+**Key principle:** The `Core/` layer should be **functionally equivalent** between Python and Swift. When the protocol changes:
 
 1. Update `project/architecture.md` (this document) - Protocol Specification section
 2. Update Python `core/protocol.py`
-3. Update Swift `Core/Protocol.swift`
+3. Update Swift `Core/Protocol.swift` with same logic
 4. Run tests on both
+
+This means a fix in the protocol logic benefits BOTH platforms simultaneously.
 
 ---
 
@@ -626,18 +799,54 @@ class TestTransactionSender(unittest.TestCase):
 ### Phase 2: Create Transport Abstraction
 1. Create `transport/base.py` interface
 2. Create `transport/meshtastic_serial.py` implementation
-3. Update CLI to use new transport
+3. Update CLI and server to use new transport
 
-### Phase 3: Refactor Client Logic
+### Phase 3: Refactor Client Layer
 1. Create `client/sender.py`
-2. Migrate sending logic from CLI
+2. Migrate sending logic from `btcmesh_cli.py`
 3. Update GUI to use `client/sender.py`
-4. Remove duplicated code
+4. Rename `btcmesh_cli.py` → `btcmesh_client_cli.py`
 
-### Phase 4: Document Protocol
-1. Finalize protocol specification in this document
+### Phase 4: Refactor Server Layer
+1. Create `server/receiver.py`
+2. Migrate receiving/reassembly logic from `btcmesh_server.py`
+3. Update server GUI to use `server/receiver.py`
+4. Rename `btcmesh_server.py` → `btcmesh_server_cli.py`
+
+### Phase 5: Document Protocol & Cross-Platform
+1. Finalize protocol specification
 2. Create Swift `Core/` following specification
 3. Ensure tests pass on both platforms
+
+### Migration Path (Visual)
+
+```mermaid
+graph LR
+    START["Current<br/>Monolithic"]
+    P1["Phase 1<br/>Extract Core"]
+    P2["Phase 2<br/>Transport"]
+    P3["Phase 3<br/>Client Layer"]
+    P4["Phase 4<br/>Server Layer"]
+    P5["Phase 5<br/>Swift iOS"]
+    GOAL["Goal<br/>Layered +<br/>Cross-Platform"]
+
+    START -->|Pure functions| P1
+    P1 -->|Abstraction| P2
+    P2 -->|Sender logic| P3
+    P3 -->|Receiver logic| P4
+    P4 -->|Mirror logic| P5
+    P5 --> GOAL
+
+    style START fill:#FFB6C6,color:#000
+    style P1 fill:#FFE5CC,color:#000
+    style P2 fill:#DDA0DD,color:#000
+    style P3 fill:#90EE90,color:#000
+    style P4 fill:#90EE90,color:#000
+    style P5 fill:#87CEEB,color:#000
+    style GOAL fill:#90EE90,color:#000,stroke:#333,stroke-width:3px
+```
+
+---
 
 ---
 
@@ -656,6 +865,7 @@ class TestTransactionSender(unittest.TestCase):
 
 ## References
 
+- [Protocol Specification](protocol_spec.md) - Message formats, state machines, protocol flow
 - [Mobile Platform Analysis](mobile_platform_analysis.md) - iOS/Android strategy
 - [Protocol Reference Materials](reference_materials.md) - Example transactions
 - [Meshtastic Python Library](https://github.com/meshtastic/python)
