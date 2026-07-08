@@ -161,6 +161,7 @@ class TransactionSender:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.sessions = {}  # type: Dict[str, SendSession]
+        self._on_response_received = None  # type: Optional[Callable[[str], None]]
         self._setup_message_handler()
 
     def _setup_message_handler(self) -> None:
@@ -173,6 +174,8 @@ class TransactionSender:
         tx_hex: str,
         destination: str,
         on_progress: Optional[Callable[[int, int], None]] = None,
+        on_chunk_sending: Optional[Callable[[int, int, int, str], None]] = None,
+        on_response_received: Optional[Callable[[str], None]] = None,
     ) -> SendResult:
         """Send a transaction using stop-and-wait ARQ.
 
@@ -183,6 +186,10 @@ class TransactionSender:
             tx_hex: Raw transaction hex to send
             destination: Meshtastic node ID (e.g., "!deadbeef")
             on_progress: Optional callback(chunk_num, total_chunks) after each ACK
+            on_chunk_sending: Optional callback(chunk_num, total, attempt, wire_format)
+                called just before each send attempt (including retries)
+            on_response_received: Optional callback(message_text) called for each
+                incoming ACK/NACK wire message belonging to this session
 
         Returns:
             SendResult with success=True/txid or success=False/error
@@ -215,6 +222,7 @@ class TransactionSender:
         send_session = SendSession(session_id, protocol_session.total_chunks)
         self.sessions[session_id] = send_session
 
+        self._on_response_received = on_response_received
         try:
             # Do the sending (blocking)
             self._send_all_chunks(
@@ -222,11 +230,13 @@ class TransactionSender:
                 send_session,
                 destination,
                 on_progress,
+                on_chunk_sending,
             )
             # Build and return result
             return self._build_result(send_session)
         finally:
             # Cleanup
+            self._on_response_received = None
             self._cleanup_session(session_id)
 
     def _send_all_chunks(
@@ -235,6 +245,7 @@ class TransactionSender:
         send_session: SendSession,
         destination: str,
         on_progress: Optional[Callable[[int, int], None]],
+        on_chunk_sending: Optional[Callable[[int, int, int, str], None]],
     ) -> None:
         """Implement stop-and-wait sender: send all chunks with ACK waits.
 
@@ -263,6 +274,9 @@ class TransactionSender:
                     # Get and send chunk
                     chunk_msg = get_chunk_message(protocol_session, chunk_index)
                     wire_format = chunk_msg.format()
+                    attempt = send_session.retry_counts.get(chunk_num, 0) + 1
+                    if on_chunk_sending:
+                        on_chunk_sending(chunk_num, total, attempt, wire_format)
                     self.transport.send(wire_format, destination)
                     send_session.mark_chunk_sent(chunk_num)
 
@@ -333,6 +347,10 @@ class TransactionSender:
         if session is None:
             # Message for unknown session, ignore
             return
+
+        # Notify observer before routing
+        if self._on_response_received:
+            self._on_response_received(message_text)
 
         # Route by message type
         if isinstance(msg, ChunkAckMessage):
