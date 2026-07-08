@@ -162,12 +162,21 @@ class TransactionSender:
         self.max_retries = max_retries
         self.sessions = {}  # type: Dict[str, SendSession]
         self._on_response_received = None  # type: Optional[Callable[[str], None]]
+        self._abort_event = threading.Event()
         self._setup_message_handler()
 
     def _setup_message_handler(self) -> None:
         """Register callback with transport for incoming messages."""
         handler = lambda msg, sender_id: self._on_message(msg, sender_id)
         self.transport.set_message_handler(handler)
+
+    def abort(self) -> None:
+        """Request abort of any in-progress send operation.
+
+        Safe to call at any time. The abort will be checked between
+        chunk sends and the operation will return early with error.
+        """
+        self._abort_event.set()
 
     def send_transaction(
         self,
@@ -222,6 +231,7 @@ class TransactionSender:
         send_session = SendSession(session_id, protocol_session.total_chunks)
         self.sessions[session_id] = send_session
 
+        self._abort_event.clear()
         self._on_response_received = on_response_received
         try:
             # Do the sending (blocking)
@@ -284,6 +294,11 @@ class TransactionSender:
                     if self._wait_for_chunk_ack(send_session, chunk_num):
                         # Check if NACK set failed during wait
                         if send_session.failed:
+                            return
+                        # Check for abort request
+                        if self._abort_event.is_set():
+                            send_session.error = "Aborted by user"
+                            send_session.failed = True
                             return
                         # Got ACK, move to next chunk
                         if on_progress:
