@@ -72,6 +72,10 @@ from btcmesh_cli import (
     EXAMPLE_RAW_TX,
 )
 
+# Import transaction sending logic
+from client.sender import TransactionSender, SendResult
+from core.protocol import create_session, get_chunk_message, validate_transaction_hex
+
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
@@ -281,6 +285,7 @@ class BTCMeshGUI(BoxLayout):
         self.result_queue = queue.Queue()
         self.abort_requested = False
         self._connection_monitor = None  # Track the connection state monitor
+        self._active_sender = None  # Track the active TransactionSender instance
 
         self._build_ui()
 
@@ -746,83 +751,61 @@ class BTCMeshGUI(BoxLayout):
         self.send_thread.start()
 
     def _send_transaction_thread(self, dest, tx_hex, dry_run):
-        """Send transaction in background thread using cli_main."""
-        gui_instance = self  # Reference to check abort_requested
-
-        class AbortedException(Exception):
-            """Raised when user requests abort."""
-            pass
-
+        """Send transaction in background thread using TransactionSender."""
         try:
-            # Create a custom logger that sends to our queue
-            gui_logger = logging.getLogger('btcmesh_gui')
-            gui_logger.setLevel(logging.DEBUG)
-            gui_logger.handlers.clear()  # Remove any existing handlers
-
-            queue_handler = QueueLogHandler(self.result_queue)
-            queue_handler.setFormatter(logging.Formatter('%(message)s'))
-            gui_logger.addHandler(queue_handler)
-
-            # Create args namespace to pass to cli_main
-            args = argparse.Namespace(
-                destination=dest,
-                tx=tx_hex,
-                dry_run=dry_run,
-                session_id=None  # Let cli_main generate one
-            )
-
-            # Capture print output by redirecting stdout
-            class PrintCapture(io.StringIO):
-                def __init__(self, result_queue):
-                    super().__init__()
-                    self.result_queue = result_queue
-                    self.original_stdout = sys.stdout
-
-                def write(self, text):
-                    # Check for abort request
-                    if gui_instance.abort_requested:
-                        raise AbortedException()
-                    # Write to original stdout for debugging
-                    self.original_stdout.write(text)
-                    # Send non-empty lines to the queue
-                    text = text.strip()
-                    if text:
-                        self.result_queue.put(('print', text))
-                    return len(text)
-
-                def flush(self):
-                    self.original_stdout.flush()
-
-            # Check for abort before starting
-            if self.abort_requested:
-                self.result_queue.put(('aborted',))
-                return
-
-            # Run cli_main with our injected logger and interface
-            print_capture = PrintCapture(self.result_queue)
-            original_stdout = sys.stdout
-
-            try:
-                sys.stdout = print_capture
-                exit_code = cli_main(
-                    args=args,
-                    injected_iface=self.iface,
-                    injected_logger=gui_logger
-                )
-            finally:
-                sys.stdout = original_stdout
-
-            # Check for abort after completion
-            if self.abort_requested:
-                self.result_queue.put(('aborted',))
+            if dry_run:
+                # For dry run, show a preview of how the transaction would be chunked
+                self._run_preview(tx_hex)
             else:
-                self.result_queue.put(('cli_finished', exit_code))
+                # Create sender and send transaction
+                sender = TransactionSender(self.transport)
+                self._active_sender = sender
 
-        except AbortedException:
-            self.result_queue.put(('aborted',))
+                def on_chunk_sending(chunk_num, total, attempt, wire_format):
+                    self.result_queue.put(('chunk_sending', chunk_num, total, attempt))
+                    self.result_queue.put(('wire_sent', wire_format))
+
+                def on_progress(chunk_num, total):
+                    self.result_queue.put(('progress', chunk_num, total))
+
+                def on_response_received(message_text):
+                    self.result_queue.put(('wire_received', message_text))
+
+                result = sender.send_transaction(
+                    tx_hex, dest,
+                    on_progress=on_progress,
+                    on_chunk_sending=on_chunk_sending,
+                    on_response_received=on_response_received,
+                )
+                self.result_queue.put(('send_result', result))
+
         except Exception as e:
-            gui_logger.error(f"GUI send error: {e}", exc_info=True)
             self.result_queue.put(('error', str(e)))
+        finally:
+            self._active_sender = None
+
+    def _run_preview(self, tx_hex):
+        """Show a preview of how the transaction would be chunked."""
+        try:
+            session = create_session(tx_hex)
+            self.result_queue.put(('log', f'Preview: {session.total_chunks} chunk(s)', logging.INFO))
+            for i in range(session.total_chunks):
+                msg = get_chunk_message(session, i)
+                wire_format = msg.format()
+                # Show truncated wire format for readability
+                display = wire_format[:60] + '...' if len(wire_format) > 60 else wire_format
+                self.result_queue.put(('log', f'  Chunk {i+1}/{session.total_chunks}: {display}', logging.DEBUG))
+            self.result_queue.put(('send_result', SendResult(
+                success=False,
+                session_id=session.session_id,
+                error='Preview only — not sent'
+            )))
+        except Exception as e:
+            self.result_queue.put(('send_result', SendResult(
+                success=False,
+                session_id='',
+                error=f'Preview failed: {str(e)}'
+            )))
 
     def _show_success_popup(self, txid):
         """Show success popup with TXID."""
