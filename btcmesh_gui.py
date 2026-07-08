@@ -62,6 +62,8 @@ from core.meshtastic_utils import (
     format_node_display,
 )
 
+# Import transport layer
+from transport.meshtastic_serial import MeshtasticSerialTransport
 
 # Import btcmesh_cli functions
 from btcmesh_cli import (
@@ -273,6 +275,7 @@ class BTCMeshGUI(BoxLayout):
         self.padding = 15
         self.spacing = 20
 
+        self.transport = None
         self.iface = None
         self.send_thread = None
         self.result_queue = queue.Queue()
@@ -459,13 +462,11 @@ class BTCMeshGUI(BoxLayout):
 
         def init_thread():
             try:
-                import meshtastic.serial_interface
+                transport = MeshtasticSerialTransport()
+                transport.connect(port)
 
-                iface = (
-                    meshtastic.serial_interface.SerialInterface(devPath=port)
-                    if port
-                    else meshtastic.serial_interface.SerialInterface()
-                )
+                # Get the raw interface for node listing (Stories 11.2, 11.3)
+                iface = transport._iface
 
                 # Validate we got valid device info
                 node_id = None
@@ -475,7 +476,7 @@ class BTCMeshGUI(BoxLayout):
                 if not node_id or not node_id.startswith('!'):
                     # Interface created but device info invalid - likely no device connected
                     try:
-                        iface.close()
+                        transport.disconnect()
                     except Exception:
                         pass
                     self.result_queue.put(('connection_failed', "Could not retrieve device info. Ensure device is connected.", None))
@@ -483,6 +484,8 @@ class BTCMeshGUI(BoxLayout):
 
                 node_name = get_own_node_name(iface)
                 self.result_queue.put(('connected', iface, node_id, node_name))
+                # Also store transport for later use in sending
+                self.result_queue.put(('transport_ready', transport))
 
             except ImportError:
                 self.result_queue.put(('connection_error', "Meshtastic library not installed", None))
@@ -510,9 +513,21 @@ class BTCMeshGUI(BoxLayout):
 
     def _disconnect_device(self):
         """Disconnect current Meshtastic interface and reset connection status."""
-        if self.iface:
-            # Close interface in background thread to avoid blocking main thread
-            # (iface.close() can block if device is in a bad state)
+        if self.transport:
+            # Disconnect transport in background thread to avoid blocking main thread
+            transport_to_close = self.transport
+            self.transport = None
+            self.iface = None
+
+            def close_thread():
+                try:
+                    transport_to_close.disconnect()
+                except Exception:
+                    pass
+
+            threading.Thread(target=close_thread, daemon=True).start()
+        elif self.iface:
+            # Fallback for backward compatibility
             iface_to_close = self.iface
             self.iface = None
 
@@ -618,6 +633,11 @@ class BTCMeshGUI(BoxLayout):
                 self.device_spinner.values = [NO_DEVICES_TEXT]
                 self.device_spinner.text = NO_DEVICES_TEXT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_ERROR)
+            return
+
+        # Handle transport_ready specially (store transport, don't process as normal result)
+        if result[0] == 'transport_ready':
+            self.transport = result[1]
             return
 
         action = process_result(result)
