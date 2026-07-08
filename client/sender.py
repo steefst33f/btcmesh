@@ -40,6 +40,72 @@ class SendResult:
             raise ValueError("success=False requires error to be set")
 
 
+@dataclass
+class PreviewChunk:
+    """Represents a single chunk in a transaction preview."""
+    chunk_num: int
+    total_chunks: int
+    wire_format: str
+
+
+@dataclass
+class TransactionPreview:
+    """Preview of how a transaction would be chunked.
+
+    Returned by create_preview() to show the user what chunks would be sent
+    without actually sending them.
+    """
+    session_id: str
+    total_chunks: int
+    chunks: list  # type: list[PreviewChunk]
+
+
+def create_preview(tx_hex: str) -> TransactionPreview:
+    """Create a preview of how a transaction would be chunked.
+
+    This is a UI-only feature that shows what chunks would be sent
+    without actually sending them. Pure function: no I/O.
+
+    Args:
+        tx_hex: Raw transaction hex to preview
+
+    Returns:
+        TransactionPreview with session_id, total_chunks, and chunk details
+
+    Raises:
+        ValueError: If tx_hex is invalid
+    """
+    # Validate input
+    try:
+        validate_transaction_hex(tx_hex)
+    except ValueError:
+        raise
+
+    # Create session (this does the chunking)
+    try:
+        session = create_session(tx_hex)
+    except ValueError as e:
+        raise ValueError(f"Failed to create preview session: {e}")
+
+    # Build preview chunks
+    preview_chunks = []
+    for i in range(session.total_chunks):
+        msg = get_chunk_message(session, i)
+        wire_format = msg.format()
+        preview_chunks.append(PreviewChunk(
+            chunk_num=i + 1,
+            total_chunks=session.total_chunks,
+            wire_format=wire_format
+        ))
+
+    return TransactionPreview(
+        session_id=session.session_id,
+        total_chunks=session.total_chunks,
+        chunks=preview_chunks
+    )
+
+
+
 class SendSession:
     """Internal state tracker for a transaction being sent.
 

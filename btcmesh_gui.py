@@ -73,8 +73,7 @@ from btcmesh_cli import (
 )
 
 # Import transaction sending logic
-from client.sender import TransactionSender, SendResult
-from core.protocol import create_session, get_chunk_message, validate_transaction_hex
+from client.sender import TransactionSender, SendResult, create_preview
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
@@ -787,17 +786,15 @@ class BTCMeshGUI(BoxLayout):
     def _run_preview(self, tx_hex):
         """Show a preview of how the transaction would be chunked."""
         try:
-            session = create_session(tx_hex)
-            self.result_queue.put(('log', f'Preview: {session.total_chunks} chunk(s)', logging.INFO))
-            for i in range(session.total_chunks):
-                msg = get_chunk_message(session, i)
-                wire_format = msg.format()
+            preview = create_preview(tx_hex)
+            self.result_queue.put(('log', f'Preview: {preview.total_chunks} chunk(s)', logging.INFO))
+            for chunk in preview.chunks:
                 # Show truncated wire format for readability
-                display = wire_format[:60] + '...' if len(wire_format) > 60 else wire_format
-                self.result_queue.put(('log', f'  Chunk {i+1}/{session.total_chunks}: {display}', logging.DEBUG))
+                display = chunk.wire_format[:60] + '...' if len(chunk.wire_format) > 60 else chunk.wire_format
+                self.result_queue.put(('log', f'  Chunk {chunk.chunk_num}/{chunk.total_chunks}: {display}', logging.DEBUG))
             self.result_queue.put(('send_result', SendResult(
                 success=False,
-                session_id=session.session_id,
+                session_id=preview.session_id,
                 error='Preview only — not sent'
             )))
         except Exception as e:
