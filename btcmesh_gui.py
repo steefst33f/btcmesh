@@ -170,20 +170,56 @@ def process_result(result: tuple) -> ResultAction:
         action.log_messages.append((msg, color))
 
     elif result_type == 'print':
+        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
         msg = result[1]
         color = get_print_color(msg)
         action.log_messages.append((msg, color))
 
         # Detect success message with TXID and trigger popup
-        # CLI prints: "Transaction successfully broadcast by relay. TXID: <txid>"
         if 'TXID:' in msg and 'successfully' in msg.lower():
-            # Extract TXID from message
             txid_start = msg.find('TXID:') + 5
             txid = msg[txid_start:].strip().split()[0] if txid_start > 5 else 'Unknown'
             action.show_success_popup = txid
             action.stop_sending = True
 
+    elif result_type == 'chunk_sending':
+        chunk_num, total, attempt = result[1], result[2], result[3]
+        if attempt > 1:
+            msg = f'Sending chunk {chunk_num}/{total} (retry {attempt - 1})...'
+        else:
+            msg = f'Sending chunk {chunk_num}/{total}...'
+        action.log_messages.append((msg, COLOR_PRIMARY))
+
+    elif result_type == 'wire_sent':
+        wire_format = result[1]
+        action.log_messages.append((f'  → {wire_format}', COLOR_SECUNDARY))
+
+    elif result_type == 'progress':
+        chunk_num, total = result[1], result[2]
+        if chunk_num == total:
+            msg = f'Chunk {chunk_num}/{total} sent — waiting for broadcast...'
+        else:
+            msg = f'Chunk {chunk_num}/{total} sent'
+        action.log_messages.append((msg, COLOR_PRIMARY))
+
+    elif result_type == 'wire_received':
+        message_text = result[1]
+        action.log_messages.append((f'  ← {message_text}', COLOR_SECUNDARY))
+
+    elif result_type == 'send_result':
+        send_result = result[1]
+        if send_result.success:
+            action.show_success_popup = send_result.txid
+            action.stop_sending = True
+        elif send_result.error == "Aborted by user":
+            action.log_messages.append(('Transaction aborted by user', COLOR_WARNING))
+            action.stop_sending = True
+        else:
+            action.log_messages.append((f'Error: {send_result.error}', COLOR_ERROR))
+            action.stop_sending = True
+
     elif result_type == 'cli_finished':
+        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
         exit_code = result[1]
         if exit_code == 0:
             action.log_messages.append(("Transaction completed successfully!", COLOR_SUCCESS))
@@ -192,6 +228,7 @@ def process_result(result: tuple) -> ResultAction:
         action.stop_sending = True
 
     elif result_type == 'tx_success':
+        # Old result type - kept for backwards compatibility, will be removed in Step 7
         txid = result[1]
         action.log_messages.append(("Transaction broadcast successful!", COLOR_SUCCESS))
         action.log_messages.append((f"TXID: {txid}", COLOR_SUCCESS))
