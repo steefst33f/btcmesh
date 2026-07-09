@@ -270,7 +270,6 @@ class BTCMeshGUI(BoxLayout):
     """Main GUI widget."""
 
     status_text = StringProperty('Ready')
-    is_sending = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -282,7 +281,6 @@ class BTCMeshGUI(BoxLayout):
         self.iface = None
         self.send_thread = None
         self.result_queue = queue.Queue()
-        self.abort_requested = False
         self._connection_monitor = None  # Track the connection state monitor
         self._active_sender = None  # Track the active TransactionSender instance
 
@@ -666,7 +664,6 @@ class BTCMeshGUI(BoxLayout):
 
         # Handle state changes
         if action.stop_sending:
-            self.is_sending = False
             self.send_btn.disabled = False
             self.abort_btn.disabled = True
             self._set_controls_enabled(True)  # Re-enable input controls
@@ -730,10 +727,8 @@ class BTCMeshGUI(BoxLayout):
             return
 
         # Start sending
-        self.is_sending = True
         self.send_btn.disabled = True
         self.abort_btn.disabled = False
-        self.abort_requested = False
         self._set_controls_enabled(False)  # Disable input controls during send
         self.status_log.clear()
         if dry_run:
@@ -905,9 +900,9 @@ class BTCMeshGUI(BoxLayout):
 
     def on_abort_pressed(self, instance):
         """Handle abort button press."""
-        if self.is_sending:
-            self.abort_requested = True
-            self.status_log.add_message("Abort requested...", COLOR_WARNING)
+        if self._active_sender:
+            self._active_sender.abort()
+            self.result_queue.put(('log', 'Abort requested...', logging.WARNING))
             self.abort_btn.disabled = True
 
     def on_clear(self, instance):
