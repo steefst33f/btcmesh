@@ -57,6 +57,7 @@ from core.gui_common import (
 # Import Meshtastic utilities from core
 from core.meshtastic_utils import (
     scan_meshtastic_devices,
+    get_own_node_id,
     get_own_node_name,
     get_known_nodes,
     format_node_display,
@@ -65,19 +66,52 @@ from core.meshtastic_utils import (
 # Import transport layer
 from transport.meshtastic_serial import MeshtasticSerialTransport
 
-# Import btcmesh_cli functions
-from btcmesh_cli import (
-    is_valid_hex,
-    cli_main,
-    EXAMPLE_RAW_TX,
-)
-
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
+from core.protocol import is_valid_hex
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
+
+# Example raw transaction for testing (see reference_materials.md)
+EXAMPLE_RAW_TX = (
+    "02000000000108bf2c7da5efaf2708170ffbafde7b2b0ca68234474ea71d443aee6aebf"
+    "bf998030000000000fdffffffd6fcdbf37f974be27e8b0d66638355e5f53bfaf7b930fa"
+    "e035d23b313c4751042900000000fdffffffcccc5ca913b8eb426fd7c6bb578eab0f265"
+    "83d40c51ce52cb12a428c1e75f7320100000000fdffffff981b8b54ad2a8bd8b59d063e"
+    "9473aead87412b699cb969298cf29b8787fe10600000000000fdffffff5d154c445b35a"
+    "92aaf179c078cdab6310e69455cde650f128cbe85d92bab51600100000000fdffffff7"
+    "d23c74a412ef33d5dd856d01933dd6a5453aee3539b12349febbf6c1ba1579801000000"
+    "00fdffffffc5c95ce2eac84fbd3db87bbbdb4cc0855088e891cc57b1f9e0684943a399a"
+    "abf0000000000fdffffffb7ef5d8a55141068da0d7b5a712ad9bbe44c3b8b412d0df5b9"
+    "bcad366d71c8f90500000000fdffffff01697c63030000000016001482ea8436a6318c9"
+    "89767a51ce33886d65faf59a10247304402203ec9cfb2b60a7b1df545493d1794fec0b8"
+    "b6d8589f562f61c9aec6852775b54102205dfb34dcc9cc31110fdf4e4544c76e9a664cf"
+    "29e8f1f9905771db386882527190121030e92cc6f0829ea8b91469c8aa7ca0660d66020"
+    "d3e8baaece478905e0c30c1f770247304402204a3a6a7a5d4ff285b1ba4a3457dae8566"
+    "a1616738f94e9eddcce6a75dbb831ef0220285c586f6463dcf68ccef59484b2d12bccd7"
+    "d68a68b7092068e6cbfd96f04d88012102f48b8ab9a082a1cf94dcd7052ddea7d260b40"
+    "cf01e83aa3df00f2266721ef420024730440220527c3eb66a06d697a078b2b2bdf9be52"
+    "f9fe036b1e3422a0a150e151ff0cd25b0220268688d8d9a3dd24b9f846b1b2f1b1f1ed8"
+    "4443f0023e26fa1ac5f2c1f0626ac012103acc2fbe36c425eb49389e5896232ef90beda"
+    "75531845cd726dfed5f60a1fedd10247304402202eee600a307d10fc4777e8143d3db89"
+    "94a6e742d56d4e3ce67a21a1e5e509178022022ee1b1fee5d7ec8112a56b1c0ab2eef1b"
+    "e00907d384bbf10a7a9d2d27564fb5012103bd6876311fbf657af0c1c85e907c3adf8d5"
+    "086d1b3cf2cd4805b40873d2cf3cd02473044022042dbc6204b70da1548456beef504d5"
+    "e8d61349dd36913832060b35f61a360429022006940b48cff72f6476b8d449512661876"
+    "6500f0868fb99ba40ab518934e9cc2b0121035aa46c0cf9b30a9edf20c65e5c39158aef"
+    "bfdd2b7a049d146f42b7dc3163d1b50247304402207811bd5b127e8a693f20115f7f8b8"
+    "b4dec6a4d5df32109b21e1252331778ac5202202ac727cc6c53287110fcd371845b5fcd"
+    "ba825cb9e60992cc01cffa8e2ee41701012102700455a96ddb63fdaf8fc3ad60d02b057"
+    "f8e00ed512476d817150a22fd4495d90247304402202caf8f9c584fe1b5214dc2a67f42"
+    "fe3b9fd7386b98807fc6bc273a2cf519769902201f9f7b407f92c7df84701e4259acb19"
+    "8ca19c5edbd860385caa6ca1316417c010121035bfcbb577fe3a3a805c78226c7e7c573"
+    "053e85e6641243c8f435acde0e04668902473044022074d6273ed2c7f338c9db6a979f6"
+    "4f572a21e5a324eec4979dad77383b25263de02202635d0e21ddf4e46f5751d4d6117ad"
+    "559f04b7a6d3d00f13dd784b82a902638e012103de05dcec6736d4e15dd88c5b34b638f"
+    "ee6cccfd8b260d53379a43be0b343617cd9540c00"
+)
 
 # Node selection constants
 NO_NODES_TEXT = "No nodes found"
@@ -287,21 +321,6 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
 
     return None
 
-
-class QueueLogHandler(logging.Handler):
-    """Custom log handler that sends log records to a queue for GUI display."""
-
-    def __init__(self, result_queue):
-        super().__init__()
-        self.result_queue = result_queue
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            level = record.levelno
-            self.result_queue.put(('log', msg, level))
-        except Exception:
-            self.handleError(record)
 
 class BTCMeshGUI(BoxLayout):
     """Main GUI widget."""
@@ -709,20 +728,6 @@ class BTCMeshGUI(BoxLayout):
         if action.show_success_popup is not None:
             self._show_success_popup(action.show_success_popup)
 
-    def _get_own_node_id(self) -> Optional[str]:
-        """Get the node ID of the connected Meshtastic device.
-
-        Returns:
-            Node ID string (e.g., '!abcd1234') or None if not connected.
-        """
-        if not self.iface or not self.iface.myInfo:
-            return None
-        try:
-            node_num = self.iface.myInfo.my_node_num
-            return f"!{node_num:08x}"
-        except (AttributeError, TypeError):
-            return None
-
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable input controls during transaction send.
 
@@ -755,7 +760,7 @@ class BTCMeshGUI(BoxLayout):
         dry_run = self.dry_run_toggle.state == 'down'
 
         # Validation (dry_run skips Meshtastic connection check)
-        own_node_id = self._get_own_node_id()
+        own_node_id = get_own_node_id(self.iface)
         error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run, own_node_id=own_node_id)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
