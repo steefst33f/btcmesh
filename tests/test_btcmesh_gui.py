@@ -143,6 +143,8 @@ from btcmesh_gui import (
     COLOR_ERROR,
     COLOR_WARNING,
     COLOR_SUCCESS,
+    COLOR_PRIMARY,
+    COLOR_SECUNDARY,
     COLOR_DISCONNECTED,
     ConnectionState,
     STATE_DISCONNECTED,
@@ -419,6 +421,137 @@ class TestPopupsStory103(unittest.TestCase):
 
 
 # =============================================================================
+# Story 22.2: TransactionSender Result Types
+# Tests for TransactionSender result types (chunk_sending, progress, wire_sent, etc)
+# =============================================================================
+
+class TestTransactionSenderResultsStory222(unittest.TestCase):
+    """Tests for TransactionSender result types - Story 22.2."""
+
+    def test_chunk_sending_first_attempt(self):
+        """Given chunk_sending result with attempt=1, Then shows 'Sending chunk X/Y...'."""
+        result = ('chunk_sending', 1, 3, 1)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Sending chunk 1/3', action.log_messages[0][0])
+        self.assertNotIn('retry', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
+    def test_chunk_sending_with_retry(self):
+        """Given chunk_sending result with attempt=2, Then shows retry message."""
+        result = ('chunk_sending', 2, 3, 2)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Sending chunk 2/3', action.log_messages[0][0])
+        self.assertIn('retry 1', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
+    def test_chunk_sending_with_multiple_retries(self):
+        """Given chunk_sending result with attempt=3, Then shows correct retry count."""
+        result = ('chunk_sending', 1, 5, 3)
+
+        action = process_result(result)
+
+        self.assertIn('retry 2', action.log_messages[0][0])
+
+    def test_wire_sent_shows_protocol_detail(self):
+        """Given wire_sent result, Then shows arrow and wire format in secondary color."""
+        wire_format = 'BTC_TX|abc123|1/3|020000...'
+        result = ('wire_sent', wire_format)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('→', action.log_messages[0][0])
+        self.assertIn(wire_format, action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+
+    def test_progress_intermediate_chunk(self):
+        """Given progress for chunk 2 of 3, Then shows 'Chunk 2/3 sent'."""
+        result = ('progress', 2, 3)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertEqual(action.log_messages[0][0], 'Chunk 2/3 sent')
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+        self.assertFalse(action.stop_sending)
+
+    def test_progress_final_chunk(self):
+        """Given progress for final chunk, Then shows waiting message."""
+        result = ('progress', 3, 3)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('waiting for broadcast', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+        self.assertFalse(action.stop_sending)
+
+    def test_wire_received_shows_incoming_message(self):
+        """Given wire_received result, Then shows arrow and message in secondary color."""
+        message = 'BTC_CHUNK_ACK|abc123|2|REQUEST_CHUNK|3'
+        result = ('wire_received', message)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('←', action.log_messages[0][0])
+        self.assertIn(message, action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+
+    def test_send_result_success_shows_popup(self):
+        """Given send_result with success=True, Then shows popup and stops sending."""
+        from client.sender import SendResult
+        txid = 'abc123def456789'
+        result = ('send_result', SendResult(success=True, session_id='sess1', txid=txid))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertEqual(action.show_success_popup, txid)
+        self.assertEqual(len(action.log_messages), 0)  # No error message
+
+    def test_send_result_error_shows_message(self):
+        """Given send_result with error, Then shows error message and stops sending."""
+        from client.sender import SendResult
+        result = ('send_result', SendResult(
+            success=False,
+            session_id='sess1',
+            error='Insufficient fee'
+        ))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Insufficient fee', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+    def test_send_result_aborted_by_user(self):
+        """Given send_result with abort, Then shows abort message."""
+        from client.sender import SendResult
+        result = ('send_result', SendResult(
+            success=False,
+            session_id='sess1',
+            error='Aborted by user'
+        ))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('aborted', action.log_messages[0][0].lower())
+        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+
+
+
 # Story 11.1: Device Selection Dropdown
 # Tests for Meshtastic device scanning and selection
 # =============================================================================

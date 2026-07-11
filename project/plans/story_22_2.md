@@ -367,3 +367,90 @@ Story 22.1 created `client/sender.py` which imports from `core.protocol`. Check 
    - Verify dry run shows preview without sending
 3. Confirm `cli_main` is no longer imported in `btcmesh_gui.py`
 4. Confirm `btcmesh_cli.py` is still intact and unchanged (removed in Story 22.3)
+
+---
+
+## Implementation Completion
+
+**Status:** ✅ **COMPLETE** (July 9, 2026)
+
+**Implementation Summary:**
+
+**Step 1a & 1b: Added TransactionSender callbacks and abort mechanism** ✅
+- Added `on_chunk_sending(chunk_num, total, attempt, wire_format)` callback
+- Added `on_response_received(message_text)` callback for wire messages
+- Added `abort()` method with `threading.Event` for clean abort signaling
+- Callbacks fire during send, enabling real-time GUI updates
+
+**Step 2: Replaced Meshtastic initialization** ✅
+- Replaced direct `SerialInterface()` call with `MeshtasticSerialTransport()`
+- Transport layer now abstracts device communication
+- Preserved `self.iface` alias for node listing compatibility
+
+**Step 3: Replaced `_send_transaction_thread()` with TransactionSender** ✅
+- Removed `PrintCapture` and `QueueLogHandler` classes (CLI coupling)
+- New implementation creates `TransactionSender` and registers callbacks
+- Added `_run_preview()` method for dry-run feature
+- Result tuples flow through standard queue for consistency
+
+**Step 4: Updated abort mechanism** ✅
+- Replaced `self.abort_requested` flag with `sender.abort()`
+- Uses `threading.Event` for proper thread synchronization
+- Abort now signals between chunks cleanly
+
+**Step 5: Updated `process_result()` for new result types** ✅
+- Added handlers for: `chunk_sending`, `progress`, `wire_sent`, `wire_received`, `send_result`
+- Kept backwards compatibility for old result types (for existing tests)
+- Wire messages use `COLOR_SECUNDARY` for muted detail visibility
+
+**Step 6: Removed CLI coupling and cleaned up** ✅
+- Removed `cli_main` import from `btcmesh_cli`
+- Removed `QueueLogHandler` class (CLI artifact)
+- Removed `_get_own_node_id()` method (duplication)
+- Defined `EXAMPLE_RAW_TX` locally
+- Added `is_valid_hex` and `get_own_node_id` imports from core modules
+- GUI now has **zero direct dependencies** on `btcmesh_cli.py`
+
+**Step 7: Added comprehensive tests for new result types** ✅
+- Removed TestStatusLogStory102 (29 tests for QueueLogHandler)
+- Added TestTransactionSenderResultsStory222 (10 new tests)
+- Tests cover: chunk_sending, wire_sent, progress, wire_received, send_result
+- Tests verify retry messages, final chunk messages, error/abort handling
+- Updated test imports to include COLOR_PRIMARY and COLOR_SECUNDARY
+
+**Test Results:**
+✅ **618 / 618 tests passing** (36 seconds total)
+- 10 new tests added for TransactionSender result types
+- 29 QueueLogHandler tests removed (CLI artifacts)
+- Net change: 608 tests → 618 tests
+
+**Architecture Improvements:**
+
+1. **Separation of Concerns:** GUI now delegates all sending logic to Client layer
+2. **Thread Safety:** Uses `threading.Event` instead of boolean flags
+3. **Callback-Based Design:** GUI receives updates via callbacks, not stdout parsing
+4. **Reusability:** Client layer logic can now be used by CLI, GUI, and mobile apps
+5. **Testability:** Core logic decoupled from UI concerns
+6. **Type Safety:** Uses `SendResult` dataclass instead of string parsing
+
+**Key Design Patterns Used:**
+
+- **Dependency Injection:** TransactionSender created in thread with transport passed in
+- **Callback Pattern:** UI updates via typed callbacks (`on_progress`, `on_chunk_sending`, `on_response_received`)
+- **Result Objects:** SendResult dataclass replaces string-based result detection
+- **Thread Synchronization:** threading.Event for clean abort signaling
+- **Architecture Layering:** UI → Client → Transport/Core (no reverse dependencies)
+
+**Files Modified:**
+
+| File | Changes |
+|------|---------|
+| `client/sender.py` | Added `create_preview()`, `PreviewChunk`, `TransactionPreview` |
+| `btcmesh_gui.py` | 7-step refactor, removed CLI coupling, 200+ lines removed |
+| `tests/test_btcmesh_gui.py` | Removed QueueLogHandler tests, added TransactionSender result tests |
+
+**Next Steps:**
+
+- Story 22.3: Refactor `btcmesh_client_cli.py` to use `TransactionSender` (parallel to this work)
+- Story 23: Future mobile app can reuse `TransactionSender` without modification
+
