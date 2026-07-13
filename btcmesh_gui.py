@@ -11,6 +11,7 @@ import logging
 import argparse
 import io
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
 from kivy.app import App
@@ -57,22 +58,68 @@ from core.gui_common import (
 # Import Meshtastic utilities from core
 from core.meshtastic_utils import (
     scan_meshtastic_devices,
+    get_own_node_id,
     get_own_node_name,
     get_known_nodes,
     format_node_display,
 )
 
+# Import transport layer
+from transport.meshtastic_serial import MeshtasticSerialTransport
 
-# Import btcmesh_cli functions
-from btcmesh_cli import (
-    is_valid_hex,
-    cli_main,
-    EXAMPLE_RAW_TX,
-)
+# Import transaction sending logic
+from client.sender import TransactionSender, SendResult, create_preview
+from core.protocol import is_valid_hex
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
+SELECT_DEVICE_TEXT = "Select a device to connect..."
+
+# Connection retry settings: a freshly enumerated serial port (or one just
+# released by a prior disconnect) can transiently fail to open for a moment;
+# retry a few times before giving up instead of hanging indefinitely.
+CONNECT_MAX_ATTEMPTS = 4
+CONNECT_RETRY_DELAY_SECONDS = 1.5
+
+# Example raw transaction for testing (see reference_materials.md)
+EXAMPLE_RAW_TX = (
+    "02000000000108bf2c7da5efaf2708170ffbafde7b2b0ca68234474ea71d443aee6aebf"
+    "bf998030000000000fdffffffd6fcdbf37f974be27e8b0d66638355e5f53bfaf7b930fa"
+    "e035d23b313c4751042900000000fdffffffcccc5ca913b8eb426fd7c6bb578eab0f265"
+    "83d40c51ce52cb12a428c1e75f7320100000000fdffffff981b8b54ad2a8bd8b59d063e"
+    "9473aead87412b699cb969298cf29b8787fe10600000000000fdffffff5d154c445b35a"
+    "92aaf179c078cdab6310e69455cde650f128cbe85d92bab51600100000000fdffffff7"
+    "d23c74a412ef33d5dd856d01933dd6a5453aee3539b12349febbf6c1ba1579801000000"
+    "00fdffffffc5c95ce2eac84fbd3db87bbbdb4cc0855088e891cc57b1f9e0684943a399a"
+    "abf0000000000fdffffffb7ef5d8a55141068da0d7b5a712ad9bbe44c3b8b412d0df5b9"
+    "bcad366d71c8f90500000000fdffffff01697c63030000000016001482ea8436a6318c9"
+    "89767a51ce33886d65faf59a10247304402203ec9cfb2b60a7b1df545493d1794fec0b8"
+    "b6d8589f562f61c9aec6852775b54102205dfb34dcc9cc31110fdf4e4544c76e9a664cf"
+    "29e8f1f9905771db386882527190121030e92cc6f0829ea8b91469c8aa7ca0660d66020"
+    "d3e8baaece478905e0c30c1f770247304402204a3a6a7a5d4ff285b1ba4a3457dae8566"
+    "a1616738f94e9eddcce6a75dbb831ef0220285c586f6463dcf68ccef59484b2d12bccd7"
+    "d68a68b7092068e6cbfd96f04d88012102f48b8ab9a082a1cf94dcd7052ddea7d260b40"
+    "cf01e83aa3df00f2266721ef420024730440220527c3eb66a06d697a078b2b2bdf9be52"
+    "f9fe036b1e3422a0a150e151ff0cd25b0220268688d8d9a3dd24b9f846b1b2f1b1f1ed8"
+    "4443f0023e26fa1ac5f2c1f0626ac012103acc2fbe36c425eb49389e5896232ef90beda"
+    "75531845cd726dfed5f60a1fedd10247304402202eee600a307d10fc4777e8143d3db89"
+    "94a6e742d56d4e3ce67a21a1e5e509178022022ee1b1fee5d7ec8112a56b1c0ab2eef1b"
+    "e00907d384bbf10a7a9d2d27564fb5012103bd6876311fbf657af0c1c85e907c3adf8d5"
+    "086d1b3cf2cd4805b40873d2cf3cd02473044022042dbc6204b70da1548456beef504d5"
+    "e8d61349dd36913832060b35f61a360429022006940b48cff72f6476b8d449512661876"
+    "6500f0868fb99ba40ab518934e9cc2b0121035aa46c0cf9b30a9edf20c65e5c39158aef"
+    "bfdd2b7a049d146f42b7dc3163d1b50247304402207811bd5b127e8a693f20115f7f8b8"
+    "b4dec6a4d5df32109b21e1252331778ac5202202ac727cc6c53287110fcd371845b5fcd"
+    "ba825cb9e60992cc01cffa8e2ee41701012102700455a96ddb63fdaf8fc3ad60d02b057"
+    "f8e00ed512476d817150a22fd4495d90247304402202caf8f9c584fe1b5214dc2a67f42"
+    "fe3b9fd7386b98807fc6bc273a2cf519769902201f9f7b407f92c7df84701e4259acb19"
+    "8ca19c5edbd860385caa6ca1316417c010121035bfcbb577fe3a3a805c78226c7e7c573"
+    "053e85e6641243c8f435acde0e04668902473044022074d6273ed2c7f338c9db6a979f6"
+    "4f572a21e5a324eec4979dad77383b25263de02202635d0e21ddf4e46f5751d4d6117ad"
+    "559f04b7a6d3d00f13dd784b82a902638e012103de05dcec6736d4e15dd88c5b34b638f"
+    "ee6cccfd8b260d53379a43be0b343617cd9540c00"
+)
 
 # Node selection constants
 NO_NODES_TEXT = "No nodes found"
@@ -165,20 +212,56 @@ def process_result(result: tuple) -> ResultAction:
         action.log_messages.append((msg, color))
 
     elif result_type == 'print':
+        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
         msg = result[1]
         color = get_print_color(msg)
         action.log_messages.append((msg, color))
 
         # Detect success message with TXID and trigger popup
-        # CLI prints: "Transaction successfully broadcast by relay. TXID: <txid>"
         if 'TXID:' in msg and 'successfully' in msg.lower():
-            # Extract TXID from message
             txid_start = msg.find('TXID:') + 5
             txid = msg[txid_start:].strip().split()[0] if txid_start > 5 else 'Unknown'
             action.show_success_popup = txid
             action.stop_sending = True
 
+    elif result_type == 'chunk_sending':
+        chunk_num, total, attempt = result[1], result[2], result[3]
+        if attempt > 1:
+            msg = f'Sending chunk {chunk_num}/{total} (retry {attempt - 1})...'
+        else:
+            msg = f'Sending chunk {chunk_num}/{total}...'
+        action.log_messages.append((msg, COLOR_PRIMARY))
+
+    elif result_type == 'wire_sent':
+        wire_format = result[1]
+        action.log_messages.append((f'  → {wire_format}', COLOR_SECUNDARY))
+
+    elif result_type == 'progress':
+        chunk_num, total = result[1], result[2]
+        if chunk_num == total:
+            msg = f'Chunk {chunk_num}/{total} sent — waiting for broadcast...'
+        else:
+            msg = f'Chunk {chunk_num}/{total} sent'
+        action.log_messages.append((msg, COLOR_PRIMARY))
+
+    elif result_type == 'wire_received':
+        message_text = result[1]
+        action.log_messages.append((f'  ← {message_text}', COLOR_SECUNDARY))
+
+    elif result_type == 'send_result':
+        send_result = result[1]
+        if send_result.success:
+            action.show_success_popup = send_result.txid
+            action.stop_sending = True
+        elif send_result.error == "Aborted by user":
+            action.log_messages.append(('Transaction aborted by user', COLOR_WARNING))
+            action.stop_sending = True
+        else:
+            action.log_messages.append((f'Error: {send_result.error}', COLOR_ERROR))
+            action.stop_sending = True
+
     elif result_type == 'cli_finished':
+        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
         exit_code = result[1]
         if exit_code == 0:
             action.log_messages.append(("Transaction completed successfully!", COLOR_SUCCESS))
@@ -187,6 +270,7 @@ def process_result(result: tuple) -> ResultAction:
         action.stop_sending = True
 
     elif result_type == 'tx_success':
+        # Old result type - kept for backwards compatibility, will be removed in Step 7
         txid = result[1]
         action.log_messages.append(("Transaction broadcast successful!", COLOR_SUCCESS))
         action.log_messages.append((f"TXID: {txid}", COLOR_SUCCESS))
@@ -246,26 +330,10 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
     return None
 
 
-class QueueLogHandler(logging.Handler):
-    """Custom log handler that sends log records to a queue for GUI display."""
-
-    def __init__(self, result_queue):
-        super().__init__()
-        self.result_queue = result_queue
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            level = record.levelno
-            self.result_queue.put(('log', msg, level))
-        except Exception:
-            self.handleError(record)
-
 class BTCMeshGUI(BoxLayout):
     """Main GUI widget."""
 
     status_text = StringProperty('Ready')
-    is_sending = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -273,11 +341,12 @@ class BTCMeshGUI(BoxLayout):
         self.padding = 15
         self.spacing = 20
 
+        self.transport = None
         self.iface = None
         self.send_thread = None
         self.result_queue = queue.Queue()
-        self.abort_requested = False
         self._connection_monitor = None  # Track the connection state monitor
+        self._active_sender = None  # Track the active TransactionSender instance
 
         self._build_ui()
 
@@ -457,15 +526,20 @@ class BTCMeshGUI(BoxLayout):
         """
         self.status_log.add_message(f"Connecting to Meshtastic device{f' ({port})' if port else ''}...")
 
-        def init_thread():
-            try:
-                import meshtastic.serial_interface
+        def try_connect() -> bool:
+            """Single connection attempt.
 
-                iface = (
-                    meshtastic.serial_interface.SerialInterface(devPath=port)
-                    if port
-                    else meshtastic.serial_interface.SerialInterface()
-                )
+            Returns:
+                True if the attempt reached a final outcome (success or
+                permanent failure) and should not be retried. False if it hit
+                a transient error and a retry may succeed.
+            """
+            try:
+                transport = MeshtasticSerialTransport()
+                transport.connect(port)
+
+                # Get the raw interface for node listing (Stories 11.2, 11.3)
+                iface = transport._iface
 
                 # Validate we got valid device info
                 node_id = None
@@ -475,20 +549,26 @@ class BTCMeshGUI(BoxLayout):
                 if not node_id or not node_id.startswith('!'):
                     # Interface created but device info invalid - likely no device connected
                     try:
-                        iface.close()
+                        transport.disconnect()
                     except Exception:
                         pass
                     self.result_queue.put(('connection_failed', "Could not retrieve device info. Ensure device is connected.", None))
-                    return
+                    return True
 
                 node_name = get_own_node_name(iface)
                 self.result_queue.put(('connected', iface, node_id, node_name))
+                # Also store transport for later use in sending
+                self.result_queue.put(('transport_ready', transport))
+                return True
 
             except ImportError:
                 self.result_queue.put(('connection_error', "Meshtastic library not installed", None))
+                return True
             except Exception as e:
                 error_msg = str(e)
-                # Check if this is a transient error from the Meshtastic library still initializing
+                # Check if this is a transient error from the Meshtastic library/OS
+                # still releasing or initializing the port (e.g. right after a
+                # previous device on this or another port was disconnected).
                 is_transient = any(x in error_msg.lower() for x in [
                     'resource temporarily unavailable',
                     'busy',
@@ -496,31 +576,58 @@ class BTCMeshGUI(BoxLayout):
                 if is_transient:
                     # Show as info message - device is still initializing
                     self.result_queue.put(('connection_initializing', error_msg, None))
-                else:
-                    # Provide more helpful error messages for common cases
-                    if "No Meshtastic" in error_msg or "No serial" in error_msg:
-                        error_msg = "No Meshtastic device found"
-                    elif "Permission denied" in error_msg:
-                        error_msg = f"Permission denied accessing {port or 'device'}"
-                    elif "could not open port" in error_msg.lower():
-                        error_msg = f"Could not open port {port or '(auto-detect)'}"
-                    self.result_queue.put(('connection_error', error_msg, None))
+                    return False
+
+                # Provide more helpful error messages for common cases
+                if "No Meshtastic" in error_msg or "No serial" in error_msg:
+                    error_msg = "No Meshtastic device found"
+                elif "Permission denied" in error_msg:
+                    error_msg = f"Permission denied accessing {port or 'device'}"
+                elif "could not open port" in error_msg.lower():
+                    error_msg = f"Could not open port {port or '(auto-detect)'}"
+                self.result_queue.put(('connection_error', error_msg, None))
+                return True
+
+        def init_thread():
+            for attempt in range(CONNECT_MAX_ATTEMPTS):
+                if try_connect():
+                    return
+                if attempt < CONNECT_MAX_ATTEMPTS - 1:
+                    time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+            self.result_queue.put((
+                'connection_error',
+                f"Device at {port or '(auto-detect)'} did not become ready "
+                f"after {CONNECT_MAX_ATTEMPTS} attempts",
+                None,
+            ))
 
         threading.Thread(target=init_thread, daemon=True).start()
 
     def _disconnect_device(self):
         """Disconnect current Meshtastic interface and reset connection status."""
-        if self.iface:
-            # Close interface in background thread to avoid blocking main thread
-            # (iface.close() can block if device is in a bad state)
+        if self.transport:
+            # Disconnect transport in background thread to avoid blocking main thread
+            transport_to_close = self.transport
+            self.transport = None
+            self.iface = None
+
+            def close_thread():
+                try:
+                    transport_to_close.disconnect()
+                except Exception as e:
+                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
+
+            threading.Thread(target=close_thread, daemon=True).start()
+        elif self.iface:
+            # Fallback for backward compatibility
             iface_to_close = self.iface
             self.iface = None
 
             def close_thread():
                 try:
                     iface_to_close.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
 
             threading.Thread(target=close_thread, daemon=True).start()
         self.connection_label.text = STATE_DISCONNECTED.text
@@ -532,7 +639,7 @@ class BTCMeshGUI(BoxLayout):
 
     def on_device_selected(self, spinner, text):
         """Handle device selection from dropdown."""
-        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, ''):
+        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
             return
 
         self._disconnect_device()
@@ -608,16 +715,25 @@ class BTCMeshGUI(BoxLayout):
                     self.status_log.add_message(f"Found 1 device: {devices[0]}", COLOR_SUCCESS)
                     self._init_meshtastic(port=devices[0])
                 else:
-                    # Multiple devices - show first but don't connect, let user choose
-                    # Unbind to prevent auto-connect when setting text
+                    # Multiple devices - don't connect, let user choose.
+                    # Use a placeholder distinct from every real device path
+                    # (rather than devices[0]) so that selecting the first
+                    # device in the list still registers as a text change and
+                    # fires on_device_selected - Kivy Spinner only dispatches
+                    # its text event when the value actually changes.
                     self.device_spinner.unbind(text=self.on_device_selected)
-                    self.device_spinner.text = devices[0]
+                    self.device_spinner.text = SELECT_DEVICE_TEXT
                     self.device_spinner.bind(text=self.on_device_selected)
                     self.status_log.add_message(f"Found {len(devices)} devices - select one to connect", COLOR_WARNING)
             else:
                 self.device_spinner.values = [NO_DEVICES_TEXT]
                 self.device_spinner.text = NO_DEVICES_TEXT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_ERROR)
+            return
+
+        # Handle transport_ready specially (store transport, don't process as normal result)
+        if result[0] == 'transport_ready':
+            self.transport = result[1]
             return
 
         action = process_result(result)
@@ -642,7 +758,6 @@ class BTCMeshGUI(BoxLayout):
 
         # Handle state changes
         if action.stop_sending:
-            self.is_sending = False
             self.send_btn.disabled = False
             self.abort_btn.disabled = True
             self._set_controls_enabled(True)  # Re-enable input controls
@@ -650,20 +765,6 @@ class BTCMeshGUI(BoxLayout):
         # Show popups
         if action.show_success_popup is not None:
             self._show_success_popup(action.show_success_popup)
-
-    def _get_own_node_id(self) -> Optional[str]:
-        """Get the node ID of the connected Meshtastic device.
-
-        Returns:
-            Node ID string (e.g., '!abcd1234') or None if not connected.
-        """
-        if not self.iface or not self.iface.myInfo:
-            return None
-        try:
-            node_num = self.iface.myInfo.my_node_num
-            return f"!{node_num:08x}"
-        except (AttributeError, TypeError):
-            return None
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable input controls during transaction send.
@@ -697,7 +798,7 @@ class BTCMeshGUI(BoxLayout):
         dry_run = self.dry_run_toggle.state == 'down'
 
         # Validation (dry_run skips Meshtastic connection check)
-        own_node_id = self._get_own_node_id()
+        own_node_id = get_own_node_id(self.iface)
         error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run, own_node_id=own_node_id)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
@@ -706,10 +807,8 @@ class BTCMeshGUI(BoxLayout):
             return
 
         # Start sending
-        self.is_sending = True
         self.send_btn.disabled = True
         self.abort_btn.disabled = False
-        self.abort_requested = False
         self._set_controls_enabled(False)  # Disable input controls during send
         self.status_log.clear()
         if dry_run:
@@ -726,83 +825,59 @@ class BTCMeshGUI(BoxLayout):
         self.send_thread.start()
 
     def _send_transaction_thread(self, dest, tx_hex, dry_run):
-        """Send transaction in background thread using cli_main."""
-        gui_instance = self  # Reference to check abort_requested
-
-        class AbortedException(Exception):
-            """Raised when user requests abort."""
-            pass
-
+        """Send transaction in background thread using TransactionSender."""
         try:
-            # Create a custom logger that sends to our queue
-            gui_logger = logging.getLogger('btcmesh_gui')
-            gui_logger.setLevel(logging.DEBUG)
-            gui_logger.handlers.clear()  # Remove any existing handlers
-
-            queue_handler = QueueLogHandler(self.result_queue)
-            queue_handler.setFormatter(logging.Formatter('%(message)s'))
-            gui_logger.addHandler(queue_handler)
-
-            # Create args namespace to pass to cli_main
-            args = argparse.Namespace(
-                destination=dest,
-                tx=tx_hex,
-                dry_run=dry_run,
-                session_id=None  # Let cli_main generate one
-            )
-
-            # Capture print output by redirecting stdout
-            class PrintCapture(io.StringIO):
-                def __init__(self, result_queue):
-                    super().__init__()
-                    self.result_queue = result_queue
-                    self.original_stdout = sys.stdout
-
-                def write(self, text):
-                    # Check for abort request
-                    if gui_instance.abort_requested:
-                        raise AbortedException()
-                    # Write to original stdout for debugging
-                    self.original_stdout.write(text)
-                    # Send non-empty lines to the queue
-                    text = text.strip()
-                    if text:
-                        self.result_queue.put(('print', text))
-                    return len(text)
-
-                def flush(self):
-                    self.original_stdout.flush()
-
-            # Check for abort before starting
-            if self.abort_requested:
-                self.result_queue.put(('aborted',))
-                return
-
-            # Run cli_main with our injected logger and interface
-            print_capture = PrintCapture(self.result_queue)
-            original_stdout = sys.stdout
-
-            try:
-                sys.stdout = print_capture
-                exit_code = cli_main(
-                    args=args,
-                    injected_iface=self.iface,
-                    injected_logger=gui_logger
-                )
-            finally:
-                sys.stdout = original_stdout
-
-            # Check for abort after completion
-            if self.abort_requested:
-                self.result_queue.put(('aborted',))
+            if dry_run:
+                # For dry run, show a preview of how the transaction would be chunked
+                self._run_preview(tx_hex)
             else:
-                self.result_queue.put(('cli_finished', exit_code))
+                # Create sender and send transaction
+                sender = TransactionSender(self.transport)
+                self._active_sender = sender
 
-        except AbortedException:
-            self.result_queue.put(('aborted',))
+                def on_chunk_sending(chunk_num, total, attempt, wire_format):
+                    self.result_queue.put(('chunk_sending', chunk_num, total, attempt))
+                    self.result_queue.put(('wire_sent', wire_format))
+
+                def on_progress(chunk_num, total):
+                    self.result_queue.put(('progress', chunk_num, total))
+
+                def on_response_received(message_text):
+                    self.result_queue.put(('wire_received', message_text))
+
+                result = sender.send_transaction(
+                    tx_hex, dest,
+                    on_progress=on_progress,
+                    on_chunk_sending=on_chunk_sending,
+                    on_response_received=on_response_received,
+                )
+                self.result_queue.put(('send_result', result))
+
         except Exception as e:
-            gui_logger.error(f"GUI send error: {e}", exc_info=True)
             self.result_queue.put(('error', str(e)))
+        finally:
+            self._active_sender = None
+
+    def _run_preview(self, tx_hex):
+        """Show a preview of how the transaction would be chunked."""
+        try:
+            preview = create_preview(tx_hex)
+            self.result_queue.put(('log', f'Preview: {preview.total_chunks} chunk(s)', logging.INFO))
+            for chunk in preview.chunks:
+                # Show truncated wire format for readability
+                display = chunk.wire_format[:60] + '...' if len(chunk.wire_format) > 60 else chunk.wire_format
+                self.result_queue.put(('log', f'  Chunk {chunk.chunk_num}/{chunk.total_chunks}: {display}', logging.DEBUG))
+            self.result_queue.put(('send_result', SendResult(
+                success=False,
+                session_id=preview.session_id,
+                error='Preview only — not sent'
+            )))
+        except Exception as e:
+            self.result_queue.put(('send_result', SendResult(
+                success=False,
+                session_id='',
+                error=f'Preview failed: {str(e)}'
+            )))
 
     def _show_success_popup(self, txid):
         """Show success popup with TXID."""
@@ -905,9 +980,9 @@ class BTCMeshGUI(BoxLayout):
 
     def on_abort_pressed(self, instance):
         """Handle abort button press."""
-        if self.is_sending:
-            self.abort_requested = True
-            self.status_log.add_message("Abort requested...", COLOR_WARNING)
+        if self._active_sender:
+            self._active_sender.abort()
+            self.result_queue.put(('log', 'Abort requested...', logging.WARNING))
             self.abort_btn.disabled = True
 
     def on_clear(self, instance):

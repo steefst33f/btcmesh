@@ -79,6 +79,80 @@ See **Story 20.4** in tasks.txt.
 
 ---
 
+## Device Scanning: Second Meshtastic device silently hidden
+
+**Issue 9: `scan_meshtastic_devices()` only showed one of two connected devices** ✅ FIXED
+- `core/meshtastic_utils.py`'s `scan_meshtastic_devices()` delegated entirely to
+  `meshtastic.util.findPorts()`, which filters serial ports to a hardcoded VID
+  whitelist (Adafruit `0x239a`, Espressif `0x303a`) and only falls back to
+  "everything not blacklisted" when **zero** whitelisted-VID ports are found.
+- With two real devices connected — one Espressif-VID (whitelisted) and one
+  Seeed-VID `0x2886` (neither whitelisted nor blacklisted) — the whitelist
+  branch found a hit and short-circuited, so the Seeed device never appeared
+  in the GUI's device dropdown at all.
+- Not related to the Story 22.2 client/sender.py refactor; a pre-existing gap
+  in the upstream `meshtastic` library's heuristic.
+- Fix: `scan_meshtastic_devices()` now enumerates ports directly via
+  `serial.tools.list_ports.comports()`, filtering only by `meshtastic.util`'s
+  (narrow) blacklist, reusing `eliminate_duplicate_port()` for the legitimate
+  same-device-listed-twice case. All non-blacklisted devices now surface.
+- Tests updated in `tests/test_meshtastic_utils.py` and `tests/test_btcmesh_gui.py`
+  to mock `serial.tools.list_ports.comports` instead of `meshtastic.util.findPorts`.
+
+---
+
+## Device Connection: GUI got permanently stuck / first device in list unselectable
+
+Found while manually testing the Issue 9 fix above with two real devices
+connected — both bugs only surface with 2+ real devices, which the
+`findPorts()` whitelist bug had made impossible to hit before now.
+
+**Issue 10: Transient connect error left the GUI stuck forever** ✅ FIXED
+- `btcmesh_gui.py`'s `_init_meshtastic()` treats `"resource temporarily
+  unavailable"` / `"busy"` errors from `MeshtasticSerialTransport.connect()`
+  as transient, showing "Device is initializing, please wait..." — but there
+  was no retry and no timeout anywhere. The connection attempt simply ended
+  there, leaving the GUI stuck on that message permanently with no recovery
+  short of restarting the app.
+- Reproduced by selecting one device, then quickly selecting a second device
+  before the first had fully disconnected — the second device's
+  `SerialInterface` open transiently failed and the GUI hung.
+- Separately, `_disconnect_device()`'s background close of the previous
+  transport silently swallowed any exception (`except Exception: pass`),
+  so a failed disconnect gave no visible indication that a port might still
+  be locked.
+- Fix: `_init_meshtastic()` now retries up to `CONNECT_MAX_ATTEMPTS` (4) times
+  with a `CONNECT_RETRY_DELAY_SECONDS` (1.5s) delay between attempts on a
+  transient error, reporting `connection_error` if it still hasn't succeeded
+  after all attempts instead of hanging indefinitely. `_disconnect_device()`
+  now logs a warning message (via the existing `'log'` result type) instead
+  of silently discarding disconnect failures.
+- Tests added in `tests/test_btcmesh_gui.py`
+  (`TestDeviceConnectionRetryAndSelectionFix`):
+  `test_init_meshtastic_retries_transient_error_then_succeeds`,
+  `test_init_meshtastic_gives_up_after_max_attempts`.
+
+**Issue 11: First device in a multi-device list couldn't be selected** ✅ FIXED
+- When multiple devices are found, `_handle_result()`'s `'devices_found'`
+  handling set `device_spinner.text = devices[0]` as a display-only
+  placeholder (explicitly not auto-connecting, to let the user choose).
+- Kivy's `Spinner.text` (a `StringProperty`) only dispatches its `on_text`
+  event when the value actually *changes*. Since the placeholder was set to
+  the exact same string as the first dropdown option, selecting that first
+  device again from the dropdown didn't change `.text` at all — so
+  `on_device_selected` never fired, and nothing happened. Selecting a
+  *different* device worked fine (the text genuinely changed), and then
+  going back to the first device also worked (now a real change from the
+  second device's text).
+- Fix: use a new placeholder constant `SELECT_DEVICE_TEXT` ("Select a device
+  to connect...") that never collides with any real device path, so any
+  device selection — including the first one — always registers as a text
+  change.
+- Tests added: `test_devices_found_multiple_sets_placeholder_not_first_device`,
+  `test_on_device_selected_ignores_placeholder_text`.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -88,3 +162,6 @@ See **Story 20.4** in tasks.txt.
 | 9.1   | Button text slightly different | Minor (cosmetic) | Open |
 | 10.3  | Success popup never triggered | **Major (functional bug)** | **FIXED** |
 | 20.4  | Redundant status field in response messages | Medium (protocol bloat) | **FIXED** |
+| -     | Second Meshtastic device hidden by findPorts() whitelist | **Major (functional bug)** | **FIXED** |
+| -     | GUI stuck forever on transient connect error | **Major (functional bug)** | **FIXED** |
+| -     | First device in multi-device list unselectable | **Major (functional bug)** | **FIXED** |

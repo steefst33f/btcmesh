@@ -66,6 +66,17 @@ btcmesh/
     source env/bin/activate
     ```
 
+    **Recommended:** install [direnv](https://direnv.net/) and add a `.envrc` file in the
+    project root with `source env/bin/activate`, then run `direnv allow` once. This
+    auto-activates the virtualenv whenever you `cd` into the project, so you never
+    have to remember to activate it manually in a new terminal.
+    ```bash
+    brew install direnv        # macOS; see direnv.net for other platforms
+    echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc   # or ~/.bashrc for bash
+    echo 'source env/bin/activate' > .envrc
+    direnv allow .
+    ```
+
 3.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
