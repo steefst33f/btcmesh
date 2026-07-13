@@ -144,6 +144,8 @@ from btcmesh_gui import (
     scan_meshtastic_devices,
     NO_DEVICES_TEXT,
     SCANNING_TEXT,
+    SELECT_DEVICE_TEXT,
+    CONNECT_MAX_ATTEMPTS,
     NO_NODES_TEXT,
     MANUAL_ENTRY_TEXT,
     COLOR_ERROR,
@@ -600,6 +602,126 @@ class TestDeviceSelectionStory111(unittest.TestCase):
     def test_scanning_text_constant(self):
         """Verify SCANNING_TEXT constant is defined correctly."""
         self.assertEqual(SCANNING_TEXT, "Scanning...")
+
+
+# =============================================================================
+# Device connection retry + first-device-selection fixes
+# Tests for issues found while testing the scan_meshtastic_devices() fix:
+# a transient connect error left the GUI stuck forever, and the first device
+# in a multi-device list couldn't be selected until a different device was
+# picked first (see project/issues.txt Issue 10/11).
+# =============================================================================
+
+class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
+    """Tests for connection retry logic and multi-device placeholder text."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously instead of actually threading,
+        so tests stay deterministic and don't need real background threads."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def _drain(self, q):
+        results = []
+        while not q.empty():
+            results.append(q.get_nowait())
+        return results
+
+    def test_init_meshtastic_retries_transient_error_then_succeeds(self):
+        """Given a transient error on the first attempt and success on the
+        second, Then it retries instead of giving up immediately."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.status_log = unittest.mock.MagicMock()
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0x12345678
+
+        failing_transport = unittest.mock.MagicMock()
+        failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+
+        succeeding_transport = unittest.mock.MagicMock()
+        succeeding_transport.connect.return_value = None
+        succeeding_transport._iface = mock_iface
+
+        transports = [failing_transport, succeeding_transport]
+
+        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', side_effect=transports), \
+             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_gui.time.sleep'), \
+             unittest.mock.patch('btcmesh_gui.get_own_node_name', return_value='TestNode'):
+            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+
+        result_types = [r[0] for r in self._drain(gui.result_queue)]
+        self.assertEqual(result_types.count('connection_initializing'), 1)
+        self.assertIn('connected', result_types)
+        self.assertIn('transport_ready', result_types)
+
+    def test_init_meshtastic_gives_up_after_max_attempts(self):
+        """Given a persistently transient error, Then after CONNECT_MAX_ATTEMPTS
+        it reports connection_error instead of hanging forever (regression
+        test for the GUI getting permanently stuck on 'Device is
+        initializing, please wait...')."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.status_log = unittest.mock.MagicMock()
+
+        always_failing_transport = unittest.mock.MagicMock()
+        always_failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+
+        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
+             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_gui.time.sleep'):
+            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+
+        results = self._drain(gui.result_queue)
+        result_types = [r[0] for r in results]
+
+        self.assertEqual(always_failing_transport.connect.call_count, CONNECT_MAX_ATTEMPTS)
+        self.assertEqual(result_types.count('connection_initializing'), CONNECT_MAX_ATTEMPTS)
+        self.assertEqual(result_types[-1], 'connection_error')
+
+    def test_devices_found_multiple_sets_placeholder_not_first_device(self):
+        """Given multiple devices found, Then the spinner's displayed text is
+        a placeholder distinct from any real device path (not devices[0]) -
+        Kivy Spinner only fires its text-change event when the value actually
+        changes, so reusing devices[0] as the placeholder silently prevented
+        selecting the first device until a different one was picked first."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+
+        devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+
+        self.assertEqual(gui.device_spinner.values, devices)
+        self.assertEqual(gui.device_spinner.text, SELECT_DEVICE_TEXT)
+        self.assertNotIn(gui.device_spinner.text, devices)
+
+    def test_on_device_selected_ignores_placeholder_text(self):
+        """Given the multi-device placeholder text, Then on_device_selected
+        does nothing (no connection attempt)."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._disconnect_device = unittest.mock.MagicMock()
+        gui._init_meshtastic = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI.on_device_selected(gui, None, SELECT_DEVICE_TEXT)
+
+        gui._disconnect_device.assert_not_called()
+        gui._init_meshtastic.assert_not_called()
 
 
 # =============================================================================
