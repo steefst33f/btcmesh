@@ -474,7 +474,7 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
         action = process_result(result)
 
         self.assertEqual(len(action.log_messages), 1)
-        self.assertIn('→', action.log_messages[0][0])
+        self.assertIn('->', action.log_messages[0][0])
         self.assertIn(wire_format, action.log_messages[0][0])
         self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
 
@@ -508,7 +508,7 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
         action = process_result(result)
 
         self.assertEqual(len(action.log_messages), 1)
-        self.assertIn('←', action.log_messages[0][0])
+        self.assertIn('<-', action.log_messages[0][0])
         self.assertIn(message, action.log_messages[0][0])
         self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
 

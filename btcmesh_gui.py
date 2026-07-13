@@ -234,7 +234,7 @@ def process_result(result: tuple) -> ResultAction:
 
     elif result_type == 'wire_sent':
         wire_format = result[1]
-        action.log_messages.append((f'  → {wire_format}', COLOR_SECUNDARY))
+        action.log_messages.append((f'  -> {wire_format}', COLOR_SECUNDARY))
 
     elif result_type == 'progress':
         chunk_num, total = result[1], result[2]
@@ -246,7 +246,7 @@ def process_result(result: tuple) -> ResultAction:
 
     elif result_type == 'wire_received':
         message_text = result[1]
-        action.log_messages.append((f'  ← {message_text}', COLOR_SECUNDARY))
+        action.log_messages.append((f'  <- {message_text}', COLOR_SECUNDARY))
 
     elif result_type == 'send_result':
         send_result = result[1]
