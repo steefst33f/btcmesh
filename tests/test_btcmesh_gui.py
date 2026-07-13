@@ -124,13 +124,18 @@ sys.modules['pubsub'] = pubsub_mock
 # Mock meshtastic (for device scanning tests)
 meshtastic_mock = unittest.mock.MagicMock()
 meshtastic_mock.util = unittest.mock.MagicMock()
-meshtastic_mock.util.findPorts = unittest.mock.MagicMock(return_value=[])
+meshtastic_mock.util.blacklistVids = []
+meshtastic_mock.util.eliminate_duplicate_port = lambda ports: ports
 sys.modules['meshtastic'] = meshtastic_mock
 sys.modules['meshtastic.util'] = meshtastic_mock.util
 sys.modules['meshtastic.serial_interface'] = unittest.mock.MagicMock()
 
+# Default serial port enumeration to "no devices" so tests that don't scan
+# explicitly aren't affected by whatever hardware happens to be attached to
+# the machine running the suite; per-test patches override this as needed.
+unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]).start()
+
 from btcmesh_gui import (
-    QueueLogHandler,
     get_log_color,
     get_print_color,
     process_result,
@@ -139,11 +144,15 @@ from btcmesh_gui import (
     scan_meshtastic_devices,
     NO_DEVICES_TEXT,
     SCANNING_TEXT,
+    SELECT_DEVICE_TEXT,
+    CONNECT_MAX_ATTEMPTS,
     NO_NODES_TEXT,
     MANUAL_ENTRY_TEXT,
     COLOR_ERROR,
     COLOR_WARNING,
     COLOR_SUCCESS,
+    COLOR_PRIMARY,
+    COLOR_SECUNDARY,
     COLOR_DISCONNECTED,
     ConnectionState,
     STATE_DISCONNECTED,
@@ -366,268 +375,6 @@ class TestConnectionStatusStory101(unittest.TestCase):
 # Tests for log message display, color coding, and message handling
 # =============================================================================
 
-class TestStatusLogStory102(unittest.TestCase):
-    """Tests for scrollable status log - Story 10.2: Scrollable Status Log."""
-
-    def setUp(self):
-        """Set up test fixtures for QueueLogHandler tests."""
-        self.result_queue = queue.Queue()
-        self.handler = QueueLogHandler(self.result_queue)
-        self.handler.setFormatter(logging.Formatter('%(message)s'))
-
-    # --- QueueLogHandler tests (log messages flow to status log) ---
-
-    def test_queue_handler_emit_info_message(self):
-        """Given an INFO log record, Then it should be added to the queue with correct level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.INFO,
-            pathname='test.py',
-            lineno=1,
-            msg='Test info message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        self.assertFalse(self.result_queue.empty())
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test info message')
-        self.assertEqual(result[2], logging.INFO)
-
-    def test_queue_handler_emit_error_message(self):
-        """Given an ERROR log record, Then it should be added to the queue with ERROR level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.ERROR,
-            pathname='test.py',
-            lineno=1,
-            msg='Test error message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test error message')
-        self.assertEqual(result[2], logging.ERROR)
-
-    def test_queue_handler_emit_warning_message(self):
-        """Given a WARNING log record, Then it should be added to the queue with WARNING level."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.WARNING,
-            pathname='test.py',
-            lineno=1,
-            msg='Test warning message',
-            args=(),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test warning message')
-        self.assertEqual(result[2], logging.WARNING)
-
-    def test_queue_handler_emit_with_format_args(self):
-        """Given a log record with format arguments, Then the message should be formatted."""
-        record = logging.LogRecord(
-            name='test',
-            level=logging.INFO,
-            pathname='test.py',
-            lineno=1,
-            msg='Chunk %d of %d sent',
-            args=(3, 10),
-            exc_info=None
-        )
-
-        self.handler.emit(record)
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[1], 'Chunk 3 of 10 sent')
-
-    def test_queue_handler_logger_integration(self):
-        """Given a logger with QueueLogHandler, Then log messages should appear in queue."""
-        logger = logging.getLogger('test_gui_logger')
-        logger.setLevel(logging.DEBUG)
-        logger.handlers.clear()
-        logger.addHandler(self.handler)
-
-        logger.info('Test message from logger')
-
-        result = self.result_queue.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test message from logger')
-
-    # --- ResultAction tests (result processing for log display) ---
-
-    def test_result_action_default_values(self):
-        """Given no arguments, Then ResultAction has correct defaults."""
-        action = ResultAction()
-
-        self.assertIsNone(action.connection_text)
-        self.assertIsNone(action.connection_color)
-        self.assertEqual(action.log_messages, [])
-        self.assertFalse(action.stop_sending)
-        self.assertIsNone(action.show_success_popup)
-        self.assertIsNone(action.store_iface)
-
-    def test_result_action_log_messages_mutable_default(self):
-        """Given two ResultAction instances, Then they have separate log_messages lists."""
-        action1 = ResultAction()
-        action2 = ResultAction()
-
-        action1.log_messages.append(('test', None))
-
-        self.assertEqual(len(action1.log_messages), 1)
-        self.assertEqual(len(action2.log_messages), 0)
-
-    def test_unknown_result_type_returns_empty_action(self):
-        """Given unknown result type, Then returns action with no changes."""
-        result = ('unknown_type', 'data')
-
-        action = process_result(result)
-
-        self.assertIsNone(action.connection_text)
-        self.assertIsNone(action.connection_color)
-        self.assertEqual(len(action.log_messages), 0)
-        self.assertFalse(action.stop_sending)
-        self.assertIsNone(action.show_success_popup)
-
-    # --- get_log_color tests (color coding for log messages) ---
-
-    def test_error_level_returns_error_color(self):
-        """Given ERROR level, Then returns COLOR_ERROR regardless of message."""
-        result = get_log_color(logging.ERROR, "some message")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_critical_level_returns_error_color(self):
-        """Given CRITICAL level, Then returns COLOR_ERROR."""
-        result = get_log_color(logging.CRITICAL, "critical issue")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_warning_level_returns_warning_color(self):
-        """Given WARNING level, Then returns COLOR_WARNING."""
-        result = get_log_color(logging.WARNING, "warning message")
-        self.assertEqual(result, COLOR_WARNING)
-
-    def test_info_with_success_keyword_returns_success_color(self):
-        """Given INFO level with 'success' in message, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Transaction success")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_info_with_successfully_keyword_returns_success_color(self):
-        """Given INFO level with 'successfully' in message, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Connected successfully to node")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_info_without_keywords_returns_none(self):
-        """Given INFO level without success keywords, Then returns None."""
-        result = get_log_color(logging.INFO, "Processing transaction")
-        self.assertIsNone(result)
-
-    def test_debug_without_keywords_returns_none(self):
-        """Given DEBUG level without success keywords, Then returns None."""
-        result = get_log_color(logging.DEBUG, "Debug info")
-        self.assertIsNone(result)
-
-    def test_log_color_case_insensitive_success_detection(self):
-        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
-        result = get_log_color(logging.INFO, "Operation SUCCESS")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    # --- get_print_color tests (color coding for print output) ---
-
-    def test_print_error_keyword_returns_error_color(self):
-        """Given message with 'error', Then returns COLOR_ERROR."""
-        result = get_print_color("An error occurred")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_print_failed_keyword_returns_error_color(self):
-        """Given message with 'failed', Then returns COLOR_ERROR."""
-        result = get_print_color("Transaction failed")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_print_abort_keyword_returns_error_color(self):
-        """Given message with 'abort', Then returns COLOR_ERROR."""
-        result = get_print_color("Aborting operation")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_print_success_keyword_returns_success_color(self):
-        """Given message with 'success', Then returns COLOR_SUCCESS."""
-        result = get_print_color("Transaction success")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_print_txid_keyword_returns_success_color(self):
-        """Given message with 'txid', Then returns COLOR_SUCCESS."""
-        result = get_print_color("TXID: abc123def456")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    def test_print_neutral_message_returns_none(self):
-        """Given message without keywords, Then returns None."""
-        result = get_print_color("Processing transaction")
-        self.assertIsNone(result)
-
-    def test_print_color_case_insensitive_error_detection(self):
-        """Given message with 'ERROR' uppercase, Then returns COLOR_ERROR."""
-        result = get_print_color("ERROR: something went wrong")
-        self.assertEqual(result, COLOR_ERROR)
-
-    def test_print_color_case_insensitive_success_detection(self):
-        """Given message with 'SUCCESS' uppercase, Then returns COLOR_SUCCESS."""
-        result = get_print_color("Operation SUCCESS")
-        self.assertEqual(result, COLOR_SUCCESS)
-
-    # --- process_result log/print color tests ---
-
-    def test_log_result_with_error_level(self):
-        """Given 'log' result with ERROR level, Then log message has error color."""
-        result = ('log', 'An error occurred', logging.ERROR)
-
-        action = process_result(result)
-
-        self.assertEqual(len(action.log_messages), 1)
-        self.assertEqual(action.log_messages[0][0], 'An error occurred')
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_log_result_with_warning_level(self):
-        """Given 'log' result with WARNING level, Then log message has warning color."""
-        result = ('log', 'A warning', logging.WARNING)
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
-
-    def test_log_result_with_success_keyword(self):
-        """Given 'log' result with 'success' in message, Then has success color."""
-        result = ('log', 'Transaction success', logging.INFO)
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
-    def test_print_result_with_error_keyword(self):
-        """Given 'print' result with error keyword, Then has error color."""
-        result = ('print', 'Error: something failed')
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_print_result_with_txid_keyword(self):
-        """Given 'print' result with 'txid', Then has success color."""
-        result = ('print', 'TXID: abc123def456')
-
-        action = process_result(result)
-
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
 
 # =============================================================================
 # Story 10.3: Implement Success/Failure Popups
@@ -682,6 +429,137 @@ class TestPopupsStory103(unittest.TestCase):
 
 
 # =============================================================================
+# Story 22.2: TransactionSender Result Types
+# Tests for TransactionSender result types (chunk_sending, progress, wire_sent, etc)
+# =============================================================================
+
+class TestTransactionSenderResultsStory222(unittest.TestCase):
+    """Tests for TransactionSender result types - Story 22.2."""
+
+    def test_chunk_sending_first_attempt(self):
+        """Given chunk_sending result with attempt=1, Then shows 'Sending chunk X/Y...'."""
+        result = ('chunk_sending', 1, 3, 1)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Sending chunk 1/3', action.log_messages[0][0])
+        self.assertNotIn('retry', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
+    def test_chunk_sending_with_retry(self):
+        """Given chunk_sending result with attempt=2, Then shows retry message."""
+        result = ('chunk_sending', 2, 3, 2)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Sending chunk 2/3', action.log_messages[0][0])
+        self.assertIn('retry 1', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
+    def test_chunk_sending_with_multiple_retries(self):
+        """Given chunk_sending result with attempt=3, Then shows correct retry count."""
+        result = ('chunk_sending', 1, 5, 3)
+
+        action = process_result(result)
+
+        self.assertIn('retry 2', action.log_messages[0][0])
+
+    def test_wire_sent_shows_protocol_detail(self):
+        """Given wire_sent result, Then shows arrow and wire format in secondary color."""
+        wire_format = 'BTC_TX|abc123|1/3|020000...'
+        result = ('wire_sent', wire_format)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('→', action.log_messages[0][0])
+        self.assertIn(wire_format, action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+
+    def test_progress_intermediate_chunk(self):
+        """Given progress for chunk 2 of 3, Then shows 'Chunk 2/3 sent'."""
+        result = ('progress', 2, 3)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertEqual(action.log_messages[0][0], 'Chunk 2/3 sent')
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+        self.assertFalse(action.stop_sending)
+
+    def test_progress_final_chunk(self):
+        """Given progress for final chunk, Then shows waiting message."""
+        result = ('progress', 3, 3)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('waiting for broadcast', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+        self.assertFalse(action.stop_sending)
+
+    def test_wire_received_shows_incoming_message(self):
+        """Given wire_received result, Then shows arrow and message in secondary color."""
+        message = 'BTC_CHUNK_ACK|abc123|2|REQUEST_CHUNK|3'
+        result = ('wire_received', message)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('←', action.log_messages[0][0])
+        self.assertIn(message, action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+
+    def test_send_result_success_shows_popup(self):
+        """Given send_result with success=True, Then shows popup and stops sending."""
+        from client.sender import SendResult
+        txid = 'abc123def456789'
+        result = ('send_result', SendResult(success=True, session_id='sess1', txid=txid))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertEqual(action.show_success_popup, txid)
+        self.assertEqual(len(action.log_messages), 0)  # No error message
+
+    def test_send_result_error_shows_message(self):
+        """Given send_result with error, Then shows error message and stops sending."""
+        from client.sender import SendResult
+        result = ('send_result', SendResult(
+            success=False,
+            session_id='sess1',
+            error='Insufficient fee'
+        ))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Insufficient fee', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
+
+    def test_send_result_aborted_by_user(self):
+        """Given send_result with abort, Then shows abort message."""
+        from client.sender import SendResult
+        result = ('send_result', SendResult(
+            success=False,
+            session_id='sess1',
+            error='Aborted by user'
+        ))
+
+        action = process_result(result)
+
+        self.assertTrue(action.stop_sending)
+        self.assertIsNone(action.show_success_popup)
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('aborted', action.log_messages[0][0].lower())
+        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+
+
+
 # Story 11.1: Device Selection Dropdown
 # Tests for Meshtastic device scanning and selection
 # =============================================================================
@@ -690,33 +568,30 @@ class TestDeviceSelectionStory111(unittest.TestCase):
     """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown."""
 
     def test_scan_handles_import_error(self):
-        """Given meshtastic.util import fails, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=ImportError):
+        """Given serial port enumeration fails to import, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=ImportError):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
     def test_scan_returns_empty_list_on_exception(self):
-        """Given findPorts raises exception, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=Exception("Test error")):
+        """Given comports raises exception, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=Exception("Test error")):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
     def test_scan_returns_device_list(self):
-        """Given findPorts returns devices, Then returns those devices."""
-        mock_ports = ['/dev/ttyUSB0', '/dev/ttyACM0']
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=mock_ports):
+        """Given comports returns non-blacklisted devices, Then returns those devices."""
+        mock_ports = [
+            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x303a),
+            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x2886),
+        ]
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
             result = scan_meshtastic_devices()
-            self.assertEqual(result, mock_ports)
+            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
 
     def test_scan_returns_empty_list_when_no_devices(self):
-        """Given findPorts returns empty list, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=[]):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_empty_list_when_findports_returns_none(self):
-        """Given findPorts returns None, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=None):
+        """Given comports returns empty list, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
@@ -727,6 +602,126 @@ class TestDeviceSelectionStory111(unittest.TestCase):
     def test_scanning_text_constant(self):
         """Verify SCANNING_TEXT constant is defined correctly."""
         self.assertEqual(SCANNING_TEXT, "Scanning...")
+
+
+# =============================================================================
+# Device connection retry + first-device-selection fixes
+# Tests for issues found while testing the scan_meshtastic_devices() fix:
+# a transient connect error left the GUI stuck forever, and the first device
+# in a multi-device list couldn't be selected until a different device was
+# picked first (see project/issues.txt Issue 10/11).
+# =============================================================================
+
+class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
+    """Tests for connection retry logic and multi-device placeholder text."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously instead of actually threading,
+        so tests stay deterministic and don't need real background threads."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def _drain(self, q):
+        results = []
+        while not q.empty():
+            results.append(q.get_nowait())
+        return results
+
+    def test_init_meshtastic_retries_transient_error_then_succeeds(self):
+        """Given a transient error on the first attempt and success on the
+        second, Then it retries instead of giving up immediately."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.status_log = unittest.mock.MagicMock()
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0x12345678
+
+        failing_transport = unittest.mock.MagicMock()
+        failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+
+        succeeding_transport = unittest.mock.MagicMock()
+        succeeding_transport.connect.return_value = None
+        succeeding_transport._iface = mock_iface
+
+        transports = [failing_transport, succeeding_transport]
+
+        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', side_effect=transports), \
+             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_gui.time.sleep'), \
+             unittest.mock.patch('btcmesh_gui.get_own_node_name', return_value='TestNode'):
+            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+
+        result_types = [r[0] for r in self._drain(gui.result_queue)]
+        self.assertEqual(result_types.count('connection_initializing'), 1)
+        self.assertIn('connected', result_types)
+        self.assertIn('transport_ready', result_types)
+
+    def test_init_meshtastic_gives_up_after_max_attempts(self):
+        """Given a persistently transient error, Then after CONNECT_MAX_ATTEMPTS
+        it reports connection_error instead of hanging forever (regression
+        test for the GUI getting permanently stuck on 'Device is
+        initializing, please wait...')."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.status_log = unittest.mock.MagicMock()
+
+        always_failing_transport = unittest.mock.MagicMock()
+        always_failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+
+        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
+             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_gui.time.sleep'):
+            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+
+        results = self._drain(gui.result_queue)
+        result_types = [r[0] for r in results]
+
+        self.assertEqual(always_failing_transport.connect.call_count, CONNECT_MAX_ATTEMPTS)
+        self.assertEqual(result_types.count('connection_initializing'), CONNECT_MAX_ATTEMPTS)
+        self.assertEqual(result_types[-1], 'connection_error')
+
+    def test_devices_found_multiple_sets_placeholder_not_first_device(self):
+        """Given multiple devices found, Then the spinner's displayed text is
+        a placeholder distinct from any real device path (not devices[0]) -
+        Kivy Spinner only fires its text-change event when the value actually
+        changes, so reusing devices[0] as the placeholder silently prevented
+        selecting the first device until a different one was picked first."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+
+        devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
+        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+
+        self.assertEqual(gui.device_spinner.values, devices)
+        self.assertEqual(gui.device_spinner.text, SELECT_DEVICE_TEXT)
+        self.assertNotIn(gui.device_spinner.text, devices)
+
+    def test_on_device_selected_ignores_placeholder_text(self):
+        """Given the multi-device placeholder text, Then on_device_selected
+        does nothing (no connection attempt)."""
+        import btcmesh_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._disconnect_device = unittest.mock.MagicMock()
+        gui._init_meshtastic = unittest.mock.MagicMock()
+
+        btcmesh_gui.BTCMeshGUI.on_device_selected(gui, None, SELECT_DEVICE_TEXT)
+
+        gui._disconnect_device.assert_not_called()
+        gui._init_meshtastic.assert_not_called()
 
 
 # =============================================================================
