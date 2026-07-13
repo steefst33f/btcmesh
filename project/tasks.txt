@@ -1132,17 +1132,17 @@ lora/
         - [x] *   **Given** a completed send operation.
         - [x] *   **Then** a `SendResult` dataclass is returned with success, txid, error.
 
-- [ ] **Story 22.2: Refactor btcmesh_gui.py to use client/sender.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** the GUI to use the new sender module,
-- [ ] *   **So that** the GUI becomes a thin wrapper.
-    - [ ] *   **Scenario:** GUI uses TransactionSender
-        - [ ] *   **Given** the refactored GUI.
-        - [ ] *   **Then** it only handles UI updates.
-        - [ ] *   **And** all business logic is delegated to `client/sender.py`.
-    - [ ] *   **Scenario:** Progress updates work
-        - [ ] *   **Given** the progress callback.
-        - [ ] *   **Then** the GUI status log shows chunk progress.
+- [x] **Story 22.2: Refactor btcmesh_gui.py to use client/sender.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** the GUI to use the new sender module,
+- [x] *   **So that** the GUI becomes a thin wrapper.
+    - [x] *   **Scenario:** GUI uses TransactionSender
+        - [x] *   **Given** the refactored GUI.
+        - [x] *   **Then** it only handles UI updates.
+        - [x] *   **And** all business logic is delegated to `client/sender.py`.
+    - [x] *   **Scenario:** Progress updates work
+        - [x] *   **Given** the progress callback.
+        - [x] *   **Then** the GUI status log shows chunk progress.
 
 - [ ] **Story 22.3: Create btcmesh_client_cli.py as thin CLI entry point**
 - [ ] *   **As a** developer,
