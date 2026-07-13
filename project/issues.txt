@@ -79,6 +79,30 @@ See **Story 20.4** in tasks.txt.
 
 ---
 
+---
+
+## Device Scanning: Second Meshtastic device silently hidden
+
+**Issue 9: `scan_meshtastic_devices()` only showed one of two connected devices** ✅ FIXED
+- `core/meshtastic_utils.py`'s `scan_meshtastic_devices()` delegated entirely to
+  `meshtastic.util.findPorts()`, which filters serial ports to a hardcoded VID
+  whitelist (Adafruit `0x239a`, Espressif `0x303a`) and only falls back to
+  "everything not blacklisted" when **zero** whitelisted-VID ports are found.
+- With two real devices connected — one Espressif-VID (whitelisted) and one
+  Seeed-VID `0x2886` (neither whitelisted nor blacklisted) — the whitelist
+  branch found a hit and short-circuited, so the Seeed device never appeared
+  in the GUI's device dropdown at all.
+- Not related to the Story 22.2 client/sender.py refactor; a pre-existing gap
+  in the upstream `meshtastic` library's heuristic.
+- Fix: `scan_meshtastic_devices()` now enumerates ports directly via
+  `serial.tools.list_ports.comports()`, filtering only by `meshtastic.util`'s
+  (narrow) blacklist, reusing `eliminate_duplicate_port()` for the legitimate
+  same-device-listed-twice case. All non-blacklisted devices now surface.
+- Tests updated in `tests/test_meshtastic_utils.py` and `tests/test_btcmesh_gui.py`
+  to mock `serial.tools.list_ports.comports` instead of `meshtastic.util.findPorts`.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -88,3 +112,4 @@ See **Story 20.4** in tasks.txt.
 | 9.1   | Button text slightly different | Minor (cosmetic) | Open |
 | 10.3  | Success popup never triggered | **Major (functional bug)** | **FIXED** |
 | 20.4  | Redundant status field in response messages | Medium (protocol bloat) | **FIXED** |
+| -     | Second Meshtastic device hidden by findPorts() whitelist | **Major (functional bug)** | **FIXED** |

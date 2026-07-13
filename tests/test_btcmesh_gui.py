@@ -124,10 +124,16 @@ sys.modules['pubsub'] = pubsub_mock
 # Mock meshtastic (for device scanning tests)
 meshtastic_mock = unittest.mock.MagicMock()
 meshtastic_mock.util = unittest.mock.MagicMock()
-meshtastic_mock.util.findPorts = unittest.mock.MagicMock(return_value=[])
+meshtastic_mock.util.blacklistVids = []
+meshtastic_mock.util.eliminate_duplicate_port = lambda ports: ports
 sys.modules['meshtastic'] = meshtastic_mock
 sys.modules['meshtastic.util'] = meshtastic_mock.util
 sys.modules['meshtastic.serial_interface'] = unittest.mock.MagicMock()
+
+# Default serial port enumeration to "no devices" so tests that don't scan
+# explicitly aren't affected by whatever hardware happens to be attached to
+# the machine running the suite; per-test patches override this as needed.
+unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]).start()
 
 from btcmesh_gui import (
     get_log_color,
@@ -560,33 +566,30 @@ class TestDeviceSelectionStory111(unittest.TestCase):
     """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown."""
 
     def test_scan_handles_import_error(self):
-        """Given meshtastic.util import fails, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=ImportError):
+        """Given serial port enumeration fails to import, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=ImportError):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
     def test_scan_returns_empty_list_on_exception(self):
-        """Given findPorts raises exception, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', side_effect=Exception("Test error")):
+        """Given comports raises exception, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=Exception("Test error")):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
     def test_scan_returns_device_list(self):
-        """Given findPorts returns devices, Then returns those devices."""
-        mock_ports = ['/dev/ttyUSB0', '/dev/ttyACM0']
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=mock_ports):
+        """Given comports returns non-blacklisted devices, Then returns those devices."""
+        mock_ports = [
+            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x303a),
+            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x2886),
+        ]
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
             result = scan_meshtastic_devices()
-            self.assertEqual(result, mock_ports)
+            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
 
     def test_scan_returns_empty_list_when_no_devices(self):
-        """Given findPorts returns empty list, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=[]):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_empty_list_when_findports_returns_none(self):
-        """Given findPorts returns None, Then returns empty list."""
-        with unittest.mock.patch('meshtastic.util.findPorts', return_value=None):
+        """Given comports returns empty list, Then returns empty list."""
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]):
             result = scan_meshtastic_devices()
             self.assertEqual(result, [])
 
