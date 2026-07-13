@@ -16,9 +16,20 @@ def scan_meshtastic_devices() -> List[str]:
         Returns empty list if no devices found or meshtastic not installed.
     """
     try:
-        from meshtastic.util import findPorts
-        ports = findPorts(True)  # eliminate_duplicates=True
-        return ports if ports else []
+        from meshtastic.util import blacklistVids, eliminate_duplicate_port
+        import serial.tools.list_ports
+
+        # meshtastic.util.findPorts() only falls back to "not blacklisted" ports
+        # when zero whitelisted-VID ports are found, so a whitelisted device
+        # (e.g. Espressif's 0x303a) silently hides any other connected device
+        # whose VID isn't on the whitelist (e.g. Seeed's 0x2886). Filter by the
+        # (narrow) blacklist ourselves instead, so all real devices are found.
+        ports = sorted(
+            port.device
+            for port in serial.tools.list_ports.comports()
+            if port.vid is not None and port.vid not in blacklistVids
+        )
+        return eliminate_duplicate_port(ports)
     except ImportError:
         return []
     except Exception:
