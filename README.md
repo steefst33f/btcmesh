@@ -22,7 +22,7 @@ This project is currently under development.
 ```
 btcmesh/
 ├── btcmesh_client_cli.py  # Command-line client script
-├── btcmesh_gui.py         # Graphical user interface client
+├── btcmesh_client_gui.py  # Graphical user interface client
 ├── btcmesh_server.py      # Server/Relay script
 ├── btcmesh_server_gui.py  # Server GUI for relay operators
 ├── core/                  # Core logic for the server/relay
@@ -147,14 +147,14 @@ Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `b
 
 Use `python btcmesh_client_cli.py --help` for more options, such as `--dry-run` to simulate sending without actually transmitting over LoRa, or `-p`/`--port` to select a specific Meshtastic serial port when more than one device is connected.
 
-## Running the Client GUI (`btcmesh_gui.py`)
+## Running the Client GUI (`btcmesh_client_gui.py`)
 
 The GUI provides a user-friendly graphical interface for sending Bitcoin transactions over the Meshtastic LoRa mesh network. It wraps the CLI with visual feedback and easy-to-use controls.
 
 ### Starting the Client GUI
 
 ```bash
-python btcmesh_gui.py
+python btcmesh_client_gui.py
 ```
 
 ### Client GUI Features
