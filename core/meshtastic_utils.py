@@ -127,8 +127,12 @@ def get_known_nodes(iface, exclude_own: bool = True) -> List[Dict]:
         # Use longName, or shortName, or node_id as fallback
         name = long_name or short_name or node_id
 
-        # Get lastHeard timestamp
-        last_heard = node_data.get('lastHeard', 0) if isinstance(node_data, dict) else 0
+        # Get lastHeard timestamp. dict.get()'s default only applies when the
+        # key is missing, not when it's present but None (e.g. a node the
+        # device knows about but has never actually heard a packet from) -
+        # coerce that case to 0 too, otherwise sorting below crashes trying
+        # to compare None against other nodes' int timestamps.
+        last_heard = (node_data.get('lastHeard') or 0) if isinstance(node_data, dict) else 0
 
         # Determine if node was seen in last 24 hours
         is_recent = (now - last_heard) < hours_24 if last_heard else False
