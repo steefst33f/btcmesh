@@ -219,6 +219,46 @@ None** ✅ FIXED
 
 ---
 
+## Known Nodes: lastHeard doesn't reflect recent direct-message traffic
+
+**Issue 14: Known-nodes sort order may not reflect recent BTC_TX/ACK protocol
+exchanges** 🔍 SUSPECTED / OPEN — needs further investigation another day
+
+- Observed while testing two real devices that had confirmed, successful
+  bidirectional BTC_TX/ACK protocol message exchanges earlier the same day
+  (verified via actual successful client/server test runs, in both role
+  directions). Despite that, each device's `lastHeard` entry for the other
+  was still 147-255 days stale — not refreshed by that day's traffic at all.
+- Ruled out so far:
+  - Not the Issue 13 crash/None-handling bug (separate, already fixed).
+  - Not a hardware/antenna/range issue (physically confirmed fine).
+  - Not a LoRa config mismatch (`region`, `modem_preset`, primary channel
+    name and PSK all verified identical on both devices).
+  - Sending a fresh direct text message live during investigation and
+    reconnecting ~70s later still showed no update to the peer's `lastHeard`.
+- Current best hypothesis: Meshtastic's `lastHeard` NodeDB field tracks mesh
+  *presence* — updated by periodic broadcast beacons (NodeInfo, Position,
+  Telemetry announcements) — rather than direct, addressed application
+  messages like our BTC_TX/ACK protocol traffic. The `meshtastic` Python
+  library's `_onTextReceive()` → `_receiveInfoUpdate()` does wire up a
+  `lastHeard` update for received text messages, but that may only affect
+  the actively-connected client's own in-memory session view, not what the
+  device firmware persists into its onboard NodeDB (the authoritative source
+  re-sent to any client on reconnect, which is what `get_known_nodes()`
+  reads). Not yet confirmed against firmware source/documentation.
+- Practical effect: `get_known_nodes()`'s sort-by-`lastHeard`-descending is
+  working exactly as designed, but the underlying data may not represent
+  what a user intuitively expects ("recency of any successful contact,
+  including our own protocol's direct messages") — it may only represent
+  recency of unrelated mesh presence beacons.
+- Next steps to investigate: confirm against Meshtastic firmware
+  source/docs whether direct/unicast application packets update the onboard
+  NodeDB's `lastHeard` at all; if not, consider whether btcmesh should track
+  "last successful protocol exchange" separately from the device's own
+  NodeDB-reported `lastHeard` for display purposes.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -233,3 +273,4 @@ None** ✅ FIXED
 | -     | First device in multi-device list unselectable | **Major (functional bug)** | **FIXED** |
 | -     | Failed handshake leaked the serial port lock | **Major (functional bug)** | **FIXED** |
 | -     | Crash sorting known nodes when lastHeard is None | **Major (functional bug)** | **FIXED** |
+| -     | Known-nodes lastHeard may not reflect direct-message traffic | Minor (UX/data accuracy) | **Open / Suspected** |
