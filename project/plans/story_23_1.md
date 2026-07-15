@@ -102,6 +102,8 @@ btcmesh_server.py (UNCHANGED this story):
 
 `_on_meshtastic_receive()` currently only filters by packet type (TEXT_MESSAGE_APP) and sender (excludes self). It does **not** check that the packet is actually addressed to this node — so it would currently pass through broadcasts or messages meant for a different node on the same mesh channel. The current server's `on_receive_text_message()` explicitly checks `destination_node_id == my_node_id` and ignores anything else; without this fix, `TransactionReceiver` built on top of the transport would be *more* promiscuous than today's server (a real regression risk for any deployment with more than one relay server on the same channel).
 
+**Revised during implementation:** the old server's exact logic is `dest_val = packet.get("to") or packet.get("toId")`, then drops the message if the formatted result doesn't equal `my_node_id` — critically, if **both** `to` and `toId` are absent, `dest_val` stays `None`, which never equals `my_node_id`, so **the message is dropped**, not allowed through. An initial draft of this fix treated "no destination field at all" as "allow through" (to avoid touching existing test fixtures that omit `to`), which was backwards — real Meshtastic DM packets always carry an explicit destination (even broadcasts use an explicit broadcast address rather than omitting it), so missing destination info should be treated the same as "not addressed to us." Fixed to match the old behavior exactly: require `to` (or `toId` as a string fallback) to be present **and** match this node; otherwise drop.
+
 ```python
 def _on_meshtastic_receive(
     self, packet: dict, interface: Any = None, **kwargs: Any
@@ -120,10 +122,20 @@ def _on_meshtastic_receive(
     if sender_num is not None and sender_num == self._my_node_num:
         return
 
-    # New: filter for messages actually addressed to this node (ignore
-    # broadcasts and messages meant for a different node on the same channel).
+    # Filter: messages not explicitly addressed to this node. Real
+    # Meshtastic DM packets always carry a destination (even broadcasts use
+    # an explicit broadcast address rather than omitting it), so missing
+    # destination info means this isn't a direct message to us - drop
+    # broadcasts, messages meant for another node, and anything with no
+    # destination info at all (matches the old server's exact behavior).
     dest_num = packet.get("to")
-    if dest_num is not None and dest_num != self._my_node_num:
+    if dest_num is None:
+        dest_id = packet.get("toId")
+        if dest_id is None:
+            return
+        if dest_id != self._format_node_id(self._my_node_num):
+            return
+    elif dest_num != self._my_node_num:
         return
 
     message_text = self._extract_text_from_packet(decoded)
@@ -142,7 +154,7 @@ def _on_meshtastic_receive(
         logger.exception("Error in message handler")
 ```
 
-Existing tests in `tests/test_meshtastic_serial_transport.py` don't set a `to` field in their packet fixtures, so `dest_num is not None` is `False` for all of them — this is additive and doesn't break anything currently passing. Add a new test with an explicit mismatched `to` to lock in the new behavior.
+Existing tests in `tests/test_meshtastic_serial_transport.py` that expect the handler to fire didn't set a `to` field in their packet fixtures, so with the corrected (stricter) behavior they needed a matching `'to': 0xDEADBEEF` (the shared `MockSerialInterface` default node) added — 3 fixtures updated (`test_receive_text_message_calls_handler`, `test_receive_payload_fallback_to_bytes`, `test_receive_handles_handler_exception`). Added 3 new tests: mismatched destination dropped, no-destination-info-at-all dropped, and the `toId` string-fallback still working when it matches.
 
 ### Step 2: Create `server/receiver.py`
 
@@ -356,9 +368,7 @@ Mirrors `tests/test_client_sender.py`'s structure and mocking style (a fake `Bas
 - `get_active_sessions()` delegates to `reassembler.get_active_sessions_info()`.
 - All callbacks are optional — receiver works fine with none provided.
 
-### Step 4: Add destination-filter regression test to `tests/test_meshtastic_serial_transport.py`
-
-New test: packet with `'to': 0xAAAAAAAA` while transport's own `_my_node_num` is different → handler NOT called. Existing `test_receive_text_message_calls_handler`-style tests (no `to` field) continue to pass unchanged.
+### Step 4: (folded into Step 1) — destination-filter tests already added alongside the fix
 
 ### Step 5: Full test suite run
 
