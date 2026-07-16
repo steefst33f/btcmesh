@@ -1173,20 +1173,20 @@ lora/
 
 ### 23. Server Layer Refactoring
 
-- [ ] **Story 23.1: Create server/receiver.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** receiving/reassembly logic in a reusable class,
-- [ ] *   **So that** CLI and GUI share the same server implementation.
-    - [ ] *   **Scenario:** TransactionReceiver class
-        - [ ] *   **Given** a transport, RPC client, and configuration.
-        - [ ] *   **When** the receiver is started.
-        - [ ] *   **Then** it listens for incoming chunks, reassembles transactions, and broadcasts via RPC.
-    - [ ] *   **Scenario:** Progress/event callbacks
-        - [ ] *   **Given** optional `on_chunk`, `on_broadcast`, `on_error` callbacks.
-        - [ ] *   **Then** they are called at the appropriate steps for UI updates.
-    - [ ] *   **Scenario:** No I/O in receiver
-        - [ ] *   **Given** the receiver class.
-        - [ ] *   **Then** it uses the injected transport and RPC client — no direct Meshtastic or RPC imports.
+- [x] **Story 23.1: Create server/receiver.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** receiving/reassembly logic in a reusable class,
+- [x] *   **So that** CLI and GUI share the same server implementation.
+    - [x] *   **Scenario:** TransactionReceiver class
+        - [x] *   **Given** a transport, RPC client, and configuration.
+        - [x] *   **When** the receiver is started.
+        - [x] *   **Then** it listens for incoming chunks, reassembles transactions, and broadcasts via RPC.
+    - [x] *   **Scenario:** Progress/event callbacks
+        - [x] *   **Given** optional `on_chunk`, `on_broadcast`, `on_error` callbacks.
+        - [x] *   **Then** they are called at the appropriate steps for UI updates.
+    - [x] *   **Scenario:** No I/O in receiver
+        - [x] *   **Given** the receiver class.
+        - [x] *   **Then** it uses the injected transport and RPC client — no direct Meshtastic or RPC imports.
 
 - [ ] **Story 23.2: Refactor btcmesh_server_gui.py to use server/receiver.py**
 - [ ] *   **As a** developer,

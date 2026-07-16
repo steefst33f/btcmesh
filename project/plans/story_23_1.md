@@ -435,3 +435,36 @@ The ~16-branch if/elif chain mapping verbose Bitcoin Core RPC errors to short NA
 2. Confirm `server/receiver.py` has zero direct imports of `meshtastic.*` or Bitcoin RPC libraries — only `core.reassembler`, `core.rpc_client` (the injected client's *type*, not a live connection), and `transport.base`.
 3. Manually exercise `TransactionReceiver` against real hardware in isolation (no GUI/CLI wiring yet, since that's Story 23.2/23.3): connect a `MeshtasticSerialTransport`, construct a `TransactionReceiver` with a real `BitcoinRPCClient`, send a real chunked transaction from the existing `btcmesh_client_cli.py`, and confirm the receiver ACKs each chunk, broadcasts, and returns `BTC_ACK`/`BTC_NACK` correctly — proving behavioral parity with the current `btcmesh_server.py` before it gets swapped in.
 4. Confirm `btcmesh_server.py` and `btcmesh_server_gui.py` are byte-for-byte unchanged (`git diff` shows no hits for either file).
+
+---
+
+## Implementation Completion
+
+**Status:** ✅ **COMPLETE** (July 16, 2026)
+
+**Test results:** 628 tests passing (18 new for `server/receiver.py`, 3 new for the transport destination filter), 10 skipped.
+
+**Deviations from initial plan:**
+- Step 1's destination filter was corrected mid-implementation to match the old server's exact "no destination info at all → drop" behavior, rather than an initial draft that (wrongly) allowed such messages through — see Key Design Decision 1 / Step 1 for the full trace through the old code's logic.
+- `_on_message`'s own pre-parse of `chunk_num`/`total_chunks` (needed only to format the ACK reply) was found to shadow `reassembler.add_chunk()`'s proper error categorization when the pre-parse itself threw a plain `ValueError` — fixed to silently default and let `add_chunk()` be the sole format-validity authority, matching the old server's structure.
+- Test coverage was strengthened beyond the original plan to explicitly prove non-chunk/invalid messages are never added to the reassembler at all (via `get_active_sessions()`), not just "not ACKed" — distinguishing the "never added" case (invalid format) from "added then discarded" (mismatched total_chunks).
+- **Issue 14** (known-nodes `lastHeard` not reflecting direct-message traffic) and **Issue 15** (reassembler doesn't enforce strict in-order chunk arrival) were discovered/discussed during this story's work and documented in `project/issues.txt` as deliberate follow-ups, not folded into this story's scope.
+
+**Manual verification against real hardware:**
+- Connected `TransactionReceiver` (real `MeshtasticSerialTransport` + real testnet `BitcoinRPCClient`) on one device, sent a real chunked transaction via `btcmesh_client_cli.py` from the other device.
+- Confirmed: chunk received and ACKed, `on_chunk_received` fired with correct values, reassembly completed, RPC broadcast attempted against the real (testnet) node, `on_broadcast` fired with the real RPC rejection error (`'TX decode failed...'` for the intentionally-invalid test hex), and the client received the exact NACK end-to-end.
+- Confirmed `btcmesh_server.py`/`btcmesh_server_gui.py` untouched (`git diff` shows no hits for either file).
+
+**Files changed:**
+
+| File | Change |
+|---|---|
+| `server/__init__.py`, `server/receiver.py` | New — `TransactionReceiver`, `ChunkReceived`, `BroadcastResult`, `_concise_error_message` |
+| `tests/test_server_receiver.py` | New — 18 tests |
+| `transport/meshtastic_serial.py` | Added destination-address filtering to `_on_meshtastic_receive()` |
+| `tests/test_meshtastic_serial_transport.py` | 3 new tests, 3 existing fixtures updated with a `to` field |
+| `project/issues.txt` | Documented Issues 14 and 15 |
+
+**Next steps:**
+- Story 23.2: Refactor `btcmesh_server_gui.py` to use `TransactionReceiver` (parallel to Story 22.2's GUI refactor)
+- Story 23.3: Create `btcmesh_server_cli.py` as a thin CLI entry point, then delete `btcmesh_server.py` (parallel to Story 22.3)
