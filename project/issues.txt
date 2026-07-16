@@ -259,6 +259,47 @@ exchanges** 🔍 SUSPECTED / OPEN — needs further investigation another day
 
 ---
 
+## Reassembler: no enforcement of strict in-order chunk arrival
+
+**Issue 15: `TransactionReassembler.add_chunk()` allows a session to be
+created by (or a chunk added out of order into) any chunk_num, not just the
+next expected one** 🔍 OPEN — follow-up, not part of Story 23.1
+
+- Found while reviewing `server/receiver.py`'s (Story 23.1) test coverage
+  for malformed/mismatched chunks and discussing edge cases in
+  `core/reassembler.py`'s `add_chunk()`.
+- Traced through the actual logic: if a brand new session's *first* seen
+  chunk is, say, `2/3` (not `1/3`), `add_chunk()` happily creates a session
+  with `total_chunks=3` (taken from that message) and stores chunk 2 under
+  key `2` — no error, no NACK. It just waits for chunks 1 and 3 to arrive
+  before reassembling (order-independent at completion time, since it
+  iterates `1..total_chunks` from a dict keyed by chunk_num).
+- Separately, `TransactionReceiver._on_message()`'s ACK logic naively sends
+  `REQUEST_CHUNK|{chunk_num + 1}` — for a chunk `2/3` this asks for chunk 3
+  next, even though chunk 1 is the one actually still missing. Inherited
+  unchanged from the original `btcmesh_server.py` logic, not introduced by
+  Story 23.1.
+- In practice this shouldn't occur with our own `TransactionSender` client,
+  which only ever sends chunks strictly in order (1, 2, 3, ...) in a
+  stop-and-wait fashion, waiting for each ACK before sending the next. This
+  is a latent robustness gap for any other/future client implementation
+  that might send out of order, or a duplicate/retransmission race, not an
+  active bug in current client/server behavior.
+- Discussed and decided as a deliberate scope decision: **not** folding this
+  into Story 23.1 (which only extracts `server/receiver.py`'s orchestration
+  around the *existing, unchanged* `TransactionReassembler`) — this would
+  touch shared production code (`core/reassembler.py`, used by the
+  *current* `btcmesh_server.py` too) and its existing test suite, better
+  done as its own focused change.
+- Agreed design direction for whenever this is picked up: reject only the
+  out-of-order chunk (NACK it) while leaving the in-progress session alive,
+  so the actually-expected next chunk can still arrive and complete
+  reassembly normally — rather than discarding the whole session (as a
+  `total_chunks` mismatch currently does), which would kill otherwise-
+  recoverable progress over one anomalous/duplicate message.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -274,3 +315,4 @@ exchanges** 🔍 SUSPECTED / OPEN — needs further investigation another day
 | -     | Failed handshake leaked the serial port lock | **Major (functional bug)** | **FIXED** |
 | -     | Crash sorting known nodes when lastHeard is None | **Major (functional bug)** | **FIXED** |
 | -     | Known-nodes lastHeard may not reflect direct-message traffic | Minor (UX/data accuracy) | **Open / Suspected** |
+| -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |

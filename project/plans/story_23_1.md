@@ -272,16 +272,33 @@ class TransactionReceiver:
         if not message_text.startswith(CHUNK_PREFIX):
             return
 
+        # Best-effort pre-parse, only to get chunk_num/total_chunks for the
+        # ACK reply below. reassembler.add_chunk() (called in the try block
+        # below) is the actual authority on format validity - if this parse
+        # fails, leave the defaults and let add_chunk() raise the properly
+        # categorized error instead of masking it with a parse error here.
+        #
+        # Found during testing: an earlier version let this pre-parse's own
+        # ValueError (e.g. int("notanumber")) propagate into the same
+        # try/except as add_chunk() below, where it was caught by the
+        # generic `except Exception` branch - which fires on_error but never
+        # sends a NACK. A malformed chunk with non-numeric chunk/total info
+        # would then fail silently instead of NACKing. Matches the old
+        # server's exact approach: silently default on parse failure, let
+        # add_chunk() be the sole validator.
         session_id = "UNKNOWN"
+        chunk_num, total_chunks = 1, 1
         try:
             parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
             session_id = parts[0] if parts and parts[0] else "UNKNOWN"
             chunk_info = parts[1] if len(parts) > 1 else ""
-            chunk_num, total_chunks = 1, 1
             if "/" in chunk_info:
                 chunk_num_s, total_s = chunk_info.split("/")
                 chunk_num, total_chunks = int(chunk_num_s), int(total_s)
+        except Exception:
+            pass
 
+        try:
             reassembled_hex = self.reassembler.add_chunk(sender_id, message_text)
 
             if chunk_num < total_chunks:
@@ -362,11 +379,16 @@ Mirrors `tests/test_client_sender.py`'s structure and mocking style (a fake `Bas
 - Full reassembly triggers `rpc_client.broadcast_transaction()`; success → `BTC_ACK` sent + `on_broadcast(success=True, txid=...)`.
 - Broadcast failure → `BTC_NACK` sent with concise mapped error + `on_broadcast(success=False, error=...)`.
 - `_concise_error_message()` mapping for each of the ~16 known error substrings, plus an unmapped error passed through unchanged.
-- Malformed chunk (`InvalidChunkFormatError`/`MismatchedTotalChunksError`) → NACK sent + `on_error(...)` fires with the formatted detail.
-- Non-`BTC_TX`-prefixed message → ignored entirely (no ACK, no callback).
+- Mismatched total_chunks (`MismatchedTotalChunksError`, e.g. chunk `1/2` then a later chunk `1/3` for the same session) → NACK sent + `on_error(...)` fires; a session *is* created by the first chunk then discarded by the reassembler's own error handling — asserted via `get_active_sessions()` being non-empty after the first chunk and empty again after the second (mismatched) one.
+- Genuinely invalid chunk format (`InvalidChunkFormatError`, e.g. non-numeric chunk/total like `"notanumber/2"`) → NACK sent + `on_error(...)` fires; distinct from the mismatched-chunks case above because this one is *never* added to the reassembler at all — asserted via `get_active_sessions()` staying empty throughout.
+- Non-`BTC_TX`-prefixed message → ignored entirely: no ACK **and no NACK** (both share the single `transport.send()` channel, so one `assert_not_called()` proves neither fired), `reassembler.add_chunk()` never invoked, and `get_active_sessions()` stays empty — proving it wasn't just "not acked" but never handed to the reassembler at all.
 - `check_timeouts()`: stale session → NACK sent to the right sender + `on_error(...)` fires; no stale sessions → no-op.
 - `get_active_sessions()` delegates to `reassembler.get_active_sessions_info()`.
 - All callbacks are optional — receiver works fine with none provided.
+
+Note: `core/reassembler.py` itself is untouched by this story (see Issue 15
+in `project/issues.txt` for a discovered-but-deferred robustness gap around
+out-of-order chunk arrival — a follow-up, not in scope here).
 
 ### Step 4: (folded into Step 1) — destination-filter tests already added alongside the fix
 
