@@ -453,15 +453,6 @@ class TestServerStartStopStory152(unittest.TestCase):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
         self.assertTrue(hasattr(gui, '_stop_event'))
 
-    def test_server_gui_has_log_handler_attribute(self):
-        """Given server GUI, Then it should have _log_handler attribute."""
-        import btcmesh_server_gui
-
-        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
-            gui = btcmesh_server_gui.BTCMeshServerGUI()
-        self.assertTrue(hasattr(gui, '_log_handler'))
-        self.assertIsNone(gui._log_handler)
-
     def test_on_start_pressed_disables_start_button(self):
         """Given operator clicks Start Server with valid settings, Then start button should be disabled."""
         import btcmesh_server_gui
@@ -687,8 +678,13 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertTrue(hasattr(gui, 'network_label'))
 
 
-class TestServerLogParsingStory152(unittest.TestCase):
-    """Tests for log parsing in Story 15.2."""
+class TestServerProcessResultsStory152(unittest.TestCase):
+    """Tests for _process_results in Story 15.2.
+
+    (Log-parsing/QueueLogHandler tests removed - Story 23.2 replaced that
+    log-scraping mechanism with direct structured status events pushed by
+    run_server() itself; see tests further below covering that.)
+    """
 
     def setUp(self):
         """Set up test fixtures."""
@@ -696,141 +692,6 @@ class TestServerLogParsingStory152(unittest.TestCase):
             del sys.modules['core.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
-
-    def test_parse_log_for_status_function_exists(self):
-        """Given server GUI module, Then parse_log_for_status function should exist."""
-        import btcmesh_server_gui
-
-        self.assertTrue(hasattr(btcmesh_server_gui, 'parse_log_for_status'))
-        self.assertTrue(callable(btcmesh_server_gui.parse_log_for_status))
-
-    def test_parse_log_detects_rpc_connected(self):
-        """Given RPC connected log message with host and chain, Then parse_log_for_status returns rpc_connected with dict."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Connected to Bitcoin Core RPC node successfully. Host: localhost:8332, Tor: False, Chain: main"
-        )
-        self.assertEqual(result[0], 'rpc_connected')
-        self.assertEqual(result[1], {'host': 'localhost:8332', 'is_tor': False, 'chain': 'main'})
-
-    def test_parse_log_detects_rpc_connected_with_tor(self):
-        """Given RPC connected log message with Tor, Then parse_log_for_status returns is_tor=True."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Connected to Bitcoin Core RPC node successfully. Host: *.onion, Tor: True, Chain: signet"
-        )
-        self.assertEqual(result[0], 'rpc_connected')
-        self.assertEqual(result[1], {'host': '*.onion', 'is_tor': True, 'chain': 'signet'})
-
-    def test_parse_log_detects_rpc_connected_testnet4(self):
-        """Given RPC connected log message with testnet4, Then parse_log_for_status extracts chain correctly."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Connected to Bitcoin Core RPC node successfully. Host: localhost:48332, Tor: False, Chain: testnet4"
-        )
-        self.assertEqual(result[0], 'rpc_connected')
-        self.assertEqual(result[1]['chain'], 'testnet4')
-
-    def test_parse_log_detects_rpc_failed(self):
-        """Given RPC failed log message, Then parse_log_for_status returns rpc_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Failed to connect to Bitcoin Core RPC node: Connection refused. Continuing without RPC."
-        )
-        self.assertEqual(result[0], 'rpc_failed')
-        self.assertIn('Connection refused', result[1])
-
-    def test_parse_log_detects_meshtastic_connected(self):
-        """Given Meshtastic connected log message, Then parse_log_for_status returns meshtastic_connected with dict."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: !abcdef12"
-        )
-        self.assertEqual(result[0], 'meshtastic_connected')
-        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'})
-
-    def test_parse_log_detects_meshtastic_failed(self):
-        """Given Meshtastic failed log message, Then parse_log_for_status returns meshtastic_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Failed to initialize Meshtastic interface. Exiting."
-        )
-        self.assertEqual(result[0], 'meshtastic_failed')
-
-    def test_parse_log_meshtastic_invalid_device_none_string(self):
-        """Given Meshtastic log with Device='None', Then parse_log_for_status returns meshtastic_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Meshtastic interface initialized successfully. Device: None, My Node Num: Unknown Node Num"
-        )
-        self.assertEqual(result[0], 'meshtastic_failed')
-        self.assertEqual(result[1], "Invalid device info")
-
-    def test_parse_log_meshtastic_invalid_device_question_mark(self):
-        """Given Meshtastic log with Device='?', Then parse_log_for_status returns meshtastic_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Meshtastic interface initialized successfully. Device: ?, My Node Num: !abcdef12"
-        )
-        # Still connected because node_id is valid, just device is None
-        self.assertEqual(result[0], 'meshtastic_connected')
-        self.assertEqual(result[1], {'node_id': '!abcdef12', 'device': None})
-
-    def test_parse_log_meshtastic_invalid_node_id(self):
-        """Given Meshtastic log with invalid node ID, Then parse_log_for_status returns meshtastic_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Meshtastic interface initialized successfully. Device: /dev/ttyUSB0, My Node Num: Unknown Node Num"
-        )
-        self.assertEqual(result[0], 'meshtastic_failed')
-        self.assertEqual(result[1], "Invalid device info")
-
-    def test_parse_log_meshtastic_no_device_connected_error(self):
-        """Given server error about no device connected, Then parse_log_for_status returns meshtastic_failed."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Meshtastic interface created but could not retrieve device info. "
-            "This usually means no Meshtastic device is connected."
-        )
-        self.assertEqual(result[0], 'meshtastic_failed')
-        self.assertEqual(result[1], "No device connected")
-
-    def test_parse_log_detects_server_started(self):
-        """Given server started log message, Then parse_log_for_status returns server_started."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Registered Meshtastic message handler. Waiting for messages..."
-        )
-        self.assertEqual(result, ('server_started', None))
-
-    def test_parse_log_detects_server_stopped(self):
-        """Given server stopped log message, Then parse_log_for_status returns server_stopped."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Closing Meshtastic interface..."
-        )
-        self.assertEqual(result, ('server_stopped', None))
-
-    def test_parse_log_returns_none_for_normal_message(self):
-        """Given normal log message, Then parse_log_for_status returns None."""
-        import btcmesh_server_gui
-
-        result = btcmesh_server_gui.parse_log_for_status(
-            "Some normal log message"
-        )
-        self.assertIsNone(result)
 
     def test_process_results_method_exists(self):
         """Given server GUI, Then _process_results method should exist."""
@@ -840,44 +701,6 @@ class TestServerLogParsingStory152(unittest.TestCase):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
         self.assertTrue(hasattr(gui, '_process_results'))
         self.assertTrue(callable(gui._process_results))
-
-
-class TestQueueLogHandlerStory152(unittest.TestCase):
-    """Tests for QueueLogHandler class in Story 15.2."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
-        if 'btcmesh_server_gui' in sys.modules:
-            del sys.modules['btcmesh_server_gui']
-
-    def test_queue_log_handler_class_exists(self):
-        """Given server GUI module, Then QueueLogHandler class should exist."""
-        import btcmesh_server_gui
-
-        self.assertTrue(hasattr(btcmesh_server_gui, 'QueueLogHandler'))
-
-    def test_queue_log_handler_puts_log_to_queue(self):
-        """Given QueueLogHandler with a queue, When emit is called, Then message goes to queue."""
-        import btcmesh_server_gui
-        import logging
-        import queue
-
-        q = queue.Queue()
-        handler = btcmesh_server_gui.QueueLogHandler(q)
-        handler.setFormatter(logging.Formatter('%(message)s'))
-
-        record = logging.LogRecord(
-            name='test', level=logging.INFO, pathname='', lineno=0,
-            msg='Test message', args=(), exc_info=None
-        )
-        handler.emit(record)
-
-        result = q.get_nowait()
-        self.assertEqual(result[0], 'log')
-        self.assertEqual(result[1], 'Test message')
-        self.assertEqual(result[2], logging.INFO)
 
 
 class TestRPCSettingsStory181(unittest.TestCase):
@@ -1359,13 +1182,21 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         self.assertFalse(gui.scan_btn.disabled)
 
     def test_auto_detect_passes_none_to_server(self):
-        """Given Auto-detect selected, Then serial_port should be None when starting server."""
+        """Given Auto-detect selected, Then serial_port should be None when connecting."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    # _stop_event is a MagicMock (threading is mocked); force
+                    # is_set() to True so run_server()'s maintenance loop body
+                    # never executes when we call the captured target below -
+                    # we only care about the connection-setup calls it makes
+                    # before reaching that loop.
+                    gui._stop_event.is_set.return_value = True
                     gui.rpc_host_input.text = 'localhost'
                     gui.rpc_port_input.text = '8332'
                     gui.rpc_user_input.text = 'user'
@@ -1377,21 +1208,22 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     thread_call = mock_threading.Thread.call_args
                     target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
 
-                    # Call the target function to trigger btcmesh_server.main
+                    # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_main.assert_called_once()
-                        call_kwargs = mock_main.call_args.kwargs
-                        self.assertIsNone(call_kwargs.get('serial_port'))
+                        mock_transport_cls.return_value.connect.assert_called_once_with(None)
 
     def test_selected_device_passes_to_server(self):
-        """Given device selected, Then serial_port should be passed to server."""
+        """Given device selected, Then serial_port should be passed when connecting."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui._stop_event.is_set.return_value = True
                     gui.rpc_host_input.text = 'localhost'
                     gui.rpc_port_input.text = '8332'
                     gui.rpc_user_input.text = 'user'
@@ -1403,12 +1235,10 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     thread_call = mock_threading.Thread.call_args
                     target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
 
-                    # Call the target function to trigger btcmesh_server.main
+                    # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_main.assert_called_once()
-                        call_kwargs = mock_main.call_args.kwargs
-                        self.assertEqual(call_kwargs.get('serial_port'), '/dev/ttyUSB0')
+                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
 
 
 class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
@@ -1551,13 +1381,17 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
         self.assertFalse(gui.start_btn.disabled)
 
     def test_timeout_passed_to_server(self):
-        """Given valid timeout, Then reassembly_timeout should be passed to server."""
+        """Given valid timeout, Then reassembly_timeout should be passed to TransactionReassembler."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui.btcmesh_server, 'main') as mock_main:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReassembler') as mock_reassembler_cls:
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui._stop_event.is_set.return_value = True
                     gui.rpc_host_input.text = 'localhost'
                     gui.rpc_port_input.text = '8332'
                     gui.rpc_user_input.text = 'user'
@@ -1570,9 +1404,7 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
 
                     if target_fn:
                         target_fn()
-                        mock_main.assert_called_once()
-                        call_kwargs = mock_main.call_args.kwargs
-                        self.assertEqual(call_kwargs.get('reassembly_timeout'), 120)
+                        mock_reassembler_cls.assert_called_once_with(timeout_seconds=120)
 
 
 class TestActivityLogDisplayStory171(unittest.TestCase):
@@ -1607,57 +1439,6 @@ class TestActivityLogDisplayStory171(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
         self.assertTrue(hasattr(gui, 'clear_btn'))
-
-    def test_log_handler_uses_timestamp_format(self):
-        """Given server starts, Then log handler should format messages with [HH:MM:SS] timestamps."""
-        import btcmesh_server_gui
-        import logging
-
-        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
-            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
-                gui = btcmesh_server_gui.BTCMeshServerGUI()
-                gui.rpc_host_input.text = 'localhost'
-                gui.rpc_port_input.text = '8332'
-                gui.rpc_user_input.text = 'user'
-                gui.rpc_password_input.text = 'password'
-                gui.on_start_pressed(None)
-
-        # Verify log handler was created and has correct format
-        self.assertIsNotNone(gui._log_handler)
-        formatter = gui._log_handler.formatter
-        self.assertIsNotNone(formatter)
-        # Check format string includes asctime
-        self.assertIn('asctime', formatter._fmt)
-        # Check datefmt is HH:MM:SS
-        self.assertEqual(formatter.datefmt, '%H:%M:%S')
-
-    def test_log_handler_formats_message_with_timestamp(self):
-        """Given log handler, When formatting a log record, Then output should contain [HH:MM:SS] timestamp."""
-        import btcmesh_server_gui
-        import logging
-
-        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
-            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
-                gui = btcmesh_server_gui.BTCMeshServerGUI()
-                gui.rpc_host_input.text = 'localhost'
-                gui.rpc_port_input.text = '8332'
-                gui.rpc_user_input.text = 'user'
-                gui.rpc_password_input.text = 'password'
-                gui.on_start_pressed(None)
-
-        # Create a log record and format it
-        record = logging.LogRecord(
-            name='test', level=logging.INFO, pathname='', lineno=0,
-            msg='Test message', args=(), exc_info=None
-        )
-        formatted = gui._log_handler.formatter.format(record)
-
-        # Verify formatted message contains timestamp in [HH:MM:SS] format
-        # Pattern: [00:00:00] to [23:59:59]
-        timestamp_pattern = r'\[\d{2}:\d{2}:\d{2}\]'
-        self.assertRegex(formatted, timestamp_pattern)
-        # Verify the message is also present
-        self.assertIn('Test message', formatted)
 
     def test_log_message_result_adds_to_status_log(self):
         """Given 'log' result type, Then message should be added to status_log."""

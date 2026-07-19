@@ -3,15 +3,17 @@
 BTCMesh Server GUI - Kivy-based graphical interface for running and monitoring
 the BTCMesh relay server.
 
-This GUI wraps the btcmesh_server module, providing visual status displays,
-activity logging, and server controls.
+All business logic lives in server/receiver.py (chunk reassembly, RPC
+broadcast) and transport/meshtastic_serial.py (device connection). This file
+only handles UI concerns: widget setup, connection setup, and displaying
+progress/results.
 """
 import logging
 import os
 import shutil
 import threading
 import queue
-import re
+import time
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -58,11 +60,13 @@ from core.gui_common import (
     create_popup_inline_button,
 )
 
-# Import server module
-import btcmesh_server
-from core.logger_setup import server_logger
 from core.config_loader import load_app_config
 from core.transaction_history import TransactionHistory
+from core.rpc_client import BitcoinRPCClient
+from core.reassembler import TransactionReassembler
+from transport.meshtastic_serial import MeshtasticSerialTransport
+from transport.base import TransportConnectionError
+from server.receiver import TransactionReceiver, ChunkReceived, BroadcastResult
 
 
 # Set window size for desktop
@@ -88,83 +92,6 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 
-class QueueLogHandler(logging.Handler):
-    """Custom log handler that sends log records to a queue for GUI display."""
-
-    def __init__(self, result_queue):
-        super().__init__()
-        self.result_queue = result_queue
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            level = record.levelno
-            self.result_queue.put(('log', msg, level))
-        except Exception:
-            self.handleError(record)
-
-
-def parse_log_for_status(message: str, level: int = None):  # noqa: ARG001
-    """Parse a log message and return status update if applicable.
-
-    Returns:
-        Tuple of (status_type, data) or None if no status update needed.
-    """
-    # Bitcoin RPC status
-    if "Connected to Bitcoin Core RPC node successfully" in message:
-        # Extract host from "Host: localhost:8332" or "Host: *.onion"
-        host_match = re.search(r'Host: ([^,]+)', message)
-        host = host_match.group(1).strip() if host_match else None
-        # Extract Tor status from "Tor: True" or "Tor: False"
-        tor_match = re.search(r'Tor: (True|False)', message)
-        is_tor = tor_match.group(1) == 'True' if tor_match else False
-        # Extract chain from "Chain: main" or "Chain: testnet4" etc.
-        chain_match = re.search(r'Chain: (\w+)', message)
-        chain = chain_match.group(1) if chain_match else None
-        return ('rpc_connected', {'host': host, 'is_tor': is_tor, 'chain': chain})
-    if "Failed to connect to Bitcoin Core RPC node" in message:
-        # Extract error message after the colon
-        match = re.search(r'Failed to connect to Bitcoin Core RPC node: (.+?)(?:\. |$)', message)
-        error = match.group(1) if match else "Connection failed"
-        return ('rpc_failed', error)
-
-    # Meshtastic status
-    if "Meshtastic interface initialized successfully" in message:
-        # Extract device path from "Device: /dev/ttyUSB0"
-        device_match = re.search(r'Device: ([^,]+)', message)
-        device = device_match.group(1).strip() if device_match else None
-        # Validate device - reject invalid values like "None", "?", empty strings
-        if device in (None, '', '?', 'None'):
-            device = None
-        # Extract node ID from "My Node Num: !abcdef12"
-        node_match = re.search(r'My Node Num: (!?[0-9a-fA-F]+)', message)
-        node_id = node_match.group(1) if node_match else None
-        # If we don't have a valid node_id, treat as failed connection
-        if not node_id or not node_id.startswith('!'):
-            return ('meshtastic_failed', "Invalid device info")
-        return ('meshtastic_connected', {'node_id': node_id, 'device': device})
-    if "Failed to initialize Meshtastic interface" in message:
-        return ('meshtastic_failed', "Could not initialize Meshtastic")
-    if "Meshtastic interface created but could not retrieve device info" in message:
-        return ('meshtastic_failed', "No device connected")
-    if "No Meshtastic device found" in message:
-        return ('meshtastic_failed', "No device found")
-
-    # Server running status
-    if "Registered Meshtastic message handler. Waiting for messages" in message:
-        return ('server_started', None)
-    if "Stop signal received. Shutting down" in message:
-        return ('server_stopping', None)
-    if "Closing Meshtastic interface" in message:
-        return ('server_stopped', None)
-
-    # PubSub errors
-    if "PubSub library not found" in message:
-        return ('pubsub_error', "PubSub library not found")
-
-    return None
-
-
 class BTCMeshServerGUI(BoxLayout):
     """Main server GUI widget."""
 
@@ -179,7 +106,6 @@ class BTCMeshServerGUI(BoxLayout):
         # Server state
         self._stop_event = threading.Event()
         self._server_thread = None
-        self._log_handler = None
 
         # Thread-safe result queue for communication
         self.result_queue = queue.Queue()
@@ -810,27 +736,115 @@ class BTCMeshServerGUI(BoxLayout):
         # Reset stop event
         self._stop_event.clear()
 
-        # Set up log handler to capture server logs with timestamps
-        self._log_handler = QueueLogHandler(self.result_queue)
-        self._log_handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
-        server_logger.addHandler(self._log_handler)
-
-        # Session update callback - puts session info in result queue
-        def session_callback(sessions_info):
-            self.result_queue.put(('active_sessions', sessions_info))
-
         # Start server in background thread
         def run_server():
+            transport = MeshtasticSerialTransport()
             try:
-                btcmesh_server.main(stop_event=self._stop_event, rpc_config=rpc_config,
-                                    serial_port=serial_port, reassembly_timeout=reassembly_timeout,
-                                    session_update_callback=session_callback)
+                transport.connect(serial_port)
+            except TransportConnectionError as e:
+                self.result_queue.put(('meshtastic_failed', str(e)))
+                return
+
+            self.result_queue.put((
+                'meshtastic_connected',
+                {'node_id': transport.local_node_id, 'device': serial_port or 'auto-detect'},
+            ))
+
+            # Match old behavior: a failed RPC connection does not stop the
+            # server. Meshtastic keeps running (chunks are still received,
+            # reassembled, and ACKed) - only the final broadcast step fails
+            # once a transaction actually completes, same as the old
+            # btcmesh_server.py continuing with bitcoin_rpc=None.
+            try:
+                rpc_client = BitcoinRPCClient(rpc_config)
+                is_tor = rpc_config['host'].endswith('.onion')
+                self.result_queue.put((
+                    'rpc_connected',
+                    {'host': rpc_config['host'], 'is_tor': is_tor, 'chain': rpc_client.chain},
+                ))
             except Exception as e:
-                self.result_queue.put(('init_error', str(e), logging.ERROR))
+                rpc_client = None
+                self.result_queue.put(('rpc_failed', str(e)))
+
+            history = TransactionHistory()
+
+            def on_chunk_received(evt: ChunkReceived):
+                self.result_queue.put((
+                    'log',
+                    f"[{evt.session_id}] Chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
+                    logging.INFO,
+                ))
+
+            def on_broadcast(result: BroadcastResult):
+                if result.success:
+                    self.result_queue.put((
+                        'log', f"[{result.session_id}] Broadcast success. TXID: {result.txid}", logging.INFO
+                    ))
+                    history.add(session_id=result.session_id, sender=result.sender_id,
+                                status="success", txid=result.txid, raw_tx=result.raw_tx)
+                else:
+                    self.result_queue.put((
+                        'log', f"[{result.session_id}] Broadcast failed: {result.error}", logging.ERROR
+                    ))
+                    history.add(session_id=result.session_id, sender=result.sender_id,
+                                status="failed", error=result.error, raw_tx=result.raw_tx)
+
+            def on_error(session_id, sender_id, error):
+                self.result_queue.put((
+                    'log', f"[{session_id}] Error from {sender_id}: {error}", logging.WARNING
+                ))
+                history.add(session_id=session_id, sender=sender_id, status="failed",
+                            error=error, raw_tx=None)
+
+            # Safety net for anything unanticipated (e.g. a bad reassembly_timeout
+            # value slipping past validation) - without this, an exception here
+            # would just kill the daemon thread silently and leave the GUI stuck
+            # showing "Starting server..." forever, since nothing would ever
+            # report back to the result_queue.
+            try:
+                receiver = TransactionReceiver(
+                    transport, rpc_client,
+                    reassembler=TransactionReassembler(timeout_seconds=reassembly_timeout),
+                    on_chunk_received=on_chunk_received,
+                    on_broadcast=on_broadcast,
+                    on_error=on_error,
+                )
+            except Exception as e:
+                self.result_queue.put(('init_error', str(e)))
+                transport.disconnect()
+                return
+
+            self.result_queue.put(('server_started', None))
+
+            # TransactionReceiver itself is purely reactive: incoming chunks are
+            # handled the instant the transport's pubsub callback fires, with no
+            # polling needed for that part. But it deliberately does NOT run its
+            # own background thread/timer (see Story 23.1) - two things still need
+            # to happen on a schedule, so this loop (replacing btcmesh_server.py's
+            # old main() loop) is what drives them, entirely from this GUI's own
+            # background thread:
+            #   1. Push a fresh snapshot of active reassembly sessions to the GUI
+            #      every ~1s, so the "Active Sessions" panel stays live.
+            #   2. Every ~10s, call check_timeouts() so sessions that have gone
+            #      quiet past the reassembly timeout get NACKed and cleaned up
+            #      instead of lingering forever.
+            # The loop exits as soon as on_stop_pressed() sets self._stop_event;
+            # the finally block then always disconnects the transport (releasing
+            # the serial port) and reports 'server_stopped' to the GUI, whether we
+            # got here via a normal stop or an unexpected exception bubbling out
+            # of the loop.
+            try:
+                last_cleanup_time = time.time()
+                while not self._stop_event.is_set():
+                    self.result_queue.put(('active_sessions', receiver.get_active_sessions()))
+                    now = time.time()
+                    if now - last_cleanup_time >= 10:
+                        receiver.check_timeouts()
+                        last_cleanup_time = now
+                    time.sleep(1)
             finally:
-                # Signal that server has stopped (in case main() exits without stop signal)
-                if not self._stop_event.is_set():
-                    self.result_queue.put(('server_stopped', None, logging.INFO))
+                transport.disconnect()
+                self.result_queue.put(('server_stopped', None))
 
         self._server_thread = threading.Thread(target=run_server, daemon=True)
         self._server_thread.start()
@@ -859,22 +873,24 @@ class BTCMeshServerGUI(BoxLayout):
         level = result[2] if len(result) > 2 else logging.INFO
 
         if result_type == 'log':
-            # Parse log message for status updates
-            status_update = parse_log_for_status(data, level)
-            if status_update:
-                self._apply_status_update(status_update)
-
-            # Display log message with appropriate color
+            # Display log message with appropriate color.
             color = get_log_color(level, data)
             self.status_log.add_message(data, color)
 
         elif result_type in ('rpc_connected', 'rpc_failed', 'meshtastic_connected',
                             'meshtastic_failed', 'server_started', 'server_stopped',
-                            'server_stopping', 'pubsub_error', 'init_error'):
+                            'init_error'):
             self._apply_status_update((result_type, data))
 
         elif result_type == 'test_connection_result':
-            # data is success (bool), level is message string
+            # Result of the standalone "Test Connection" button (_on_test_connection),
+            # not the actual server start flow. That button spins up its own
+            # throwaway BitcoinRPCClient in a background thread purely to validate
+            # the entered RPC settings before the operator commits to starting the
+            # server - result is a plain (bool success, str message) pair reusing the
+            # generic 3-tuple result_queue shape, so `data` holds the bool and
+            # `level` (normally a logging level int) is repurposed here to carry the
+            # message string instead. Re-enables the Test/Start buttons either way.
             success = data
             message = level  # Third element contains the message
             self.test_connection_btn.disabled = False
@@ -885,13 +901,16 @@ class BTCMeshServerGUI(BoxLayout):
                 self.status_log.add_message(f"RPC test failed: {message}", COLOR_ERROR)
 
         elif result_type == 'devices_found':
+            # Result of the "Scan" button (_on_scan_devices) refreshing the
+            # Meshtastic device dropdown - independent of server start/stop.
             devices = data
             self.scan_btn.disabled = False
             if devices:
                 # Add Auto-detect as first option, then found devices
                 self.device_spinner.values = [DEVICE_AUTO_DETECT] + devices
                 if len(devices) == 1:
-                    # Auto-select single device
+                    # Exactly one real device found - auto-select it so the
+                    # operator doesn't have to open the dropdown manually.
                     self.device_spinner.text = devices[0]
                     self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
@@ -961,23 +980,10 @@ class BTCMeshServerGUI(BoxLayout):
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
-            self._cleanup_log_handler()
-
-        elif status_type == 'pubsub_error':
-            self.start_btn.disabled = False
-            self.save_btn.disabled = False
-            self._set_rpc_settings_enabled(True)
-            self._set_meshtastic_settings_enabled(True)
-            self._set_timeout_settings_enabled(True)
-            self._cleanup_log_handler()
 
         elif status_type == 'server_started':
             self.is_running = True
             self.stop_btn.disabled = False
-
-        elif status_type == 'server_stopping':
-            # Server is in the process of stopping
-            pass
 
         elif status_type == 'server_stopped':
             self.is_running = False
@@ -996,7 +1002,6 @@ class BTCMeshServerGUI(BoxLayout):
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
-            self._cleanup_log_handler()
 
         elif status_type == 'init_error':
             self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
@@ -1005,13 +1010,6 @@ class BTCMeshServerGUI(BoxLayout):
             self._set_rpc_settings_enabled(True)
             self._set_meshtastic_settings_enabled(True)
             self._set_timeout_settings_enabled(True)
-            self._cleanup_log_handler()
-
-    def _cleanup_log_handler(self):
-        """Remove log handler from server logger."""
-        if self._log_handler:
-            server_logger.removeHandler(self._log_handler)
-            self._log_handler = None
 
     def _on_history_pressed(self, instance):
         """Handle History button press - show transaction history popup."""

@@ -255,3 +255,33 @@ Consistent with Story 23.1's design (receiver has no background thread/polling o
    - Start the server, confirm Meshtastic/RPC/network-badge status update correctly (now via direct events, not log parsing).
    - Send a real transaction from `btcmesh_client_cli.py`, confirm the activity log shows chunk-received and broadcast-result messages, the active-sessions display updates live, and a new entry appears in the History popup.
    - Stop the server, confirm status resets to disconnected and the Meshtastic port is released (`lsof` shows nothing holding it).
+
+---
+
+## Implementation Completion
+
+**Status:** ✅ **COMPLETE** (July 19, 2026), with one verification item deferred (see below)
+
+**Test results:** 609 tests passing (161 → 142 in `tests/test_btcmesh_server_gui.py`: 19 dead log-parsing/QueueLogHandler tests removed, 3 rewritten in place to mock the new dependencies instead of `btcmesh_server.main`; other suites unaffected).
+
+**Deviations from initial plan:**
+- Fixed a real bug caught during review, before it ever reached real hardware: my first draft disconnected the transport and aborted server start entirely if the RPC connection failed. The old `btcmesh_server.py` explicitly continues running with `bitcoin_rpc=None` when RPC fails (Meshtastic keeps receiving/reassembling/ACKing chunks; only the final broadcast step fails once a transaction actually completes) - fixed `run_server()` to match: RPC failure now only pushes `rpc_failed` and proceeds, never touching the transport.
+- Added a safety-net `try/except` around `TransactionReceiver` construction, pushing `init_error` on any unexpected exception - without it, an unanticipated error there would silently kill the daemon thread and leave the GUI stuck showing "Starting server..." forever, since nothing would report back to the result queue. Restores the same safety net the old code had wrapping the whole `btcmesh_server.main()` call.
+- Confirmed `pubsub_error` (Key Design Decision 3) and `server_stopping` were both dead code with the new design (neither ever gets pushed by the new `run_server()`, and no tests referenced either) - removed both branches along with the log-parsing tests, rather than leaving unreachable code in place.
+- Removed the now-unused `server_logger` and `re` imports as a result of removing `QueueLogHandler`/`parse_log_for_status()`.
+
+**Manual verification - partially completed:**
+- Automated coverage is solid: the 3 rewritten tests directly verify `run_server()`'s new connection-setup calls (`transport.connect(serial_port)` with the right port for both auto-detect and explicit-device cases, `TransactionReassembler(timeout_seconds=...)` with the GUI's configured timeout).
+- Story 23.1 already proved `TransactionReceiver` itself works end-to-end against real hardware and a real testnet RPC node (chunk ACK, reassembly, broadcast attempt, NACK on failure all confirmed).
+- **Full GUI click-through against real hardware was attempted but blocked**, not by anything in this story's code: both Meshtastic devices hit the "wedged, needs a physical power cycle" state documented in Issue 12/16 (every connection attempt timed out on both devices across repeated retries). Since this is unattended auto-mode with no one available to physically power-cycle the devices, this is deferred rather than worked around by repeatedly hammering already-flaky hardware. **Recommend a quick manual smoke test** (`python btcmesh_server_gui.py`, start/stop, send one real transaction from `btcmesh_client_cli.py`) once the devices are available, to close out this last verification item.
+
+**Files changed:**
+
+| File | Change |
+|---|---|
+| `btcmesh_server_gui.py` | Removed `QueueLogHandler`, `parse_log_for_status()`, `import btcmesh_server`; `run_server()` now does direct transport/RPC/receiver setup + maintenance loop |
+| `tests/test_btcmesh_server_gui.py` | Removed 19 dead tests, rewrote 3 to mock the new dependencies |
+
+**Next steps:**
+- Story 23.3: Create `btcmesh_server_cli.py` as a thin CLI entry point, then delete `btcmesh_server.py` (parallel to Story 22.3)
+- Do the deferred manual GUI smoke test once hardware is available
