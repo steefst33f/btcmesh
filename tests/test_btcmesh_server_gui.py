@@ -596,6 +596,37 @@ class TestServerResultHandlingStory152(unittest.TestCase):
         self.assertIn('!abcdef12', gui.meshtastic_label.text)
         self.assertNotIn(') on ', gui.meshtastic_label.text)  # No device path syntax
 
+    def test_handle_result_meshtastic_connected_with_node_name(self):
+        """Given 'meshtastic_connected' result with a node_name, Then the label shows
+        the name before the node id, matching the client GUI's convention."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result((
+                'meshtastic_connected',
+                {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0', 'node_name': 'BaseCamp'},
+            ))
+        self.assertIn('BaseCamp', gui.meshtastic_label.text)
+        self.assertIn('!abcdef12', gui.meshtastic_label.text)
+        self.assertLess(
+            gui.meshtastic_label.text.index('BaseCamp'),
+            gui.meshtastic_label.text.index('!abcdef12'),
+        )
+
+    def test_handle_result_meshtastic_connected_without_node_name(self):
+        """Given 'meshtastic_connected' result with no node_name (e.g. device hasn't
+        advertised one yet), Then the label falls back to showing just the node id."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui._handle_result((
+                'meshtastic_connected',
+                {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0', 'node_name': None},
+            ))
+        self.assertEqual(gui.meshtastic_label.text, "Connected (!abcdef12) on /dev/ttyUSB0")
+
     def test_handle_result_meshtastic_failed_updates_label(self):
         """Given 'meshtastic_failed' result, Then Meshtastic label should show failed."""
         import btcmesh_server_gui
@@ -668,6 +699,88 @@ class TestServerResultHandlingStory152(unittest.TestCase):
             gui._handle_result(('server_stopped', None))
         self.assertEqual(gui.network_label.text, '--')
         self.assertEqual(gui.network_label.color, btcmesh_server_gui.COLOR_DISCONNECTED)
+
+    def test_handle_result_rpc_connected_logs_message(self):
+        """Given 'rpc_connected' result, Then a log message is added to the activity log.
+
+        Regression test: Story 23.2's refactor updated the RPC status label but
+        stopped surfacing anything in the Activity Log for this event (the old
+        log-scraping mechanism used to show this via server_logger.info calls).
+        """
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('rpc_connected', {'host': 'localhost:8332', 'is_tor': False, 'chain': 'test'}))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Bitcoin RPC', call_args[0])
+        self.assertIn('localhost:8332', call_args[0])
+        self.assertIn('test', call_args[0])
+
+    def test_handle_result_rpc_failed_logs_message(self):
+        """Given 'rpc_failed' result, Then an error message is added to the activity log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('rpc_failed', 'Connection refused'))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Connection refused', call_args[0])
+        self.assertEqual(call_args[1], btcmesh_server_gui.COLOR_ERROR)
+
+    def test_handle_result_meshtastic_connected_logs_message(self):
+        """Given 'meshtastic_connected' result, Then a log message is added to the activity log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('meshtastic_connected', {'node_id': '!abcdef12', 'device': '/dev/ttyUSB0'}))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('!abcdef12', call_args[0])
+        self.assertIn('/dev/ttyUSB0', call_args[0])
+
+    def test_handle_result_meshtastic_failed_logs_message(self):
+        """Given 'meshtastic_failed' result, Then an error message is added to the activity log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('meshtastic_failed', 'No device found'))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('No device found', call_args[0])
+        self.assertEqual(call_args[1], btcmesh_server_gui.COLOR_ERROR)
+
+    def test_handle_result_server_started_logs_message(self):
+        """Given 'server_started' result, Then a log message is added to the activity log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('server_started', None))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Server started', call_args[0])
+
+    def test_handle_result_server_stopped_logs_message(self):
+        """Given 'server_stopped' result, Then a log message is added to the activity log."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('server_stopped', None))
+        gui.status_log.add_message.assert_called()
+        call_args = gui.status_log.add_message.call_args[0]
+        self.assertIn('Server stopped', call_args[0])
 
     def test_server_gui_has_network_label(self):
         """Given server GUI, Then it should have a network_label attribute."""

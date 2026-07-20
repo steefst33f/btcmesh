@@ -61,6 +61,7 @@ from core.gui_common import (
 )
 
 from core.config_loader import load_app_config
+from core.meshtastic_utils import get_own_node_name
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from core.reassembler import TransactionReassembler
@@ -745,9 +746,14 @@ class BTCMeshServerGUI(BoxLayout):
                 self.result_queue.put(('meshtastic_failed', str(e)))
                 return
 
+            node_name = get_own_node_name(transport._iface)
             self.result_queue.put((
                 'meshtastic_connected',
-                {'node_id': transport.local_node_id, 'device': serial_port or 'auto-detect'},
+                {
+                    'node_id': transport.local_node_id,
+                    'device': serial_port or 'auto-detect',
+                    'node_name': node_name,
+                },
             ))
 
             # Match old behavior: a failed RPC connection does not stop the
@@ -937,12 +943,17 @@ class BTCMeshServerGUI(BoxLayout):
             host = data.get('host') if isinstance(data, dict) else None
             is_tor = data.get('is_tor', False) if isinstance(data, dict) else False
             chain = data.get('chain') if isinstance(data, dict) else None
+            tor_badge = " [Tor]" if is_tor else ""
             if host:
-                tor_badge = " [Tor]" if is_tor else ""
                 self.rpc_label.text = f"Connected ({host}){tor_badge}"
             else:
                 self.rpc_label.text = STATE_RPC_CONNECTED.text
             self.rpc_label.color = STATE_RPC_CONNECTED.color
+            chain_suffix = f". Chain: {chain}" if chain else ""
+            self.status_log.add_message(
+                f"Connected to Bitcoin RPC{f' ({host})' if host else ''}{tor_badge}{chain_suffix}",
+                COLOR_SUCCESS,
+            )
 
             # Update network badge based on chain
             if chain:
@@ -960,20 +971,34 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'rpc_failed':
             self.rpc_label.text = STATE_RPC_FAILED.text
             self.rpc_label.color = STATE_RPC_FAILED.color
+            self.status_log.add_message(f"Bitcoin RPC connection failed: {data}", COLOR_ERROR)
 
         elif status_type == 'meshtastic_connected':
-            # data is dict with 'node_id' and 'device' keys
+            # data is dict with 'node_id', 'device', and 'node_name' keys
             node_id = data.get('node_id', 'Unknown') if isinstance(data, dict) else data
             device = data.get('device') if isinstance(data, dict) else None
-            if device:
-                self.meshtastic_label.text = f"Connected ({node_id}) on {device}"
+            node_name = data.get('node_name') if isinstance(data, dict) else None
+            # Show the node's human-readable name before its id, matching the
+            # client GUI's convention - falls back to the id alone if the
+            # device hasn't advertised a name (e.g. right after a factory reset).
+            if node_name:
+                self.meshtastic_label.text = f"Connected - {node_name} ({node_id})"
             else:
                 self.meshtastic_label.text = f"Connected ({node_id})"
+            if device:
+                self.meshtastic_label.text += f" on {device}"
             self.meshtastic_label.color = STATE_MESHTASTIC_CONNECTED.color
+
+            id_display = f"{node_name} ({node_id})" if node_name else node_id
+            self.status_log.add_message(
+                f"Connected to Meshtastic device: {id_display}" + (f" on {device}" if device else ""),
+                COLOR_SUCCESS,
+            )
 
         elif status_type == 'meshtastic_failed':
             self.meshtastic_label.text = STATE_MESHTASTIC_FAILED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
+            self.status_log.add_message(f"Meshtastic connection failed: {data}", COLOR_ERROR)
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
             self.save_btn.disabled = False
@@ -984,9 +1009,11 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'server_started':
             self.is_running = True
             self.stop_btn.disabled = False
+            self.status_log.add_message("Server started. Listening for incoming transactions...", COLOR_SUCCESS)
 
         elif status_type == 'server_stopped':
             self.is_running = False
+            self.status_log.add_message("Server stopped.", COLOR_WARNING)
             self.meshtastic_label.text = STATE_MESHTASTIC_DISCONNECTED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
