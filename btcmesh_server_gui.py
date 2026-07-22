@@ -777,8 +777,32 @@ class BTCMeshServerGUI(BoxLayout):
             def on_chunk_received(evt: ChunkReceived):
                 self.result_queue.put((
                     'log',
-                    f"[{evt.session_id}] Chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
+                    f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
                     logging.INFO,
+                    COLOR_PRIMARY,
+                ))
+                if evt.chunk_num < evt.total_chunks:
+                    self.result_queue.put((
+                        'log',
+                        f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...",
+                        logging.INFO,
+                        COLOR_PRIMARY,
+                    ))
+                else:
+                    # By the time this fires, add_chunk() has already returned the
+                    # fully reassembled hex without raising - reassembly for this
+                    # session has already succeeded (see TransactionReceiver._on_message).
+                    self.result_queue.put((
+                        'log',
+                        f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.",
+                        logging.INFO,
+                        COLOR_PRIMARY,
+                    ))
+
+            def on_broadcast_started(session_id, sender_id):
+                self.result_queue.put((
+                    'log', f"[{session_id}] Broadcasting transaction to Bitcoin network...",
+                    logging.INFO, COLOR_PRIMARY,
                 ))
 
             def on_broadcast(result: BroadcastResult):
@@ -802,6 +826,16 @@ class BTCMeshServerGUI(BoxLayout):
                 history.add(session_id=session_id, sender=sender_id, status="failed",
                             error=error, raw_tx=None)
 
+            # Raw wire-format traffic (the actual BTC_TX/BTC_CHUNK_ACK/BTC_ACK/
+            # BTC_NACK text), shown indented like the client GUI's "-> "/"<- "
+            # lines - separate from the semantic events above so NACKs/ACKs
+            # sent by this server are visible even when nothing else logs them.
+            def on_wire_sent(message_text):
+                self.result_queue.put(('log', f'  -> {message_text}', logging.INFO))
+
+            def on_wire_received(message_text):
+                self.result_queue.put(('log', f'  <- {message_text}', logging.INFO))
+
             # Safety net for anything unanticipated (e.g. a bad reassembly_timeout
             # value slipping past validation) - without this, an exception here
             # would just kill the daemon thread silently and leave the GUI stuck
@@ -812,8 +846,11 @@ class BTCMeshServerGUI(BoxLayout):
                     transport, rpc_client,
                     reassembler=TransactionReassembler(timeout_seconds=reassembly_timeout),
                     on_chunk_received=on_chunk_received,
+                    on_broadcast_started=on_broadcast_started,
                     on_broadcast=on_broadcast,
                     on_error=on_error,
+                    on_wire_sent=on_wire_sent,
+                    on_wire_received=on_wire_received,
                 )
             except Exception as e:
                 self.result_queue.put(('init_error', str(e)))
@@ -879,8 +916,14 @@ class BTCMeshServerGUI(BoxLayout):
         level = result[2] if len(result) > 2 else logging.INFO
 
         if result_type == 'log':
-            # Display log message with appropriate color.
-            color = get_log_color(level, data)
+            # Display log message with appropriate color. A 4th tuple element
+            # is an explicit color override (e.g. narrative protocol-status
+            # lines use COLOR_PRIMARY so they read distinctly from the raw
+            # wire traffic lines below them) - falls back to the same
+            # keyword-based coloring used everywhere else when omitted, so
+            # e.g. wire-sent NACKs/successful broadcasts still get
+            # highlighted red/green automatically.
+            color = result[3] if len(result) > 3 else get_log_color(level, data)
             self.status_log.add_message(data, color)
 
         elif result_type in ('rpc_connected', 'rpc_failed', 'meshtastic_connected',

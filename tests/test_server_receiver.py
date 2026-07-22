@@ -149,6 +149,28 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
             )
         )
 
+    def test_broadcast_started_fires_before_rpc_call(self):
+        on_broadcast_started = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_broadcast_started=on_broadcast_started
+        )
+        rpc_client.broadcast_transaction.return_value = ("txid789", None)
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_broadcast_started.assert_called_once_with("sess1", "!sender1")
+
+    def test_broadcast_started_not_fired_when_reassembly_incomplete(self):
+        on_broadcast_started = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_broadcast_started=on_broadcast_started
+        )
+
+        handler("BTC_TX|sess2|1/2|aabb", "!sender1")
+
+        on_broadcast_started.assert_not_called()
+        rpc_client.broadcast_transaction.assert_not_called()
+
 
 class TestConciseErrorMessage(unittest.TestCase):
     """Tests for _concise_error_message()'s mapping table."""
@@ -292,6 +314,108 @@ class TestTransactionReceiverActiveSessions(unittest.TestCase):
 
         self.assertEqual(result, [{"session_id": "abc"}])
         reassembler.get_active_sessions_info.assert_called_once()
+
+
+class TestTransactionReceiverWireCallbacks(unittest.TestCase):
+    """Tests for on_wire_sent/on_wire_received - the raw wire-format text of
+    every reply and incoming chunk, for callers that want to display the raw
+    protocol traffic (e.g. a GUI activity log) alongside the semantic events."""
+
+    def test_wire_received_fires_with_raw_chunk_text(self):
+        on_wire_received = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_received=on_wire_received
+        )
+        rpc_client.broadcast_transaction.return_value = ("txid123", None)
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_wire_received.assert_called_once_with("BTC_TX|sess1|1/1|deadbeef")
+
+    def test_wire_received_not_fired_for_non_chunk_messages(self):
+        on_wire_received = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_received=on_wire_received
+        )
+
+        handler("Hello world", "!sender1")
+
+        on_wire_received.assert_not_called()
+
+    def test_wire_sent_fires_with_raw_chunk_ack_text(self):
+        on_wire_sent = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_sent=on_wire_sent
+        )
+
+        handler("BTC_TX|sess2|1/3|aabb", "!sender1")
+
+        on_wire_sent.assert_called_once_with("BTC_CHUNK_ACK|sess2|1|REQUEST_CHUNK|2")
+
+    def test_wire_sent_fires_with_raw_broadcast_ack_text(self):
+        on_wire_sent = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_sent=on_wire_sent
+        )
+        rpc_client.broadcast_transaction.return_value = ("mytxid", None)
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        # Two sends happen for a single-chunk transaction: the CHUNK_ACK, then
+        # the final broadcast-success BTC_ACK - both should be reported.
+        self.assertEqual(on_wire_sent.call_count, 2)
+        self.assertEqual(
+            on_wire_sent.call_args_list[0].args[0],
+            "BTC_CHUNK_ACK|sess1|1|ALL_CHUNKS_RECEIVED",
+        )
+        self.assertEqual(
+            on_wire_sent.call_args_list[1].args[0], "BTC_ACK|sess1|TXID:mytxid"
+        )
+
+    def test_wire_sent_fires_with_raw_broadcast_nack_text(self):
+        on_wire_sent = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_sent=on_wire_sent
+        )
+        rpc_client.broadcast_transaction.return_value = (None, "insufficient fee")
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        self.assertEqual(
+            on_wire_sent.call_args_list[-1].args[0], "BTC_NACK|sess1|Insufficient fee"
+        )
+
+    def test_wire_sent_fires_with_raw_error_nack_text(self):
+        on_wire_sent = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_wire_sent=on_wire_sent
+        )
+
+        handler("BTC_TX|sessBad|notanumber/2|deadbeef", "!sender1")
+
+        self.assertTrue(on_wire_sent.call_args_list[-1].args[0].startswith("BTC_NACK|sessBad|"))
+
+    def test_wire_sent_fires_on_timeout_nack(self):
+        on_wire_sent = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        reassembler = Mock(spec=TransactionReassembler)
+        reassembler.cleanup_stale_sessions.return_value = [
+            {
+                "sender_id_str": "!sender1",
+                "tx_session_id": "sessTimeout",
+                "error_message": "Timed out waiting for chunks",
+            }
+        ]
+        receiver = TransactionReceiver(
+            transport, rpc_client, reassembler=reassembler, on_wire_sent=on_wire_sent
+        )
+
+        receiver.check_timeouts()
+
+        on_wire_sent.assert_called_once_with(
+            "BTC_NACK|sessTimeout|Timed out waiting for chunks"
+        )
 
 
 if __name__ == "__main__":

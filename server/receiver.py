@@ -98,6 +98,21 @@ class TransactionReceiver:
         # reassembly errors, unexpected processing errors, AND stale-session
         # timeouts (all are just "this session failed with error X" from a
         # caller's perspective).
+        on_wire_sent: Optional[Callable[[str], None]] = None,
+        on_wire_received: Optional[Callable[[str], None]] = None,
+        # on_wire_sent/on_wire_received(message_text) - fire for the raw
+        # wire-format text of every outgoing reply (CHUNK_ACK/ACK/NACK) and
+        # incoming chunk message, mirroring client/sender.py's
+        # on_chunk_sending/on_response_received. Purely for callers that want
+        # to display the raw protocol traffic (e.g. a GUI activity log) -
+        # the semantic callbacks above already cover everything needed for
+        # business logic.
+        on_broadcast_started: Optional[Callable[[str, str], None]] = None,
+        # on_broadcast_started(session_id, sender_id) - fires right before the
+        # RPC broadcast call, once reassembly has already succeeded. Separate
+        # from on_broadcast (which only fires once the RPC call returns) so a
+        # caller can show a distinct "broadcasting..." step for the RPC
+        # round-trip, which can take a noticeable moment (e.g. over Tor).
     ):
         self.transport = transport
         self.rpc_client = rpc_client
@@ -105,11 +120,23 @@ class TransactionReceiver:
         self._on_chunk_received = on_chunk_received
         self._on_broadcast = on_broadcast
         self._on_error = on_error
+        self._on_wire_sent = on_wire_sent
+        self._on_wire_received = on_wire_received
+        self._on_broadcast_started = on_broadcast_started
         self.transport.set_message_handler(self._on_message)
+
+    def _send(self, message: str, sender_id: str) -> None:
+        """Send a reply and report its raw wire text via on_wire_sent."""
+        self.transport.send(message, sender_id)
+        if self._on_wire_sent:
+            self._on_wire_sent(message)
 
     def _on_message(self, message_text: str, sender_id: str) -> None:
         if not message_text.startswith(CHUNK_PREFIX):
             return
+
+        if self._on_wire_received:
+            self._on_wire_received(message_text)
 
         # Best-effort pre-parse, only to get chunk_num/total_chunks for the
         # ACK reply below. reassembler.add_chunk() (called in the try block
@@ -135,7 +162,7 @@ class TransactionReceiver:
                 ack = f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|REQUEST_CHUNK|{chunk_num + 1}"
             else:
                 ack = f"BTC_CHUNK_ACK|{session_id}|{chunk_num}|ALL_CHUNKS_RECEIVED"
-            self.transport.send(ack, sender_id)
+            self._send(ack, sender_id)
 
             if self._on_chunk_received:
                 self._on_chunk_received(
@@ -159,9 +186,11 @@ class TransactionReceiver:
                 self._on_error(session_id, sender_id, str(e))
 
     def _broadcast(self, session_id: str, sender_id: str, raw_tx: str) -> None:
+        if self._on_broadcast_started:
+            self._on_broadcast_started(session_id, sender_id)
         txid, error = self.rpc_client.broadcast_transaction(raw_tx)
         if txid:
-            self.transport.send(f"BTC_ACK|{session_id}|TXID:{txid}", sender_id)
+            self._send(f"BTC_ACK|{session_id}|TXID:{txid}", sender_id)
             if self._on_broadcast:
                 self._on_broadcast(
                     BroadcastResult(session_id, sender_id, True, txid=txid, raw_tx=raw_tx)
@@ -178,7 +207,7 @@ class TransactionReceiver:
         msg = f"BTC_NACK|{session_id}|{detail}"
         if len(msg) > _MAX_NACK_LEN:
             msg = msg[: _MAX_NACK_LEN - 3] + "..."
-        self.transport.send(msg, sender_id)
+        self._send(msg, sender_id)
 
     def check_timeouts(self) -> None:
         """Check for and NACK stale reassembly sessions. Call periodically."""

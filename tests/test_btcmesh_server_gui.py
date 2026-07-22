@@ -1564,6 +1564,40 @@ class TestActivityLogDisplayStory171(unittest.TestCase):
             gui._handle_result(('log', 'Test log message', logging.INFO))
         gui.status_log.add_message.assert_called()
 
+    def test_log_message_without_color_override_uses_keyword_coloring(self):
+        """Given a 'log' result with no 4th (color) element, Then the color falls
+        back to get_log_color's keyword-based logic, same as before."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result(('log', 'Broadcast failed: bad-txns', logging.ERROR))
+        gui.status_log.add_message.assert_called_once_with(
+            'Broadcast failed: bad-txns', btcmesh_server_gui.COLOR_ERROR
+        )
+
+    def test_log_message_with_color_override_takes_priority(self):
+        """Given a 'log' result with an explicit 4th (color) element, Then that
+        color is used verbatim, even for text that would otherwise match a
+        keyword - this is how narrative chunk/broadcast status lines stay a
+        consistent COLOR_PRIMARY instead of being colored by incidental
+        keyword matches (e.g. "successful" containing "success")."""
+        import btcmesh_server_gui
+        import logging
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._handle_result((
+                'log', 'All 3 chunks received. Reassembly successful.',
+                logging.INFO, btcmesh_server_gui.COLOR_PRIMARY,
+            ))
+        gui.status_log.add_message.assert_called_once_with(
+            'All 3 chunks received. Reassembly successful.', btcmesh_server_gui.COLOR_PRIMARY
+        )
+
     def test_get_log_color_returns_error_for_failed_keyword(self):
         """Given INFO level with 'failed' keyword, Then get_log_color should return COLOR_ERROR."""
         import btcmesh_server_gui
