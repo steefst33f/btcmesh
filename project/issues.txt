@@ -300,6 +300,99 @@ next expected one** 🔍 OPEN — follow-up, not part of Story 23.1
 
 ---
 
+## Transport: Unreliable/inconsistent chunk delivery between two specific devices
+
+**Issue 16: ESP32→Seeed chunk delivery intermittently fails completely, with
+no consistent root cause identified** 🔍 OPEN — documented as environmental
+limitation, not a code bug
+
+- Found while pausing Story 23.2 to investigate a user report: sending a
+  full transaction from the ESP32 device (as client) to the Seeed device
+  (as server) consistently failed - the server's log showed **zero** chunks
+  ever received, across repeated attempts, using both `btcmesh_client_cli.py`
+  and `btcmesh_client_gui.py` as the sender, and both the current (old)
+  `btcmesh_server_gui.py` and a direct `TransactionReceiver` test script as
+  the receiver. The reverse direction (Seeed client → ESP32 server) worked
+  reliably (occasional single retries, normal for LoRa).
+- Investigated and ruled out, in order:
+  1. **My Story 23.1 destination-filter fix** (`transport/meshtastic_serial.py`)
+     — ruled out because the *old* `btcmesh_server.py` (which doesn't use
+     that transport at all) also received nothing in the failing direction.
+  2. **EU868 duty-cycle exhaustion on the ESP32** (both devices are
+     configured for the EU_868 region, which enforces a strict transmit
+     duty cycle in firmware) — ruled out because ESP32 successfully
+     transmitted ACK/NACK replies back to Seeed in the working direction,
+     proving its radio could still transmit.
+  3. **Packet-size-dependent reliability** (full ~190-byte chunk messages
+     failing while short ~35-byte ACK messages succeed on the same
+     ESP32→Seeed link) — looked promising initially (matched the pattern of
+     that specific test), but a direct, protocol-bypassing raw-message test
+     (a plain short text message and a full-chunk-sized text message, sent
+     directly via `transport.send()`, no BTCMesh chunking/ARQ involved)
+     showed **even the short message failing to arrive** in that test run -
+     contradicting the clean size-based explanation.
+- Given the inconsistent, contradictory results across repeated live tests
+  (the same class of message succeeding in one run and failing outright in
+  another), this looks like general RF/hardware unreliability specific to
+  this pair of devices, rather than an isolatable software bug:
+  - Possible marginal RF link / antenna quality on one or both devices
+  - Possible mutual interference from the two radios being physically very
+    close together (receiver desensitization from a nearby active
+    transmitter is a known real-world LoRa phenomenon)
+  - Possible timing/settling sensitivity shortly after `connect()`, similar
+    to the flakiness already seen and documented in Issue 12
+- Not pursued further as a code fix since the signal itself isn't
+  reproducible/consistent enough to isolate. If this resurfaces, worth
+  re-testing with a different pair of physical devices to determine whether
+  it's specific to this exact hardware pair, or trying a longer physical
+  separation between the two devices to rule out mutual interference.
+
+---
+
+## Protocol: Client retries after server has already completed the session
+
+**Issue 17: If the final chunk's ACK or the broadcast ACK/NACK is lost in
+transit, the client retries the last chunk - but the server has already
+deleted the (now-completed) session, so the retry starts a confusing new
+one** 🔍 OPEN — protocol-level gap, not yet fixed
+
+- Reported by the user while testing: "if all chunks do get properly
+  received, reassembled and broadcasted on server side, [and] the ACK or
+  NACK after receiving all chunks is not received by the client, the client
+  will retry sending the last chunk. While the server side already finished
+  the session. So triggering a new session start at server and client never
+  knowing it did actually get received, reassembled and/or broadcast
+  already."
+- Traced through `core/reassembler.py`'s `add_chunk()`: on successful
+  reassembly (last chunk received), the session is deleted immediately
+  (`del sender_sessions[tx_session_id]`) before the RPC broadcast even
+  happens. If the chunk-level `BTC_CHUNK_ACK|...|ALL_CHUNKS_RECEIVED` or the
+  final `BTC_ACK`/`BTC_NACK` reply is lost on the way back to the client,
+  the client's own retry (same `session_id`, same last `chunk_num`) arrives
+  at a server that has no memory of that session anymore - `add_chunk()`
+  treats it as chunk 1 of a *brand new* session (since the session key was
+  deleted), waits for the other chunks that will never come (the client
+  isn't resending those, since it already got their ACKs), and eventually
+  times out via `cleanup_stale_sessions()`, sending the client a confusing
+  NACK for a transaction that was, in fact, already successfully processed
+  (possibly already broadcast to the network) minutes earlier.
+- This is a real, structural gap in the protocol's idempotency: the server
+  has no way to recognize "I've already completed session X for sender Y"
+  and simply resend the cached final result, instead of either silently
+  creating a bogus partial session or leaving the client in the dark about
+  a transaction that actually succeeded.
+- Pre-existing in the current production `btcmesh_server.py` too (not
+  introduced by Story 23.1's `server/receiver.py` - the same
+  session-deletion-on-completion behavior lives in `core/reassembler.py`,
+  unchanged by that story).
+- Not fixed yet - worth its own story. Likely direction: have the server
+  retain a short-lived record of recently-completed sessions (session_id →
+  final result: TXID or error) for some grace period after completion, so a
+  retransmitted last chunk for an already-completed session gets the cached
+  final ACK/NACK resent directly instead of spawning a new phantom session.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -316,3 +409,5 @@ next expected one** 🔍 OPEN — follow-up, not part of Story 23.1
 | -     | Crash sorting known nodes when lastHeard is None | **Major (functional bug)** | **FIXED** |
 | -     | Known-nodes lastHeard may not reflect direct-message traffic | Minor (UX/data accuracy) | **Open / Suspected** |
 | -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |
+| -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
+| -     | Client retries after server already completed session | **Major (protocol gap)** | **Open** |
