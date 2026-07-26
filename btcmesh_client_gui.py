@@ -3,7 +3,9 @@
 BTCMesh GUI Client - Kivy-based graphical interface for sending Bitcoin transactions
 via Meshtastic LoRa relay.
 
-This GUI wraps the btcmesh_cli module, displaying its log output in a graphical interface.
+All business logic lives in client/sender.py (chunking, ARQ, retries) and
+transport/meshtastic_serial.py (device connection). This file only handles
+UI concerns: widget setup, user interaction, and displaying progress/results.
 """
 import threading
 import queue

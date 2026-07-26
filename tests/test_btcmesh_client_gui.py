@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for btcmesh_gui.py
+Unit tests for btcmesh_client_gui.py
 
 Tests the GUI logic, organized by story number from project/tasks.txt.
 """
@@ -10,7 +10,7 @@ import unittest.mock
 import queue
 import logging
 
-# Mock Kivy modules before importing btcmesh_gui
+# Mock Kivy modules before importing btcmesh_client_gui
 # This is necessary because Python loads the entire module (including Kivy imports)
 # before extracting the specific functions we want to test
 # These mocks are needed to also be able to run the tests in an environment
@@ -135,7 +135,7 @@ sys.modules['meshtastic.serial_interface'] = unittest.mock.MagicMock()
 # the machine running the suite; per-test patches override this as needed.
 unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]).start()
 
-from btcmesh_gui import (
+from btcmesh_client_gui import (
     get_log_color,
     get_print_color,
     process_result,
@@ -635,7 +635,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
     def test_init_meshtastic_retries_transient_error_then_succeeds(self):
         """Given a transient error on the first attempt and success on the
         second, Then it retries instead of giving up immediately."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
@@ -653,11 +653,11 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
         transports = [failing_transport, succeeding_transport]
 
-        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', side_effect=transports), \
-             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
-             unittest.mock.patch('btcmesh_gui.time.sleep'), \
-             unittest.mock.patch('btcmesh_gui.get_own_node_name', return_value='TestNode'):
-            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', side_effect=transports), \
+             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_client_gui.time.sleep'), \
+             unittest.mock.patch('btcmesh_client_gui.get_own_node_name', return_value='TestNode'):
+            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
 
         result_types = [r[0] for r in self._drain(gui.result_queue)]
         self.assertEqual(result_types.count('connection_initializing'), 1)
@@ -669,7 +669,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         it reports connection_error instead of hanging forever (regression
         test for the GUI getting permanently stuck on 'Device is
         initializing, please wait...')."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
@@ -678,10 +678,10 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         always_failing_transport = unittest.mock.MagicMock()
         always_failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
 
-        with unittest.mock.patch('btcmesh_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
-             unittest.mock.patch('btcmesh_gui.threading.Thread', self._ImmediateThread), \
-             unittest.mock.patch('btcmesh_gui.time.sleep'):
-            btcmesh_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
+             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_client_gui.time.sleep'):
+            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
 
         results = self._drain(gui.result_queue)
         result_types = [r[0] for r in results]
@@ -696,14 +696,14 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         Kivy Spinner only fires its text-change event when the value actually
         changes, so reusing devices[0] as the placeholder silently prevented
         selecting the first device until a different one was picked first."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.device_spinner = unittest.mock.MagicMock()
         gui.status_log = unittest.mock.MagicMock()
 
         devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
-        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
 
         self.assertEqual(gui.device_spinner.values, devices)
         self.assertEqual(gui.device_spinner.text, SELECT_DEVICE_TEXT)
@@ -712,13 +712,13 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
     def test_on_device_selected_ignores_placeholder_text(self):
         """Given the multi-device placeholder text, Then on_device_selected
         does nothing (no connection attempt)."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._disconnect_device = unittest.mock.MagicMock()
         gui._init_meshtastic = unittest.mock.MagicMock()
 
-        btcmesh_gui.BTCMeshGUI.on_device_selected(gui, None, SELECT_DEVICE_TEXT)
+        btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, SELECT_DEVICE_TEXT)
 
         gui._disconnect_device.assert_not_called()
         gui._init_meshtastic.assert_not_called()
@@ -746,7 +746,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_returns_empty_list_when_no_nodes(self):
         """Given interface has no nodes, Then returns empty list."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         mock_iface = unittest.mock.MagicMock()
         mock_iface.nodes = {}
         mock_iface.myInfo.my_node_num = 12345678
@@ -757,7 +757,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_returns_empty_list_when_nodes_is_none(self):
         """Given interface.nodes is None, Then returns empty list."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         mock_iface = unittest.mock.MagicMock()
         mock_iface.nodes = None
         mock_iface.myInfo.my_node_num = 12345678
@@ -768,7 +768,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_extracts_node_info(self):
         """Given interface has nodes, Then extracts id, name, lastHeard."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
 
@@ -787,7 +787,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_filters_out_own_node(self):
         """Given interface has own node in list, Then filters it out."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
 
@@ -805,7 +805,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_sorts_by_last_heard_descending(self):
         """Given multiple nodes, Then sorts by lastHeard (most recent first)."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
 
@@ -826,7 +826,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_uses_short_name_if_no_long_name(self):
         """Given node has no longName, Then uses shortName."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
 
@@ -850,7 +850,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_handles_missing_user_info(self):
         """Given node has no user info, Then handles gracefully."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
 
@@ -870,7 +870,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_get_known_nodes_includes_is_recent_flag(self):
         """Given nodes with different lastHeard, Then includes is_recent flag."""
-        from btcmesh_gui import get_known_nodes
+        from btcmesh_client_gui import get_known_nodes
         import time
         now = int(time.time())
         hours_24 = 24 * 60 * 60
@@ -892,7 +892,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_format_node_display_recent_node(self):
         """Given a recent node, Then displays name and id."""
-        from btcmesh_gui import format_node_display
+        from btcmesh_client_gui import format_node_display
         node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': True}
 
         result = format_node_display(node)
@@ -901,7 +901,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_format_node_display_stale_node(self):
         """Given a stale node, Then displays name and id (same as recent)."""
-        from btcmesh_gui import format_node_display
+        from btcmesh_client_gui import format_node_display
         node = {'id': '!abcd1234', 'name': 'Test Node', 'lastHeard': 123456, 'is_recent': False}
 
         result = format_node_display(node)
@@ -910,7 +910,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_format_node_display_includes_name_and_id(self):
         """Given a node, Then includes name and id in display."""
-        from btcmesh_gui import format_node_display
+        from btcmesh_client_gui import format_node_display
         node = {'id': '!abcd1234', 'name': 'My Relay', 'lastHeard': 123456, 'is_recent': True}
 
         result = format_node_display(node)
@@ -920,7 +920,7 @@ class TestKnownNodesStory112(unittest.TestCase):
 
     def test_format_node_display_format(self):
         """Given a node, Then formats as 'name (id)'."""
-        from btcmesh_gui import format_node_display
+        from btcmesh_client_gui import format_node_display
         node = {'id': '!efef5678', 'name': 'Relay Server', 'lastHeard': 123456, 'is_recent': True}
 
         result = format_node_display(node)
@@ -956,7 +956,7 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
     def test_get_own_node_name_returns_long_name(self):
         """Given interface has own node with longName, Then returns longName."""
-        from btcmesh_gui import get_own_node_name
+        from btcmesh_client_gui import get_own_node_name
         mock_iface = unittest.mock.MagicMock()
         mock_iface.myInfo.my_node_num = 0xabcd1234
         mock_iface.nodes = {
@@ -969,7 +969,7 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
     def test_get_own_node_name_returns_short_name_if_no_long_name(self):
         """Given interface has own node without longName, Then returns shortName."""
-        from btcmesh_gui import get_own_node_name
+        from btcmesh_client_gui import get_own_node_name
         mock_iface = unittest.mock.MagicMock()
         mock_iface.myInfo.my_node_num = 0xabcd1234
         mock_iface.nodes = {
@@ -988,7 +988,7 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
     def test_get_own_node_name_returns_none_if_no_name(self):
         """Given interface has own node without any name, Then returns None."""
-        from btcmesh_gui import get_own_node_name
+        from btcmesh_client_gui import get_own_node_name
         mock_iface = unittest.mock.MagicMock()
         mock_iface.myInfo.my_node_num = 0xabcd1234
         mock_iface.nodes = {
@@ -1007,7 +1007,7 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
     def test_get_own_node_name_returns_none_if_no_interface(self):
         """Given no interface, Then returns None."""
-        from btcmesh_gui import get_own_node_name
+        from btcmesh_client_gui import get_own_node_name
 
         result = get_own_node_name(None)
 
@@ -1015,7 +1015,7 @@ class TestDisplayDeviceNameStory113(unittest.TestCase):
 
     def test_get_own_node_name_returns_none_if_own_node_not_in_nodes(self):
         """Given own node not in nodes dict, Then returns None."""
-        from btcmesh_gui import get_own_node_name
+        from btcmesh_client_gui import get_own_node_name
         mock_iface = unittest.mock.MagicMock()
         mock_iface.myInfo.my_node_num = 0xabcd1234
         mock_iface.nodes = {}
@@ -1069,7 +1069,7 @@ class TestDisableControlsStory95(unittest.TestCase):
     def test_handle_result_calls_set_controls_enabled_true_on_cli_finished(self):
         """Given 'cli_finished' result, Then _handle_result calls _set_controls_enabled(True)."""
         # Import the unbound function from the module
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         # Create a mock GUI instance with all required attributes
         gui = unittest.mock.MagicMock()
@@ -1082,14 +1082,14 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui._show_success_popup = unittest.mock.MagicMock()
 
         # Call the actual _handle_result method with our mock as 'self'
-        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('cli_finished', 0))
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('cli_finished', 0))
 
         # Verify _set_controls_enabled was called with True
         gui._set_controls_enabled.assert_called_once_with(True)
 
     def test_handle_result_calls_set_controls_enabled_true_on_error(self):
         """Given 'error' result, Then _handle_result calls _set_controls_enabled(True)."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._set_controls_enabled = unittest.mock.MagicMock()
@@ -1100,13 +1100,13 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui.connection_label = unittest.mock.MagicMock()
         gui._show_success_popup = unittest.mock.MagicMock()
 
-        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('error', 'Something failed'))
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('error', 'Something failed'))
 
         gui._set_controls_enabled.assert_called_once_with(True)
 
     def test_handle_result_calls_set_controls_enabled_true_on_abort(self):
         """Given 'aborted' result, Then _handle_result calls _set_controls_enabled(True)."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._set_controls_enabled = unittest.mock.MagicMock()
@@ -1117,13 +1117,13 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui.connection_label = unittest.mock.MagicMock()
         gui._show_success_popup = unittest.mock.MagicMock()
 
-        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('aborted',))
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('aborted',))
 
         gui._set_controls_enabled.assert_called_once_with(True)
 
     def test_handle_result_does_not_call_set_controls_enabled_on_log(self):
         """Given 'log' result, Then _handle_result does NOT call _set_controls_enabled."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._set_controls_enabled = unittest.mock.MagicMock()
@@ -1134,13 +1134,13 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui.connection_label = unittest.mock.MagicMock()
         gui._show_success_popup = unittest.mock.MagicMock()
 
-        btcmesh_gui.BTCMeshGUI._handle_result(gui, ('log', 'Progress', logging.INFO))
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('log', 'Progress', logging.INFO))
 
         gui._set_controls_enabled.assert_not_called()
 
     def test_on_send_pressed_calls_set_controls_enabled_false(self):
         """Given valid inputs, Then on_send_pressed calls _set_controls_enabled(False)."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._set_controls_enabled = unittest.mock.MagicMock()
@@ -1158,14 +1158,14 @@ class TestDisableControlsStory95(unittest.TestCase):
 
         # Mock threading to prevent actual thread start
         with unittest.mock.patch('threading.Thread'):
-            btcmesh_gui.BTCMeshGUI.on_send_pressed(gui, None)
+            btcmesh_client_gui.BTCMeshGUI.on_send_pressed(gui, None)
 
         # Verify _set_controls_enabled was called with False
         gui._set_controls_enabled.assert_called_once_with(False)
 
     def test_on_send_pressed_does_not_call_set_controls_enabled_on_validation_error(self):
         """Given invalid inputs, Then on_send_pressed does NOT call _set_controls_enabled."""
-        import btcmesh_gui
+        import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui._set_controls_enabled = unittest.mock.MagicMock()
@@ -1177,7 +1177,7 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui.status_log = unittest.mock.MagicMock()
         gui._init_meshtastic = unittest.mock.MagicMock()
 
-        btcmesh_gui.BTCMeshGUI.on_send_pressed(gui, None)
+        btcmesh_client_gui.BTCMeshGUI.on_send_pressed(gui, None)
 
         # Verify _set_controls_enabled was NOT called (validation failed)
         gui._set_controls_enabled.assert_not_called()

@@ -1144,21 +1144,32 @@ lora/
         - [x] *   **Given** the progress callback.
         - [x] *   **Then** the GUI status log shows chunk progress.
 
-- [ ] **Story 22.3: Create btcmesh_client_cli.py as thin CLI entry point**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a new thin `btcmesh_client_cli.py` that only handles CLI concerns,
-- [ ] *   **So that** the UI layer is cleanly separated from business logic.
-    - [ ] *   **Scenario:** New file created with argument parsing only
-        - [ ] *   **Given** Story 22.1 is complete (client/sender.py exists and works).
-        - [ ] *   **When** `btcmesh_client_cli.py` is created.
-        - [ ] *   **Then** it only contains: argument parsing, output formatting, and calls to `client/sender.py`.
-        - [ ] *   **And** it has no chunking logic, no transport setup, no ACK handling.
-        - [ ] *   **And** it is runnable as a replacement for `btcmesh_cli.py`.
-    - [ ] *   **Scenario:** Old btcmesh_cli.py removed
-        - [ ] *   **Given** `btcmesh_client_cli.py` passes all CLI-related tests (argument parsing, output formatting).
-        - [ ] *   **And** business logic tests have been moved to and pass in `client/sender.py`.
-        - [ ] *   **Then** `btcmesh_cli.py` is deleted.
-        - [ ] *   **And** all references (docs, README, tests) are updated.
+- [x] **Story 22.3: Create btcmesh_client_cli.py as thin CLI entry point**
+- [x] *   **As a** developer,
+- [x] *   **I want** a new thin `btcmesh_client_cli.py` that only handles CLI concerns,
+- [x] *   **So that** the UI layer is cleanly separated from business logic.
+    - [x] *   **Scenario:** New file created with argument parsing only
+        - [x] *   **Given** Story 22.1 is complete (client/sender.py exists and works).
+        - [x] *   **When** `btcmesh_client_cli.py` is created.
+        - [x] *   **Then** it only contains: argument parsing, output formatting, and calls to `client/sender.py`.
+        - [x] *   **And** it has no chunking logic, no transport setup, no ACK handling.
+        - [x] *   **And** it is runnable as a replacement for `btcmesh_cli.py`.
+    - [x] *   **Scenario:** Old btcmesh_cli.py removed
+        - [x] *   **Given** `btcmesh_client_cli.py` passes all CLI-related tests (argument parsing, output formatting).
+        - [x] *   **And** business logic tests have been moved to and pass in `client/sender.py`.
+        - [x] *   **Then** `btcmesh_cli.py` is deleted.
+        - [x] *   **And** all references (docs, README, tests) are updated.
+
+- [x] **Story 22.4: Rename btcmesh_gui.py to btcmesh_client_gui.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** the client GUI entry point renamed to match the target architecture naming,
+- [x] *   **So that** "CLI" and "GUI" are consistently distinguished from "Client" across the codebase (matching Story 22.3's `btcmesh_cli.py` → `btcmesh_client_cli.py` rename).
+    - [x] *   **Scenario:** File renamed, no logic changes
+        - [x] *   **Given** Story 22.2 already extracted all business logic out of the GUI.
+        - [x] *   **When** `btcmesh_gui.py` is renamed to `btcmesh_client_gui.py`.
+        - [x] *   **Then** `tests/test_btcmesh_gui.py` is renamed to `tests/test_btcmesh_client_gui.py` and its imports updated.
+        - [x] *   **And** all references (docs, README) are updated.
+        - [x] *   **And** the full test suite still passes with no behavior change.
 
 ### 23. Server Layer Refactoring
 
