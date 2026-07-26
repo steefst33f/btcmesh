@@ -335,3 +335,42 @@ Unlike Story 22.3 (where `tests/test_btcmesh_cli.py` was cleanly, fully redundan
    - `python btcmesh_server_cli.py -p <device port>` — verify it connects to the specified port
    - Send a real transaction from `btcmesh_client_cli.py` while this is running — verify the full narrative (received chunk / requesting next / reassembly successful / broadcasting / broadcast success or failure) appears in both the terminal and `logs/btcmesh_server.log`, and that Ctrl+C shuts it down cleanly (transport disconnects, port is freed).
 5. Confirm `README.md` no longer references `btcmesh_server.py` as a runnable file.
+
+---
+
+## Implementation Completion
+
+**Status:** ✅ **COMPLETE** (July 26, 2026)
+
+**Test results:** 622 tests passing (up from 687 pre-deletion: 65 old tests removed with `test_btcmesh_server.py`, 0 skipped - the 10 previously-`@unittest.skip`'d tests were dead scaffolding entirely within that file, testing an old destination-format validation path that no longer exists by design).
+
+**Deviations from initial plan:**
+- The test-file split turned out bigger than a one-line acceptance criterion suggested: 30 of the old file's 65 tests were the *only* coverage for `core/reassembler.py`, `core/transaction_parser.py`, `core/rpc_client.py`, and part of `core/config_loader.py` - relocated into 4 new dedicated test files rather than deleted (Key Design Decision 5).
+- While reviewing the relocated `core/config_loader.py` tests, found and closed real coverage gaps unrelated to the relocation itself: `load_app_config()` and `get_meshtastic_serial_port()` had zero tests, and the `BITCOIN_RPC_COOKIE` path (this project's documented Tor/testnet auth method) was entirely untested. Added 11 new tests.
+- Spot-verifying the "deleted" test classes against their replacements (per the plan's own verification step) surfaced one genuine, pre-existing gap: `server/receiver.py`'s generic `ReassemblyError`/`Exception` branches (on_error fires, no NACK sent) had no coverage anywhere. Added 2 tests to `tests/test_server_receiver.py`, and logged **Issue 18** in `project/issues.txt` - the client-side consequence is a silent ~2-minute timeout with zero diagnostic information, instead of an immediate, informative NACK. Left unfixed (logged for a future story), per explicit instruction not to fix it as a drive-by.
+- `btcmesh_server_cli.py` gained one line beyond the original draft: an explicit `"Loading configuration..."` log line at the very start of `run_server()`, added after review - the original draft jumped straight into `load_app_config()` with no announcement.
+- The Ctrl+C/`KeyboardInterrupt` test in `tests/test_btcmesh_server_cli.py` was restructured after review so the "server was running, then got interrupted" story is directly provable in the test body (`time.sleep` side-effects `[None, KeyboardInterrupt]` plus a `call_count == 2` assertion) rather than implicit in a shared setup helper.
+
+**Manual verification against real hardware - partially completed:**
+- **Meshtastic connection: confirmed.** `python btcmesh_server_cli.py -p /dev/cu.usbserial-0001` connected successfully (node `!7c5b4418`), logging exactly the expected sequence (`Loading configuration...` → `.env file loaded...` → `Connecting to Meshtastic device (...)...` → `Connected to Meshtastic device. Node ID: ...`).
+- **RPC-failure tolerance: confirmed for real**, not just in mocks - Tor/the RPC node was unreachable in this environment at test time (`SOCKSHTTPConnectionPool... Connection refused`), and the server correctly logged the error and continued anyway (`Continuing without RPC connection.`) straight through to `Server started. Listening for incoming transactions...`, exactly matching the designed behavior.
+- **Full chunk-transfer narrative (received chunk / requesting next / reassembly / broadcasting) and a live Ctrl+C: deferred**, not by anything in this story's code - a second Meshtastic device was needed to act as the client, but of the two other candidate ports found by the scan, one (`/dev/cu.usbmodem983DAEE5AB3C1`) hit the same "wedged, needs a physical power cycle" state documented in Issue 12/16 (handshake timed out after 30s), and the other (`/dev/cu.SLAB_USBtoUART`) turned out to be the same physical device already in use as `/dev/cu.usbserial-0001` (reported "Resource busy"). Only one working device was available.
+- **Ctrl+C shutdown specifically**: confirmed correct via automated test (`test_keyboard_interrupt_disconnects_and_returns_0`, which injects a real `KeyboardInterrupt` exception the same way Python's own SIGINT handler does), but a live OS-level signal test was inconclusive in this session - `kill -INT <pid>` sent from a separate tool invocation didn't reach a backgrounded/disowned process, and this was confirmed to be an artifact of the tool-sandboxing environment itself (a trivial, unrelated `while True: time.sleep(1)` script reproduced the identical non-response), not a defect in this story's code.
+- **Recommend a follow-up manual smoke test** once a second working device is available: `python btcmesh_server_cli.py -p <port>`, send a real transaction from `btcmesh_client_cli.py -p <other port>`, confirm the full narrative in both the terminal and `logs/btcmesh_server.log`, and confirm a real Ctrl+C (typed directly into the terminal, not sent via a separate process) stops it cleanly.
+
+**Files changed:**
+
+| File | Change |
+|---|---|
+| `btcmesh_server_cli.py` | New - thin CLI wrapper, ~140 lines |
+| `btcmesh_server.py` | Deleted (809 lines) |
+| `tests/test_btcmesh_server_cli.py` | New - 16 tests, CLI-layer concerns only |
+| `tests/test_reassembler.py` | New - 8 tests relocated |
+| `tests/test_transaction_parser.py` | New - 5 tests relocated (plus 1 stale-comment/assertion fix) |
+| `tests/test_rpc_client.py` | New - 10 tests relocated |
+| `tests/test_config_loader.py` | New - 7 tests relocated + 11 new (gap closure) |
+| `tests/test_server_receiver.py` | +2 tests (gap closure) |
+| `tests/test_btcmesh_server.py` | Deleted (1905 lines) |
+| `project/issues.txt` | +Issue 18 |
+| `README.md` | All `btcmesh_server.py` references updated; documents `-p`/`--port` |
+| `project/next_steps.md` | Removed stale `TRX_CHUNK_BUFFER` TODO (private file) |

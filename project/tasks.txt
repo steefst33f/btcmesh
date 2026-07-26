@@ -1200,21 +1200,21 @@ lora/
         - [x] *   **Given** the event callbacks.
         - [x] *   **Then** the GUI still shows active sessions, history, and connection status.
 
-- [ ] **Story 23.3: Create btcmesh_server_cli.py as thin CLI entry point**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a new thin `btcmesh_server_cli.py` that only handles CLI concerns,
-- [ ] *   **So that** the UI layer is cleanly separated from server business logic.
-    - [ ] *   **Scenario:** New file created with startup logic only
-        - [ ] *   **Given** Story 23.1 is complete (server/receiver.py exists and works).
-        - [ ] *   **When** `btcmesh_server_cli.py` is created.
-        - [ ] *   **Then** it only contains: config loading, startup/shutdown, and calls to `server/receiver.py`.
-        - [ ] *   **And** it has no reassembly logic, no transport setup, no RPC handling.
-        - [ ] *   **And** it is runnable as a replacement for `btcmesh_server.py`.
-    - [ ] *   **Scenario:** Old btcmesh_server.py removed
-        - [ ] *   **Given** `btcmesh_server_cli.py` passes all CLI-related tests (startup, config loading, output).
-        - [ ] *   **And** business logic tests have been moved to and pass in `server/receiver.py`.
-        - [ ] *   **Then** `btcmesh_server.py` is deleted.
-        - [ ] *   **And** all references (docs, README, tests) are updated.
+- [x] **Story 23.3: Create btcmesh_server_cli.py as thin CLI entry point**
+- [x] *   **As a** developer,
+- [x] *   **I want** a new thin `btcmesh_server_cli.py` that only handles CLI concerns,
+- [x] *   **So that** the UI layer is cleanly separated from server business logic.
+    - [x] *   **Scenario:** New file created with startup logic only
+        - [x] *   **Given** Story 23.1 is complete (server/receiver.py exists and works).
+        - [x] *   **When** `btcmesh_server_cli.py` is created.
+        - [x] *   **Then** it only contains: config loading, startup/shutdown, and calls to `server/receiver.py`.
+        - [x] *   **And** it has no reassembly logic, no transport setup, no RPC handling.
+        - [x] *   **And** it is runnable as a replacement for `btcmesh_server.py`.
+    - [x] *   **Scenario:** Old btcmesh_server.py removed
+        - [x] *   **Given** `btcmesh_server_cli.py` passes all CLI-related tests (startup, config loading, output).
+        - [x] *   **And** business logic tests have been moved to and pass in `server/receiver.py`.
+        - [x] *   **Then** `btcmesh_server.py` is deleted.
+        - [x] *   **And** all references (docs, README, tests) are updated.
 
 ### 24. Documentation and Handoff
 
