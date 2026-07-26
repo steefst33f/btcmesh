@@ -189,6 +189,36 @@ serial port and reader thread** ✅ FIXED
 
 ---
 
+## Known Nodes: Crash sorting nodes with lastHeard=None
+
+**Issue 13: `get_known_nodes()` crashed when a node's lastHeard was explicitly
+None** ✅ FIXED
+- Found by manually testing the client GUI's "Scan for nodes" button (the
+  first time this feature was exercised end-to-end against a real, long-lived
+  node database of 71 nodes — earlier testing past days only exercised device
+  scanning/connecting via one-off scripts, never this code path through the
+  actual running GUI).
+- `core/meshtastic_utils.py`'s `get_known_nodes()` extracted each node's
+  timestamp via `node_data.get('lastHeard', 0)`. `dict.get(key, default)`
+  only applies the default when the key is *missing* — not when it's present
+  but explicitly `None`, which is how the `meshtastic` library represents a
+  node it knows about (via mesh gossip/NeighborInfo) but has never actually
+  received a packet from directly. The resulting `None` then crashed
+  `nodes.sort(key=lambda n: n['lastHeard'], reverse=True)` with
+  `TypeError: '<' not supported between instances of 'NoneType' and 'int'`
+  as soon as at least one such node existed alongside nodes with real
+  timestamps.
+- Real, pre-existing bug unrelated to the Story 22.3/22.4 rename work or
+  Issues 9-12 — confirmed against real hardware: of the device's 71 known
+  nodes, 3-4 had `lastHeard: None`.
+- Fix: `(node_data.get('lastHeard') or 0)` instead of
+  `node_data.get('lastHeard', 0)`, normalizing both "key missing" and
+  "key present but None" to `0` uniformly.
+- Test added in `tests/test_meshtastic_utils.py`:
+  `test_sorts_without_crashing_when_lastheard_is_none`.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -202,3 +232,4 @@ serial port and reader thread** ✅ FIXED
 | -     | GUI stuck forever on transient connect error | **Major (functional bug)** | **FIXED** |
 | -     | First device in multi-device list unselectable | **Major (functional bug)** | **FIXED** |
 | -     | Failed handshake leaked the serial port lock | **Major (functional bug)** | **FIXED** |
+| -     | Crash sorting known nodes when lastHeard is None | **Major (functional bug)** | **FIXED** |

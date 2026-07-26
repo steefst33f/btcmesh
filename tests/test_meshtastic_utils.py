@@ -274,6 +274,33 @@ class TestGetKnownNodes(unittest.TestCase):
         self.assertEqual(result[1]['id'], '!33333333')  # Middle
         self.assertEqual(result[2]['id'], '!11111111')  # Oldest
 
+    def test_sorts_without_crashing_when_lastheard_is_none(self):
+        """Given a node with lastHeard explicitly None (known but never
+        actually heard from) alongside nodes with real timestamps, Then
+        sorting doesn't crash and the None-lastHeard node sorts last.
+
+        Regression test: node_data.get('lastHeard', 0) only applies the
+        default when the key is missing, not when it's present but None,
+        so the sort comparison used to raise TypeError comparing None to int.
+        """
+        from core.meshtastic_utils import get_known_nodes
+
+        now = int(time.time())
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo = None
+        mock_iface.nodes = {
+            '!11111111': {'user': {'longName': 'Heard Node'}, 'lastHeard': now - 10},
+            '!22222222': {'user': {'longName': 'Never Heard Node'}, 'lastHeard': None},
+        }
+
+        result = get_known_nodes(mock_iface)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]['id'], '!11111111')
+        self.assertEqual(result[1]['id'], '!22222222')
+        self.assertEqual(result[0]['lastHeard'], now - 10)
+        self.assertEqual(result[1]['lastHeard'], 0)
+        self.assertFalse(result[1]['is_recent'])
+
     def test_returns_node_info(self):
         """Given nodes, Then returns node info dict."""
         from core.meshtastic_utils import get_known_nodes
