@@ -469,6 +469,7 @@ class TestMeshtasticSerialTransportReceive(unittest.TestCase):
         packet = {
             'from': 0x11223344,
             'fromId': '!11223344',
+            'to': 0xDEADBEEF,  # This transport's own node (MockSerialInterface default)
             'decoded': {
                 'portnum': 'TEXT_MESSAGE_APP',
                 'text': 'Hello World',
@@ -502,6 +503,85 @@ class TestMeshtasticSerialTransportReceive(unittest.TestCase):
 
         # Handler should NOT be called for self-messages
         handler.assert_not_called()
+
+    def test_receive_filters_messages_addressed_to_different_node(self):
+        """Test that messages addressed to a different node are filtered out.
+
+        Regression test: previously only filtered by message type and
+        sender, so messages meant for another node on the same mesh
+        channel would incorrectly reach the handler.
+        """
+        mock_iface = MockSerialInterface(0xDEADBEEF)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        handler = MagicMock()
+        transport.set_message_handler(handler)
+
+        packet = {
+            'from': 0x11223344,
+            'fromId': '!11223344',
+            'to': 0xAAAAAAAA,  # Not this transport's own node (0xDEADBEEF)
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': 'Not for us',
+            }
+        }
+        transport._on_meshtastic_receive(packet)
+
+        handler.assert_not_called()
+
+    def test_receive_filters_messages_with_no_destination_info(self):
+        """Test that messages with no 'to'/'toId' field at all are filtered
+        out (matches the pre-refactor server's on_receive_text_message,
+        which treated missing destination info as "not for us")."""
+        mock_iface = MockSerialInterface(0xDEADBEEF)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        handler = MagicMock()
+        transport.set_message_handler(handler)
+
+        packet = {
+            'from': 0x11223344,
+            'fromId': '!11223344',
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': 'No destination',
+            }
+        }
+        transport._on_meshtastic_receive(packet)
+
+        handler.assert_not_called()
+
+    def test_receive_allows_messages_addressed_to_self_via_toid(self):
+        """Test that messages addressed via the string 'toId' fallback
+        (no numeric 'to' field) still reach the handler when they match."""
+        mock_iface = MockSerialInterface(0xDEADBEEF)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        handler = MagicMock()
+        transport.set_message_handler(handler)
+
+        packet = {
+            'from': 0x11223344,
+            'fromId': '!11223344',
+            'toId': '!deadbeef',  # String form of this transport's own node
+            'decoded': {
+                'portnum': 'TEXT_MESSAGE_APP',
+                'text': 'For us via toId',
+            }
+        }
+        transport._on_meshtastic_receive(packet)
+
+        handler.assert_called_once_with('For us via toId', '!11223344')
 
     def test_receive_filters_non_text_messages(self):
         """Test that non-text messages are filtered."""
@@ -575,6 +655,7 @@ class TestMeshtasticSerialTransportReceive(unittest.TestCase):
         packet = {
             'from': 0x11223344,
             'fromId': '!11223344',
+            'to': 0xDEADBEEF,  # This transport's own node (MockSerialInterface default)
             'decoded': {
                 'portnum': 'TEXT_MESSAGE_APP',
                 'payload': b'Hello from bytes',
@@ -600,6 +681,7 @@ class TestMeshtasticSerialTransportReceive(unittest.TestCase):
         packet = {
             'from': 0x11223344,
             'fromId': '!11223344',
+            'to': 0xDEADBEEF,  # This transport's own node (MockSerialInterface default)
             'decoded': {
                 'portnum': 'TEXT_MESSAGE_APP',
                 'text': 'Hello',

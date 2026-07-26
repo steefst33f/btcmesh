@@ -251,8 +251,9 @@ class MeshtasticSerialTransport(BaseTransport):
     ) -> None:
         """Internal pubsub callback for received Meshtastic packets.
 
-        Filters for TEXT_MESSAGE_APP, excludes self-messages, extracts
-        text and sender ID, then invokes the registered handler.
+        Filters for TEXT_MESSAGE_APP, excludes self-messages and messages
+        not explicitly addressed to this node, extracts text and sender ID,
+        then invokes the registered handler.
         """
         if self._handler is None:
             return
@@ -268,6 +269,22 @@ class MeshtasticSerialTransport(BaseTransport):
         # Filter: self-messages
         sender_num = packet.get("from")
         if sender_num is not None and sender_num == self._my_node_num:
+            return
+
+        # Filter: messages not explicitly addressed to this node. Real
+        # Meshtastic DM packets always carry a destination (even broadcasts
+        # use an explicit broadcast address rather than omitting it), so
+        # missing destination info means this isn't a direct message to us -
+        # drop broadcasts, messages meant for another node, and anything
+        # with no destination info at all.
+        dest_num = packet.get("to")
+        if dest_num is None:
+            dest_id = packet.get("toId")
+            if dest_id is None:
+                return
+            if dest_id != self._format_node_id(self._my_node_num):
+                return
+        elif dest_num != self._my_node_num:
             return
 
         # Extract message text
