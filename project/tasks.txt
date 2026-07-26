@@ -1132,19 +1132,7 @@ lora/
         - [x] *   **Given** a completed send operation.
         - [x] *   **Then** a `SendResult` dataclass is returned with success, txid, error.
 
-- [ ] **Story 22.2: Refactor btcmesh_cli.py to use client/sender.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** the CLI to use the new sender module,
-- [ ] *   **So that** the CLI becomes a thin wrapper.
-    - [ ] *   **Scenario:** CLI uses TransactionSender
-        - [ ] *   **Given** the refactored CLI.
-        - [ ] *   **Then** it only handles argument parsing and output.
-        - [ ] *   **And** all business logic is delegated to `client/sender.py`.
-    - [ ] *   **Scenario:** Existing behavior preserved
-        - [ ] *   **Given** existing CLI tests.
-        - [ ] *   **Then** all tests continue to pass.
-
-- [ ] **Story 22.3: Refactor btcmesh_gui.py to use client/sender.py**
+- [ ] **Story 22.2: Refactor btcmesh_gui.py to use client/sender.py**
 - [ ] *   **As a** developer,
 - [ ] *   **I want** the GUI to use the new sender module,
 - [ ] *   **So that** the GUI becomes a thin wrapper.
@@ -1156,12 +1144,12 @@ lora/
         - [ ] *   **Given** the progress callback.
         - [ ] *   **Then** the GUI status log shows chunk progress.
 
-- [ ] **Story 22.4: Create btcmesh_client_cli.py as thin CLI entry point**
+- [ ] **Story 22.3: Create btcmesh_client_cli.py as thin CLI entry point**
 - [ ] *   **As a** developer,
 - [ ] *   **I want** a new thin `btcmesh_client_cli.py` that only handles CLI concerns,
 - [ ] *   **So that** the UI layer is cleanly separated from business logic.
     - [ ] *   **Scenario:** New file created with argument parsing only
-        - [ ] *   **Given** Story 22.2 is complete (client/sender.py exists and works).
+        - [ ] *   **Given** Story 22.1 is complete (client/sender.py exists and works).
         - [ ] *   **When** `btcmesh_client_cli.py` is created.
         - [ ] *   **Then** it only contains: argument parsing, output formatting, and calls to `client/sender.py`.
         - [ ] *   **And** it has no chunking logic, no transport setup, no ACK handling.
@@ -1189,19 +1177,7 @@ lora/
         - [ ] *   **Given** the receiver class.
         - [ ] *   **Then** it uses the injected transport and RPC client — no direct Meshtastic or RPC imports.
 
-- [ ] **Story 23.2: Migrate receiving/reassembly logic from btcmesh_server.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** the server business logic extracted from the monolithic server script,
-- [ ] *   **So that** btcmesh_server.py becomes a thin CLI entry point.
-    - [ ] *   **Scenario:** btcmesh_server.py uses TransactionReceiver
-        - [ ] *   **Given** the refactored server.
-        - [ ] *   **Then** it only handles startup, config loading, and output.
-        - [ ] *   **And** all business logic is delegated to `server/receiver.py`.
-    - [ ] *   **Scenario:** Existing behavior preserved
-        - [ ] *   **Given** existing server tests.
-        - [ ] *   **Then** all tests continue to pass.
-
-- [ ] **Story 23.3: Refactor btcmesh_server_gui.py to use server/receiver.py**
+- [ ] **Story 23.2: Refactor btcmesh_server_gui.py to use server/receiver.py**
 - [ ] *   **As a** developer,
 - [ ] *   **I want** the server GUI to use the new receiver module,
 - [ ] *   **So that** the GUI becomes a thin wrapper.
@@ -1213,12 +1189,12 @@ lora/
         - [ ] *   **Given** the event callbacks.
         - [ ] *   **Then** the GUI still shows active sessions, history, and connection status.
 
-- [ ] **Story 23.4: Create btcmesh_server_cli.py as thin CLI entry point**
+- [ ] **Story 23.3: Create btcmesh_server_cli.py as thin CLI entry point**
 - [ ] *   **As a** developer,
 - [ ] *   **I want** a new thin `btcmesh_server_cli.py` that only handles CLI concerns,
 - [ ] *   **So that** the UI layer is cleanly separated from server business logic.
     - [ ] *   **Scenario:** New file created with startup logic only
-        - [ ] *   **Given** Story 23.2 is complete (server/receiver.py exists and works).
+        - [ ] *   **Given** Story 23.1 is complete (server/receiver.py exists and works).
         - [ ] *   **When** `btcmesh_server_cli.py` is created.
         - [ ] *   **Then** it only contains: config loading, startup/shutdown, and calls to `server/receiver.py`.
         - [ ] *   **And** it has no reassembly logic, no transport setup, no RPC handling.
