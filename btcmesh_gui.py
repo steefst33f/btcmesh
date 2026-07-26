@@ -11,6 +11,7 @@ import logging
 import argparse
 import io
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
 from kivy.app import App
@@ -73,6 +74,13 @@ from core.protocol import is_valid_hex
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
+SELECT_DEVICE_TEXT = "Select a device to connect..."
+
+# Connection retry settings: a freshly enumerated serial port (or one just
+# released by a prior disconnect) can transiently fail to open for a moment;
+# retry a few times before giving up instead of hanging indefinitely.
+CONNECT_MAX_ATTEMPTS = 4
+CONNECT_RETRY_DELAY_SECONDS = 1.5
 
 # Example raw transaction for testing (see reference_materials.md)
 EXAMPLE_RAW_TX = (
@@ -518,7 +526,14 @@ class BTCMeshGUI(BoxLayout):
         """
         self.status_log.add_message(f"Connecting to Meshtastic device{f' ({port})' if port else ''}...")
 
-        def init_thread():
+        def try_connect() -> bool:
+            """Single connection attempt.
+
+            Returns:
+                True if the attempt reached a final outcome (success or
+                permanent failure) and should not be retried. False if it hit
+                a transient error and a retry may succeed.
+            """
             try:
                 transport = MeshtasticSerialTransport()
                 transport.connect(port)
@@ -538,18 +553,22 @@ class BTCMeshGUI(BoxLayout):
                     except Exception:
                         pass
                     self.result_queue.put(('connection_failed', "Could not retrieve device info. Ensure device is connected.", None))
-                    return
+                    return True
 
                 node_name = get_own_node_name(iface)
                 self.result_queue.put(('connected', iface, node_id, node_name))
                 # Also store transport for later use in sending
                 self.result_queue.put(('transport_ready', transport))
+                return True
 
             except ImportError:
                 self.result_queue.put(('connection_error', "Meshtastic library not installed", None))
+                return True
             except Exception as e:
                 error_msg = str(e)
-                # Check if this is a transient error from the Meshtastic library still initializing
+                # Check if this is a transient error from the Meshtastic library/OS
+                # still releasing or initializing the port (e.g. right after a
+                # previous device on this or another port was disconnected).
                 is_transient = any(x in error_msg.lower() for x in [
                     'resource temporarily unavailable',
                     'busy',
@@ -557,15 +576,30 @@ class BTCMeshGUI(BoxLayout):
                 if is_transient:
                     # Show as info message - device is still initializing
                     self.result_queue.put(('connection_initializing', error_msg, None))
-                else:
-                    # Provide more helpful error messages for common cases
-                    if "No Meshtastic" in error_msg or "No serial" in error_msg:
-                        error_msg = "No Meshtastic device found"
-                    elif "Permission denied" in error_msg:
-                        error_msg = f"Permission denied accessing {port or 'device'}"
-                    elif "could not open port" in error_msg.lower():
-                        error_msg = f"Could not open port {port or '(auto-detect)'}"
-                    self.result_queue.put(('connection_error', error_msg, None))
+                    return False
+
+                # Provide more helpful error messages for common cases
+                if "No Meshtastic" in error_msg or "No serial" in error_msg:
+                    error_msg = "No Meshtastic device found"
+                elif "Permission denied" in error_msg:
+                    error_msg = f"Permission denied accessing {port or 'device'}"
+                elif "could not open port" in error_msg.lower():
+                    error_msg = f"Could not open port {port or '(auto-detect)'}"
+                self.result_queue.put(('connection_error', error_msg, None))
+                return True
+
+        def init_thread():
+            for attempt in range(CONNECT_MAX_ATTEMPTS):
+                if try_connect():
+                    return
+                if attempt < CONNECT_MAX_ATTEMPTS - 1:
+                    time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+            self.result_queue.put((
+                'connection_error',
+                f"Device at {port or '(auto-detect)'} did not become ready "
+                f"after {CONNECT_MAX_ATTEMPTS} attempts",
+                None,
+            ))
 
         threading.Thread(target=init_thread, daemon=True).start()
 
@@ -580,8 +614,8 @@ class BTCMeshGUI(BoxLayout):
             def close_thread():
                 try:
                     transport_to_close.disconnect()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
 
             threading.Thread(target=close_thread, daemon=True).start()
         elif self.iface:
@@ -592,8 +626,8 @@ class BTCMeshGUI(BoxLayout):
             def close_thread():
                 try:
                     iface_to_close.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
 
             threading.Thread(target=close_thread, daemon=True).start()
         self.connection_label.text = STATE_DISCONNECTED.text
@@ -605,7 +639,7 @@ class BTCMeshGUI(BoxLayout):
 
     def on_device_selected(self, spinner, text):
         """Handle device selection from dropdown."""
-        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, ''):
+        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
             return
 
         self._disconnect_device()
@@ -681,10 +715,14 @@ class BTCMeshGUI(BoxLayout):
                     self.status_log.add_message(f"Found 1 device: {devices[0]}", COLOR_SUCCESS)
                     self._init_meshtastic(port=devices[0])
                 else:
-                    # Multiple devices - show first but don't connect, let user choose
-                    # Unbind to prevent auto-connect when setting text
+                    # Multiple devices - don't connect, let user choose.
+                    # Use a placeholder distinct from every real device path
+                    # (rather than devices[0]) so that selecting the first
+                    # device in the list still registers as a text change and
+                    # fires on_device_selected - Kivy Spinner only dispatches
+                    # its text event when the value actually changes.
                     self.device_spinner.unbind(text=self.on_device_selected)
-                    self.device_spinner.text = devices[0]
+                    self.device_spinner.text = SELECT_DEVICE_TEXT
                     self.device_spinner.bind(text=self.on_device_selected)
                     self.status_log.add_message(f"Found {len(devices)} devices - select one to connect", COLOR_WARNING)
             else:
