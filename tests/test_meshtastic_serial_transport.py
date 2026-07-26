@@ -36,7 +36,14 @@ class MockSerialInterface:
     """Mock Meshtastic SerialInterface."""
     def __init__(self, my_node_num=0xDEADBEEF):
         self.myInfo = MockMyInfo(my_node_num)
+        self.noProto = False
         self.close_called = False
+
+    def connect(self):
+        pass
+
+    def waitForConfig(self):
+        pass
 
     def close(self):
         self.close_called = True
@@ -79,7 +86,7 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
         self.assertTrue(transport.is_connected)
         self.assertEqual(transport.local_node_id, "!aabbccdd")
         self.mock_meshtastic.serial_interface.SerialInterface.assert_called_once_with(
-            devPath="/dev/ttyUSB0"
+            devPath="/dev/ttyUSB0", connectNow=False
         )
 
     def test_connect_with_auto_detect(self):
@@ -92,7 +99,9 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
 
         self.assertTrue(transport.is_connected)
         self.assertEqual(transport.local_node_id, "!12345678")
-        self.mock_meshtastic.serial_interface.SerialInterface.assert_called_once_with()
+        self.mock_meshtastic.serial_interface.SerialInterface.assert_called_once_with(
+            connectNow=False
+        )
 
     def test_connect_raises_when_already_connected(self):
         """Test that connecting when already connected raises error."""
@@ -139,6 +148,36 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
         with self.assertRaises(TransportConnectionError) as ctx:
             transport.connect()
         self.assertIn("Failed to connect", str(ctx.exception))
+
+    def test_connect_closes_iface_when_handshake_times_out(self):
+        """Test that a failure during the handshake (connect()/waitForConfig(),
+        which runs after the serial port is already open) still closes the
+        iface instead of leaking the open port/reader thread.
+
+        Regression test: meshtastic.serial_interface.SerialInterface() used
+        to perform the handshake inside its own constructor, so if it failed
+        partway through (e.g. "Timed out waiting for connection completion"),
+        the assignment to `iface` never completed and there was no reference
+        left to close - leaking an exclusive OS-level lock on the serial port
+        for the rest of the process's lifetime, requiring an app restart.
+        """
+        mock_iface = MockSerialInterface()
+        mock_iface.connect = MagicMock(
+            side_effect=Exception("Timed out waiting for connection completion")
+        )
+        mock_iface.close = MagicMock()
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        with self.assertRaises(TransportConnectionError) as ctx:
+            transport.connect("/dev/ttyUSB0")
+
+        self.assertIn("Failed to connect", str(ctx.exception))
+        self.assertIn("Timed out waiting for connection completion", str(ctx.exception))
+        mock_iface.close.assert_called_once()
+        self.mock_meshtastic.serial_interface.SerialInterface.assert_called_once_with(
+            devPath="/dev/ttyUSB0", connectNow=False
+        )
 
     def test_connect_raises_when_myinfo_missing(self):
         """Test that missing myInfo raises error and closes interface."""

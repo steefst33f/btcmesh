@@ -71,13 +71,22 @@ class MeshtasticSerialTransport(BaseTransport):
             )
 
         try:
+            # connectNow=False: open the serial port but don't perform the
+            # handshake yet. meshtastic's SerialInterface otherwise does the
+            # handshake inside its own constructor, so if it fails partway
+            # through (e.g. a timeout waiting for the device's config), the
+            # assignment to `iface` never completes and we have no reference
+            # to close the already-opened port/reader thread - leaking an
+            # exclusive OS-level lock on the port for the rest of the process
+            # lifetime. Doing the handshake ourselves below keeps `iface`
+            # reachable so we can clean it up on failure.
             if device_path:
                 iface = meshtastic.serial_interface.SerialInterface(
-                    devPath=device_path
+                    devPath=device_path, connectNow=False
                 )
             else:
                 # Auto-detect device if no path provided
-                iface = meshtastic.serial_interface.SerialInterface()
+                iface = meshtastic.serial_interface.SerialInterface(connectNow=False)
         except Exception as exc:
             err_type = type(exc).__name__
             if (
@@ -87,6 +96,19 @@ class MeshtasticSerialTransport(BaseTransport):
                 raise TransportConnectionError(
                     "No Meshtastic device found"
                 ) from exc
+            raise TransportConnectionError(
+                f"Failed to connect: {exc}"
+            ) from exc
+
+        try:
+            iface.connect()
+            if not iface.noProto:
+                iface.waitForConfig()
+        except Exception as exc:
+            try:
+                iface.close()
+            except Exception:
+                pass
             raise TransportConnectionError(
                 f"Failed to connect: {exc}"
             ) from exc

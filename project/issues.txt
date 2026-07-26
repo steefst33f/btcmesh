@@ -153,6 +153,42 @@ connected — both bugs only surface with 2+ real devices, which the
 
 ---
 
+## Transport: Failed handshake leaked the serial port lock
+
+**Issue 12: A connect() failure during the device handshake leaked the open
+serial port and reader thread** ✅ FIXED
+- Found while investigating a real `"Timed out waiting for connection
+  completion"` error from `meshtastic.serial_interface.SerialInterface()`
+  (an upstream 30s wait for the device's config handshake to finish).
+- `SerialInterface(devPath=...)` (default `connectNow=True`) performs the
+  entire handshake *inside its own constructor* — opens the serial port,
+  starts a background reader thread, sends `want_config_id`, then blocks on
+  `_waitConnected()`. If that wait times out, the exception is raised from
+  inside `__init__`, so `iface = SerialInterface(...)` in
+  `transport/meshtastic_serial.py`'s `connect()` never completes its
+  assignment. That left no reference to the already-opened port/reader
+  thread to call `.close()` on — leaking an exclusive OS-level lock on the
+  serial port for the rest of the process's lifetime (confirmed via `lsof`:
+  the port stayed locked by the running process even after the connection
+  attempt had already failed and raised).
+- Verified live against real hardware: reproduced the exact timeout with the
+  plain `meshtastic` library directly (bypassing our code entirely), proving
+  the timeout itself isn't caused by btcmesh — but the leak was.
+- Fix: construct with `connectNow=False` (opens the port but skips the
+  handshake), then call `iface.connect()` / `iface.waitForConfig()`
+  ourselves in a try/except that calls `iface.close()` on failure — so we
+  always keep a reachable reference to clean up, even when the handshake
+  fails partway through.
+- Test added in `tests/test_meshtastic_serial_transport.py`:
+  `test_connect_closes_iface_when_handshake_times_out`.
+- Note: the underlying 30s handshake timeout itself is a real, separate
+  device/firmware-level behavior (in this case traced to both test devices
+  being stuck mid-boot from rapid repeated connect/disconnect cycles during
+  testing — resolved by a physical power cycle) and isn't something this fix
+  changes; this fix only prevents the *leak* when that timeout occurs.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -165,3 +201,4 @@ connected — both bugs only surface with 2+ real devices, which the
 | -     | Second Meshtastic device hidden by findPorts() whitelist | **Major (functional bug)** | **FIXED** |
 | -     | GUI stuck forever on transient connect error | **Major (functional bug)** | **FIXED** |
 | -     | First device in multi-device list unselectable | **Major (functional bug)** | **FIXED** |
+| -     | Failed handshake leaked the serial port lock | **Major (functional bug)** | **FIXED** |
