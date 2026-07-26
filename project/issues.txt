@@ -419,6 +419,59 @@ one** 🔍 OPEN — protocol-level gap, not yet fixed
 
 ---
 
+## Protocol: Generic reassembly errors give the client only a silent timeout, no NACK
+
+**Issue 18: When `add_chunk()` raises a generic `ReassemblyError` or a
+completely unexpected `Exception`, the server logs it locally but sends
+nothing back to the client at all** 🔍 OPEN — not fixed
+
+- Found while adding test coverage for `server/receiver.py`'s `_on_message()`
+  during Story 23.3 (these two branches had zero test coverage anywhere
+  before that; see `tests/test_server_receiver.py`'s
+  `test_generic_reassembly_error_fires_on_error_without_nack` and
+  `test_unexpected_exception_fires_on_error_without_nack`). Pre-existing
+  behavior in both the old `btcmesh_server.py` and the current
+  `server/receiver.py` - not introduced by this story.
+- The two *specific* validation errors (`InvalidChunkFormatError`,
+  `MismatchedTotalChunksError`) both call `_send_nack(...)` immediately,
+  giving the client a fast, informative failure. The generic
+  `except ReassemblyError` and `except Exception` branches right below them
+  only fire the `on_error` callback (server-side logging/UI notification)
+  and return - no `BTC_NACK` is ever transmitted.
+- From the client's side (`client/sender.py`), this is indistinguishable
+  from the chunk or its reply simply getting lost over LoRa: it waits
+  `DEFAULT_ACK_TIMEOUT` (30s), gets nothing, retries the same chunk, up to
+  `DEFAULT_MAX_RETRIES` (3) times - roughly 2 minutes total - before finally
+  failing with a generic `"Chunk N: timeout after 3 retries"`. The actual
+  server-side error message is never seen by the client's operator at all,
+  only by whoever has access to the server's own logs/Activity Log - in this
+  project's mesh-relay design, frequently a different person on a different
+  device entirely.
+- Likely direction: have this fallback branch also send a generic NACK
+  (e.g. `BTC_NACK|<session>|Internal server error`) instead of staying
+  silent, so the client fails fast with at least some signal instead of
+  waiting out the full retry timeout for a content-free failure.
+- **Update 2026-07-26: a concrete real-world instance of exactly this
+  pattern was found (and fixed) via live hardware testing.** With
+  `rpc_client=None` (RPC failed to connect at startup - the server's own
+  designed "keep running anyway" behavior), a client sent a complete,
+  valid 15-chunk transaction; every chunk ACKed cleanly, reassembly
+  succeeded, and then `_broadcast()` crashed with
+  `AttributeError: 'NoneType' object has no attribute 'broadcast_transaction'`
+  - caught by the same generic `except Exception` branch described above,
+  so the client got nothing back and eventually failed with a content-free
+  `"Transaction failed: No final ACK from relay"`, despite doing
+  everything correctly. **Fixed**: `_broadcast()` now checks for
+  `rpc_client is None` up front and sends an immediate, clear
+  `BTC_NACK|<session>|Bitcoin RPC not connected` instead of attempting the
+  call (see `tests/test_server_receiver.py`'s
+  `test_broadcast_with_no_rpc_client_sends_nack_and_fires_callback`). This
+  closes that one specific path into the generic-exception trap, but the
+  broader issue - *other* generic/unexpected exceptions still get no NACK -
+  remains open.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -437,3 +490,4 @@ one** 🔍 OPEN — protocol-level gap, not yet fixed
 | -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **Open** |
+| 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **Open / Partially fixed** |

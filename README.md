@@ -2,14 +2,14 @@
 
 ## Description
 
-BTC Mesh Relay is a project designed to enable the broadcasting of Bitcoin raw transactions by sending them as chunked hexadecimal strings via LoRa Meshtastic direct messages. A dedicated client script (`btcmesh_client_cli.py`) will be used for sending, and a relay device running `btcmesh_server.py` will reassemble these chunks, decode, validate, and then relay the complete transaction to a configured Bitcoin RPC node. This system is intended for scenarios with limited or censored internet access but where LoRa Meshtastic network availability exists.
+BTC Mesh Relay is a project designed to enable the broadcasting of Bitcoin raw transactions by sending them as chunked hexadecimal strings via LoRa Meshtastic direct messages. A dedicated client script (`btcmesh_client_cli.py`) will be used for sending, and a relay device running `btcmesh_server_cli.py` will reassemble these chunks, decode, validate, and then relay the complete transaction to a configured Bitcoin RPC node. This system is intended for scenarios with limited or censored internet access but where LoRa Meshtastic network availability exists.
 
 This project is currently under development.
 
 ## Features (Planned & In-Progress)
 
 *   **Meshtastic Communication**: Initializes and manages communication with a Meshtastic device.
-*   **Transaction Chunking & Reassembly**: Allows large Bitcoin transactions to be sent in smaller chunks over LoRa by `btcmesh_client_cli.py` and reassembled by `btcmesh_server.py`.
+*   **Transaction Chunking & Reassembly**: Allows large Bitcoin transactions to be sent in smaller chunks over LoRa by `btcmesh_client_cli.py` and reassembled by `btcmesh_server_cli.py`.
 *   **Payload Handling**: Relay server reassembles hexadecimal chunks. The connected Bitcoin Core node performs full transaction validation upon broadcast attempt. (Advanced pre-broadcast decoding and validation capabilities on the relay server via `core/transaction_parser.py` are planned for future enhancements).
 *   **Basic Transaction Validation**: Currently, the relay server relies on the connected Bitcoin Core node for most transaction validation. (More extensive pre-broadcast sanity checks on the relay are planned).
 *   **Bitcoin RPC Integration**: Connects to a Bitcoin Core RPC node to broadcast the validated raw transaction.
@@ -23,7 +23,7 @@ This project is currently under development.
 btcmesh/
 ├── btcmesh_client_cli.py  # Command-line client script
 ├── btcmesh_client_gui.py  # Graphical user interface client
-├── btcmesh_server.py      # Server/Relay script
+├── btcmesh_server_cli.py  # Server/Relay script
 ├── btcmesh_server_gui.py  # Server GUI for relay operators
 ├── core/                  # Core logic for the server/relay
 │   ├── __init__.py
@@ -94,7 +94,7 @@ btcmesh/
         ```env
         # MESHTASTIC_SERIAL_PORT=/dev/your/meshtastic_port
         ```
-    *   **Bitcoin RPC Node Details**: Required for the relay server (`btcmesh_server.py`).
+    *   **Bitcoin RPC Node Details**: Required for the relay server (`btcmesh_server_cli.py`).
         ```env
         BITCOIN_RPC_HOST=your_bitcoin_node_host
         BITCOIN_RPC_PORT=your_bitcoin_node_port # e.g., 8332 for mainnet
@@ -110,7 +110,7 @@ btcmesh/
         ```
 
 5.  **Meshtastic Device Setup**:
-    *   Ensure you have a Meshtastic device connected to the machine where `btcmesh_server.py` will run (and another for the client when `btcmesh_client_cli.py` is used).
+    *   Ensure you have a Meshtastic device connected to the machine where `btcmesh_server_cli.py` will run (and another for the client when `btcmesh_client_cli.py` is used).
     *   The Meshtastic Python library, by default, attempts to auto-detect your device. You can specify the serial port explicitly by setting `MESHTASTIC_SERIAL_PORT` in your `.env` file.
     *   Ensure your Bitcoin Core node is configured to accept RPC connections.
     *   Configure the RPC host, port, user, and password in your `.env` file (see step 4).
@@ -126,15 +126,21 @@ Key settings configurable in `.env`:
 *   Bitcoin RPC connection details (`BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD`). Use a `.onion` address for `BITCOIN_RPC_HOST` to route traffic through Tor (requires Tor to be installed and running).
 *   Transaction reassembly timeout (`REASSEMBLY_TIMEOUT_SECONDS`).
 
-## Running the Server (`btcmesh_server.py`)
+## Running the Server (`btcmesh_server_cli.py`)
 
 Once set up and configured, you can run the BTC Mesh Relay server:
 
 ```bash
-python btcmesh_server.py
+python btcmesh_server_cli.py
 ```
 
 The server will initialize the Meshtastic interface, connect to the Bitcoin RPC node (if configured), and start listening for incoming messages.
+
+Use `-p`/`--port` to select a specific Meshtastic serial port when more than one device is connected, overriding `MESHTASTIC_SERIAL_PORT` in `.env`:
+
+```bash
+python btcmesh_server_cli.py -p /dev/ttyUSB0
+```
 
 ## Running the Client (`btcmesh_client_cli.py`)
 
@@ -143,7 +149,7 @@ The client script is used to send a raw Bitcoin transaction to a relay server.
 ```bash
 python btcmesh_client_cli.py --destination <SERVER_NODE_ID> --tx <RAW_TRANSACTION_HEX>
 ```
-Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `btcmesh_server.py` (e.g., `!abcdef12`) and `<RAW_TRANSACTION_HEX>` with the full raw transaction hex string you intend to broadcast.
+Replace `<SERVER_NODE_ID>` with the Meshtastic node ID of the machine running `btcmesh_server_cli.py` (e.g., `!abcdef12`) and `<RAW_TRANSACTION_HEX>` with the full raw transaction hex string you intend to broadcast.
 
 Use `python btcmesh_client_cli.py --help` for more options, such as `--dry-run` to simulate sending without actually transmitting over LoRa, or `-p`/`--port` to select a specific Meshtastic serial port when more than one device is connected.
 

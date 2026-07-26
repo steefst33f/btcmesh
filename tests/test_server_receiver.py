@@ -15,7 +15,7 @@ from server.receiver import (
 )
 from transport.base import BaseTransport
 from core.rpc_client import BitcoinRPCClient
-from core.reassembler import TransactionReassembler
+from core.reassembler import ReassemblyError, TransactionReassembler
 
 
 def make_receiver(**kwargs):
@@ -149,6 +149,35 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
             )
         )
 
+    def test_broadcast_with_no_rpc_client_sends_nack_and_fires_callback(self):
+        """Given rpc_client=None (server started without a working RPC
+        connection, per the documented Meshtastic-keeps-running behavior),
+        When a transaction fully reassembles, Then the client gets a clear
+        NACK instead of the server crashing with AttributeError - real bug
+        found via hardware testing during Story 23.3 (see Issue 18)."""
+        on_broadcast = Mock()
+        on_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        receiver = TransactionReceiver(
+            transport, None, on_broadcast=on_broadcast, on_error=on_error
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        final_nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|Bitcoin RPC not connected")
+        self.assertEqual(final_nack_call.args[1], "!sender1")
+        on_broadcast.assert_called_once_with(
+            BroadcastResult(
+                session_id="sess1", sender_id="!sender1", success=False,
+                error="Bitcoin RPC not connected", raw_tx="deadbeef",
+            )
+        )
+        # Must not be silently swallowed as a generic error - confirms this
+        # goes through the dedicated no-RPC path, not the crash-and-catch one.
+        on_error.assert_not_called()
+
     def test_broadcast_started_fires_before_rpc_call(self):
         on_broadcast_started = Mock()
         receiver, transport, rpc_client, handler = make_receiver(
@@ -252,6 +281,42 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         on_error.assert_called_once()
         # No session was ever created for this sender/session_id.
         self.assertEqual(receiver.get_active_sessions(), [])
+
+    def test_generic_reassembly_error_fires_on_error_without_nack(self):
+        """A ReassemblyError that isn't InvalidChunkFormatError/
+        MismatchedTotalChunksError (some other reassembly problem) notifies
+        via on_error but does NOT send a NACK - unlike the two more specific
+        errors above, which do NACK. Uses a mocked reassembler since this is
+        about the receiver's own dispatch logic, not real reassembler
+        behavior (which never actually raises a bare ReassemblyError)."""
+        on_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        reassembler = Mock(spec=TransactionReassembler)
+        reassembler.add_chunk.side_effect = ReassemblyError("some other reassembly problem")
+        receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
+
+        transport.send.assert_not_called()
+        on_error.assert_called_once_with("sess1", "!sender1", "some other reassembly problem")
+
+    def test_unexpected_exception_fires_on_error_without_nack(self):
+        """A completely unexpected (non-ReassemblyError) exception from
+        add_chunk() notifies via on_error but does NOT send a NACK."""
+        on_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        reassembler = Mock(spec=TransactionReassembler)
+        reassembler.add_chunk.side_effect = RuntimeError("totally unexpected")
+        receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
+
+        transport.send.assert_not_called()
+        on_error.assert_called_once_with("sess1", "!sender1", "totally unexpected")
 
     def test_nack_message_truncated_when_too_long(self):
         receiver, transport, rpc_client, handler = make_receiver()
