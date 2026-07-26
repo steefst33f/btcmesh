@@ -346,6 +346,32 @@ limitation, not a code bug
   re-testing with a different pair of physical devices to determine whether
   it's specific to this exact hardware pair, or trying a longer physical
   separation between the two devices to rule out mutual interference.
+- **Retested 2026-07-19** while closing out Story 23.2's deferred real-hardware
+  verification (both devices freshly power-cycled). Real connections (Meshtastic
+  serial handshake + Bitcoin RPC over Tor) succeeded cleanly on both devices this
+  time - the earlier "wedged, needs a power cycle" state was transient, not
+  reproduced. Sent a real transaction (15 chunks) in both directions:
+  - ESP32→Seeed (client `!3364d5a8` → server `!aee5ab3c`): failed exactly as
+    before - **zero** chunks ever reached the server across all 4 attempts of
+    chunk 1.
+  - Seeed→ESP32 (client `!aee5ab3c` → server `!3364d5a8`): every chunk the
+    client sent was received by the server **on its first arrival** (confirmed
+    from the server's own logs, including chunks the client itself had to
+    retry) - it was the **ACK replies travelling back to the client** that were
+    being lost, not the chunks. This caused repeated client-side retries of
+    chunks the server already had (correctly deduplicated and re-ACKed each
+    time), and the transaction ultimately failed when chunk 3's retries were
+    exhausted (4 attempts) purely from ACK loss, even though the server had
+    held that chunk correctly since its first attempt.
+  - This narrows the hypothesis: in the Seeed→ESP32 direction specifically,
+    the forward (chunk) path is solid but the return (ACK) path is lossy
+    enough to exhaust the current retry budget. Combined with the
+    ESP32→Seeed direction still failing completely, this continues to look
+    like an asymmetric RF/hardware issue tied to this specific device pair
+    rather than anything in `server/receiver.py` or `client/sender.py` -
+    confirmed by watching both `TransactionReceiver`'s duplicate-chunk
+    handling and the client's stop-and-wait retry logic behave exactly as
+    designed throughout.
 
 ---
 
