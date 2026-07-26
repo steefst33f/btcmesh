@@ -37,15 +37,46 @@ class TestScanMeshtasticDevices(unittest.TestCase):
             self.assertEqual(result, [])
 
     def test_scan_returns_ports_when_found(self):
-        """Given meshtastic finds ports, Then returns port list."""
+        """Given non-blacklisted serial ports, Then returns those ports.
+
+        Uses the real meshtastic.util.blacklistVids/eliminate_duplicate_port —
+        only the hardware enumeration (comports) is mocked, since we can't
+        depend on real USB devices being attached in CI.
+        """
         from core import meshtastic_utils
 
-        mock_util = unittest.mock.MagicMock()
-        mock_util.findPorts.return_value = ['/dev/ttyUSB0', '/dev/ttyACM0']
+        mock_ports = [
+            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x303a),
+            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x2886),
+        ]
 
-        with unittest.mock.patch.dict(sys.modules, {'meshtastic.util': mock_util}):
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
             result = meshtastic_utils.scan_meshtastic_devices()
-            self.assertEqual(result, ['/dev/ttyUSB0', '/dev/ttyACM0'])
+            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
+
+    def test_scan_includes_non_whitelisted_vid_alongside_whitelisted(self):
+        """Given one Espressif-VID device (0x303a, whitelisted by
+        meshtastic.util.findPorts) and one Seeed-VID device (0x2886, not
+        whitelisted there) connected together, Then both are returned.
+
+        Regression test: meshtastic.util.findPorts() only falls back to
+        "not blacklisted" ports when zero whitelisted-VID ports are found, so
+        it silently drops the second device entirely in this scenario. Uses
+        the real meshtastic.util.blacklistVids/eliminate_duplicate_port to
+        prove the fix holds against the actual upstream library.
+        """
+        from core import meshtastic_utils
+
+        mock_ports = [
+            unittest.mock.MagicMock(device='/dev/cu.usbmodemESP32', vid=0x303a),
+            unittest.mock.MagicMock(device='/dev/cu.usbmodemSeeed', vid=0x2886),
+        ]
+
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
+            result = meshtastic_utils.scan_meshtastic_devices()
+            self.assertEqual(
+                result, ['/dev/cu.usbmodemESP32', '/dev/cu.usbmodemSeeed']
+            )
 
 
 class TestGetOwnNodeId(unittest.TestCase):

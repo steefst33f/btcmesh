@@ -40,6 +40,72 @@ class SendResult:
             raise ValueError("success=False requires error to be set")
 
 
+@dataclass
+class PreviewChunk:
+    """Represents a single chunk in a transaction preview."""
+    chunk_num: int
+    total_chunks: int
+    wire_format: str
+
+
+@dataclass
+class TransactionPreview:
+    """Preview of how a transaction would be chunked.
+
+    Returned by create_preview() to show the user what chunks would be sent
+    without actually sending them.
+    """
+    session_id: str
+    total_chunks: int
+    chunks: list  # type: list[PreviewChunk]
+
+
+def create_preview(tx_hex: str) -> TransactionPreview:
+    """Create a preview of how a transaction would be chunked.
+
+    This is a UI-only feature that shows what chunks would be sent
+    without actually sending them. Pure function: no I/O.
+
+    Args:
+        tx_hex: Raw transaction hex to preview
+
+    Returns:
+        TransactionPreview with session_id, total_chunks, and chunk details
+
+    Raises:
+        ValueError: If tx_hex is invalid
+    """
+    # Validate input
+    try:
+        validate_transaction_hex(tx_hex)
+    except ValueError:
+        raise
+
+    # Create session (this does the chunking)
+    try:
+        session = create_session(tx_hex)
+    except ValueError as e:
+        raise ValueError(f"Failed to create preview session: {e}")
+
+    # Build preview chunks
+    preview_chunks = []
+    for i in range(session.total_chunks):
+        msg = get_chunk_message(session, i)
+        wire_format = msg.format()
+        preview_chunks.append(PreviewChunk(
+            chunk_num=i + 1,
+            total_chunks=session.total_chunks,
+            wire_format=wire_format
+        ))
+
+    return TransactionPreview(
+        session_id=session.session_id,
+        total_chunks=session.total_chunks,
+        chunks=preview_chunks
+    )
+
+
+
 class SendSession:
     """Internal state tracker for a transaction being sent.
 
@@ -161,6 +227,8 @@ class TransactionSender:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.sessions = {}  # type: Dict[str, SendSession]
+        self._on_response_received = None  # type: Optional[Callable[[str], None]]
+        self._abort_event = threading.Event()
         self._setup_message_handler()
 
     def _setup_message_handler(self) -> None:
@@ -168,11 +236,21 @@ class TransactionSender:
         handler = lambda msg, sender_id: self._on_message(msg, sender_id)
         self.transport.set_message_handler(handler)
 
+    def abort(self) -> None:
+        """Request abort of any in-progress send operation.
+
+        Safe to call at any time. The abort will be checked between
+        chunk sends and the operation will return early with error.
+        """
+        self._abort_event.set()
+
     def send_transaction(
         self,
         tx_hex: str,
         destination: str,
         on_progress: Optional[Callable[[int, int], None]] = None,
+        on_chunk_sending: Optional[Callable[[int, int, int, str], None]] = None,
+        on_response_received: Optional[Callable[[str], None]] = None,
     ) -> SendResult:
         """Send a transaction using stop-and-wait ARQ.
 
@@ -183,6 +261,10 @@ class TransactionSender:
             tx_hex: Raw transaction hex to send
             destination: Meshtastic node ID (e.g., "!deadbeef")
             on_progress: Optional callback(chunk_num, total_chunks) after each ACK
+            on_chunk_sending: Optional callback(chunk_num, total, attempt, wire_format)
+                called just before each send attempt (including retries)
+            on_response_received: Optional callback(message_text) called for each
+                incoming ACK/NACK wire message belonging to this session
 
         Returns:
             SendResult with success=True/txid or success=False/error
@@ -215,6 +297,8 @@ class TransactionSender:
         send_session = SendSession(session_id, protocol_session.total_chunks)
         self.sessions[session_id] = send_session
 
+        self._abort_event.clear()
+        self._on_response_received = on_response_received
         try:
             # Do the sending (blocking)
             self._send_all_chunks(
@@ -222,11 +306,13 @@ class TransactionSender:
                 send_session,
                 destination,
                 on_progress,
+                on_chunk_sending,
             )
             # Build and return result
             return self._build_result(send_session)
         finally:
             # Cleanup
+            self._on_response_received = None
             self._cleanup_session(session_id)
 
     def _send_all_chunks(
@@ -235,6 +321,7 @@ class TransactionSender:
         send_session: SendSession,
         destination: str,
         on_progress: Optional[Callable[[int, int], None]],
+        on_chunk_sending: Optional[Callable[[int, int, int, str], None]],
     ) -> None:
         """Implement stop-and-wait sender: send all chunks with ACK waits.
 
@@ -263,6 +350,9 @@ class TransactionSender:
                     # Get and send chunk
                     chunk_msg = get_chunk_message(protocol_session, chunk_index)
                     wire_format = chunk_msg.format()
+                    attempt = send_session.retry_counts.get(chunk_num, 0) + 1
+                    if on_chunk_sending:
+                        on_chunk_sending(chunk_num, total, attempt, wire_format)
                     self.transport.send(wire_format, destination)
                     send_session.mark_chunk_sent(chunk_num)
 
@@ -270,6 +360,11 @@ class TransactionSender:
                     if self._wait_for_chunk_ack(send_session, chunk_num):
                         # Check if NACK set failed during wait
                         if send_session.failed:
+                            return
+                        # Check for abort request
+                        if self._abort_event.is_set():
+                            send_session.error = "Aborted by user"
+                            send_session.failed = True
                             return
                         # Got ACK, move to next chunk
                         if on_progress:
@@ -333,6 +428,10 @@ class TransactionSender:
         if session is None:
             # Message for unknown session, ignore
             return
+
+        # Notify observer before routing
+        if self._on_response_received:
+            self._on_response_received(message_text)
 
         # Route by message type
         if isinstance(msg, ChunkAckMessage):
