@@ -149,6 +149,35 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
             )
         )
 
+    def test_broadcast_with_no_rpc_client_sends_nack_and_fires_callback(self):
+        """Given rpc_client=None (server started without a working RPC
+        connection, per the documented Meshtastic-keeps-running behavior),
+        When a transaction fully reassembles, Then the client gets a clear
+        NACK instead of the server crashing with AttributeError - real bug
+        found via hardware testing during Story 23.3 (see Issue 18)."""
+        on_broadcast = Mock()
+        on_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        receiver = TransactionReceiver(
+            transport, None, on_broadcast=on_broadcast, on_error=on_error
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        final_nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|Bitcoin RPC not connected")
+        self.assertEqual(final_nack_call.args[1], "!sender1")
+        on_broadcast.assert_called_once_with(
+            BroadcastResult(
+                session_id="sess1", sender_id="!sender1", success=False,
+                error="Bitcoin RPC not connected", raw_tx="deadbeef",
+            )
+        )
+        # Must not be silently swallowed as a generic error - confirms this
+        # goes through the dedicated no-RPC path, not the crash-and-catch one.
+        on_error.assert_not_called()
+
     def test_broadcast_started_fires_before_rpc_call(self):
         on_broadcast_started = Mock()
         receiver, transport, rpc_client, handler = make_receiver(

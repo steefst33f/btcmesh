@@ -188,6 +188,22 @@ class TransactionReceiver:
     def _broadcast(self, session_id: str, sender_id: str, raw_tx: str) -> None:
         if self._on_broadcast_started:
             self._on_broadcast_started(session_id, sender_id)
+
+        if self.rpc_client is None:
+            # Server started (or is still running) without a working RPC
+            # connection - matches the "Meshtastic keeps running even if RPC
+            # is down" design (see btcmesh_server_cli.py/btcmesh_server_gui.py),
+            # but the client still deserves a clear NACK instead of silently
+            # never hearing back (which previously crashed here with an
+            # unhandled AttributeError - see Issue 18's real-hardware repro).
+            error = "Bitcoin RPC not connected"
+            self._send_nack(session_id, sender_id, error)
+            if self._on_broadcast:
+                self._on_broadcast(
+                    BroadcastResult(session_id, sender_id, False, error=error, raw_tx=raw_tx)
+                )
+            return
+
         txid, error = self.rpc_client.broadcast_transaction(raw_tx)
         if txid:
             self._send(f"BTC_ACK|{session_id}|TXID:{txid}", sender_id)

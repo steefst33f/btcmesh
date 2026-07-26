@@ -451,6 +451,24 @@ nothing back to the client at all** 🔍 OPEN — not fixed
   (e.g. `BTC_NACK|<session>|Internal server error`) instead of staying
   silent, so the client fails fast with at least some signal instead of
   waiting out the full retry timeout for a content-free failure.
+- **Update 2026-07-26: a concrete real-world instance of exactly this
+  pattern was found (and fixed) via live hardware testing.** With
+  `rpc_client=None` (RPC failed to connect at startup - the server's own
+  designed "keep running anyway" behavior), a client sent a complete,
+  valid 15-chunk transaction; every chunk ACKed cleanly, reassembly
+  succeeded, and then `_broadcast()` crashed with
+  `AttributeError: 'NoneType' object has no attribute 'broadcast_transaction'`
+  - caught by the same generic `except Exception` branch described above,
+  so the client got nothing back and eventually failed with a content-free
+  `"Transaction failed: No final ACK from relay"`, despite doing
+  everything correctly. **Fixed**: `_broadcast()` now checks for
+  `rpc_client is None` up front and sends an immediate, clear
+  `BTC_NACK|<session>|Bitcoin RPC not connected` instead of attempting the
+  call (see `tests/test_server_receiver.py`'s
+  `test_broadcast_with_no_rpc_client_sends_nack_and_fires_callback`). This
+  closes that one specific path into the generic-exception trap, but the
+  broader issue - *other* generic/unexpected exceptions still get no NACK -
+  remains open.
 
 ---
 
@@ -472,4 +490,4 @@ nothing back to the client at all** 🔍 OPEN — not fixed
 | -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **Open** |
-| 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **Open** |
+| 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **Open / Partially fixed** |
