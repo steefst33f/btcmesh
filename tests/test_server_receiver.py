@@ -282,13 +282,16 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         # No session was ever created for this sender/session_id.
         self.assertEqual(receiver.get_active_sessions(), [])
 
-    def test_generic_reassembly_error_fires_on_error_without_nack(self):
+    def test_generic_reassembly_error_sends_nack_and_fires_on_error(self):
         """A ReassemblyError that isn't InvalidChunkFormatError/
-        MismatchedTotalChunksError (some other reassembly problem) notifies
-        via on_error but does NOT send a NACK - unlike the two more specific
-        errors above, which do NACK. Uses a mocked reassembler since this is
-        about the receiver's own dispatch logic, not real reassembler
-        behavior (which never actually raises a bare ReassemblyError)."""
+        MismatchedTotalChunksError (some other reassembly problem) sends a
+        NACK carrying the exception's own message, and notifies via
+        on_error. Uses a mocked reassembler since this is about the
+        receiver's own dispatch logic, not real reassembler behavior (which
+        never actually raises a bare ReassemblyError). Issue 18 (real-world
+        AttributeError repro) - this generic branch used to swallow the
+        error silently with no NACK; fixed to match the specific-error
+        branches above."""
         on_error = Mock()
         transport = Mock(spec=BaseTransport)
         rpc_client = Mock(spec=BitcoinRPCClient)
@@ -299,12 +302,17 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
 
         handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
 
-        transport.send.assert_not_called()
+        nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(nack_call.args[0], "BTC_NACK|sess1|some other reassembly problem")
+        self.assertEqual(nack_call.args[1], "!sender1")
         on_error.assert_called_once_with("sess1", "!sender1", "some other reassembly problem")
 
-    def test_unexpected_exception_fires_on_error_without_nack(self):
+    def test_unexpected_exception_sends_generic_nack_and_fires_on_error(self):
         """A completely unexpected (non-ReassemblyError) exception from
-        add_chunk() notifies via on_error but does NOT send a NACK."""
+        add_chunk() sends a NACK with a generic, wire-safe message (not the
+        raw exception text, which is unconstrained and could contain
+        internal details), while on_error still gets the real message for
+        server-side logs."""
         on_error = Mock()
         transport = Mock(spec=BaseTransport)
         rpc_client = Mock(spec=BitcoinRPCClient)
@@ -315,7 +323,26 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
 
         handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
 
-        transport.send.assert_not_called()
+        nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(nack_call.args[0], "BTC_NACK|sess1|Internal server error")
+        self.assertEqual(nack_call.args[1], "!sender1")
+        on_error.assert_called_once_with("sess1", "!sender1", "totally unexpected")
+
+    def test_secondary_nack_failure_does_not_escape_the_generic_handler(self):
+        """If sending the NACK itself fails (e.g. the transport is also
+        broken), that second failure must not propagate out of the message
+        handler - it would crash whatever's dispatching messages to it."""
+        on_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        transport.send.side_effect = RuntimeError("transport is also broken")
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        reassembler = Mock(spec=TransactionReassembler)
+        reassembler.add_chunk.side_effect = RuntimeError("totally unexpected")
+        receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")  # must not raise
+
         on_error.assert_called_once_with("sess1", "!sender1", "totally unexpected")
 
     def test_nack_message_truncated_when_too_long(self):

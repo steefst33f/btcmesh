@@ -179,9 +179,25 @@ class TransactionReceiver:
             if self._on_error:
                 self._on_error(session_id, sender_id, detail)
         except ReassemblyError as e:
+            detail = str(e)
+            # Best-effort: don't let a second failure while NACKing escape
+            # this catch-all and crash the message-dispatch callback.
+            try:
+                self._send_nack(session_id, sender_id, detail)
+            except Exception:
+                pass
             if self._on_error:
-                self._on_error(session_id, sender_id, str(e))
+                self._on_error(session_id, sender_id, detail)
         except Exception as e:
+            # Unlike the branches above, the underlying exception message
+            # here is unconstrained (could be anything from a raw Python
+            # AttributeError to internal details) - send a generic NACK
+            # rather than putting it on the wire, but still surface the real
+            # message via on_error for whoever has access to this side's logs.
+            try:
+                self._send_nack(session_id, sender_id, "Internal server error")
+            except Exception:
+                pass
             if self._on_error:
                 self._on_error(session_id, sender_id, str(e))
 
