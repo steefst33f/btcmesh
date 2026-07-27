@@ -423,15 +423,12 @@ one** 🔍 OPEN — protocol-level gap, not yet fixed
 
 **Issue 18: When `add_chunk()` raises a generic `ReassemblyError` or a
 completely unexpected `Exception`, the server logs it locally but sends
-nothing back to the client at all** 🔍 OPEN — not fixed
+nothing back to the client at all** ✅ RESOLVED
 
 - Found while adding test coverage for `server/receiver.py`'s `_on_message()`
   during Story 23.3 (these two branches had zero test coverage anywhere
-  before that; see `tests/test_server_receiver.py`'s
-  `test_generic_reassembly_error_fires_on_error_without_nack` and
-  `test_unexpected_exception_fires_on_error_without_nack`). Pre-existing
-  behavior in both the old `btcmesh_server.py` and the current
-  `server/receiver.py` - not introduced by this story.
+  before that). Pre-existing behavior in both the old `btcmesh_server.py`
+  and the current `server/receiver.py` - not introduced by this story.
 - The two *specific* validation errors (`InvalidChunkFormatError`,
   `MismatchedTotalChunksError`) both call `_send_nack(...)` immediately,
   giving the client a fast, informative failure. The generic
@@ -469,6 +466,23 @@ nothing back to the client at all** 🔍 OPEN — not fixed
   closes that one specific path into the generic-exception trap, but the
   broader issue - *other* generic/unexpected exceptions still get no NACK -
   remains open.
+- **Resolved 2026-07-27**: both remaining branches in `_on_message()` now
+  send a NACK before returning. The generic `except ReassemblyError`
+  branch sends the exception's own message (these are still
+  business-logic-controlled, wire-safe strings, same as
+  `InvalidChunkFormatError`/`MismatchedTotalChunksError` above). The
+  catch-all `except Exception` branch sends a fixed, generic
+  `BTC_NACK|<session>|Internal server error` instead - deliberately *not*
+  the raw exception text, since that's unconstrained and could leak
+  internal details (file paths, attribute names, etc.) onto the wire; the
+  real message still reaches `on_error` for whoever has access to this
+  side's logs. Both NACK sends are wrapped in their own `try/except` so a
+  second failure (e.g. the transport itself is also broken) can't escape
+  the handler and crash whatever's dispatching messages to it. See
+  `tests/test_server_receiver.py`'s
+  `test_generic_reassembly_error_sends_nack_and_fires_on_error`,
+  `test_unexpected_exception_sends_generic_nack_and_fires_on_error`, and
+  `test_secondary_nack_failure_does_not_escape_the_generic_handler`.
 
 ---
 
@@ -490,4 +504,4 @@ nothing back to the client at all** 🔍 OPEN — not fixed
 | -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **Open** |
-| 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **Open / Partially fixed** |
+| 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
