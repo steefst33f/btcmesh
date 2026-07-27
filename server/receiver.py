@@ -8,8 +8,9 @@ no print, no logging, no file I/O.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.reassembler import (
     CHUNK_PARTS_DELIMITER,
@@ -113,6 +114,14 @@ class TransactionReceiver:
         # from on_broadcast (which only fires once the RPC call returns) so a
         # caller can show a distinct "broadcasting..." step for the RPC
         # round-trip, which can take a noticeable moment (e.g. over Tor).
+        completed_session_grace_seconds: int = 300,
+        # How long to remember a just-completed session's final ACK/NACK
+        # (see Issue 17): if the client never got that reply and retransmits
+        # the last chunk within this window, it gets the same cached reply
+        # resent directly instead of the server treating it as chunk 1 of a
+        # brand-new (bogus) session. 300s comfortably covers the client's
+        # own worst-case retry window (DEFAULT_ACK_TIMEOUT=30s *
+        # (DEFAULT_MAX_RETRIES=3 + 1) ~= 120s).
     ):
         self.transport = transport
         self.rpc_client = rpc_client
@@ -123,6 +132,9 @@ class TransactionReceiver:
         self._on_wire_sent = on_wire_sent
         self._on_wire_received = on_wire_received
         self._on_broadcast_started = on_broadcast_started
+        self._completed_session_grace_seconds = completed_session_grace_seconds
+        # (sender_id, session_id) -> (completed_at, final_message_text)
+        self._completed_sessions: Dict[Tuple[Any, str], Tuple[float, str]] = {}
         self.transport.set_message_handler(self._on_message)
 
     def _send(self, message: str, sender_id: str) -> None:
@@ -154,6 +166,19 @@ class TransactionReceiver:
                 chunk_num, total_chunks = int(chunk_num_s), int(total_s)
         except Exception:
             pass
+
+        # Issue 17: if this sender+session already completed (we sent a
+        # final ACK/NACK, but the client never got it and retransmitted the
+        # last chunk), resend that same cached reply directly rather than
+        # letting add_chunk() treat it as chunk 1 of a brand-new session.
+        cache_key = (sender_id, session_id)
+        cached = self._completed_sessions.get(cache_key)
+        if cached is not None:
+            completed_at, final_message = cached
+            if time.time() - completed_at <= self._completed_session_grace_seconds:
+                self._send(final_message, sender_id)
+                return
+            del self._completed_sessions[cache_key]
 
         try:
             reassembled_hex = self.reassembler.add_chunk(sender_id, message_text)
@@ -213,7 +238,8 @@ class TransactionReceiver:
             # never hearing back (which previously crashed here with an
             # unhandled AttributeError - see Issue 18's real-hardware repro).
             error = "Bitcoin RPC not connected"
-            self._send_nack(session_id, sender_id, error)
+            msg = self._send_nack(session_id, sender_id, error)
+            self._remember_completed(session_id, sender_id, msg)
             if self._on_broadcast:
                 self._on_broadcast(
                     BroadcastResult(session_id, sender_id, False, error=error, raw_tx=raw_tx)
@@ -222,27 +248,45 @@ class TransactionReceiver:
 
         txid, error = self.rpc_client.broadcast_transaction(raw_tx)
         if txid:
-            self._send(f"BTC_ACK|{session_id}|TXID:{txid}", sender_id)
+            msg = f"BTC_ACK|{session_id}|TXID:{txid}"
+            self._send(msg, sender_id)
+            self._remember_completed(session_id, sender_id, msg)
             if self._on_broadcast:
                 self._on_broadcast(
                     BroadcastResult(session_id, sender_id, True, txid=txid, raw_tx=raw_tx)
                 )
         else:
             concise_error = _concise_error_message(str(error))
-            self._send_nack(session_id, sender_id, concise_error)
+            msg = self._send_nack(session_id, sender_id, concise_error)
+            self._remember_completed(session_id, sender_id, msg)
             if self._on_broadcast:
                 self._on_broadcast(
                     BroadcastResult(session_id, sender_id, False, error=str(error), raw_tx=raw_tx)
                 )
 
-    def _send_nack(self, session_id: str, sender_id: str, detail: str) -> None:
+    def _remember_completed(self, session_id: str, sender_id: str, message: str) -> None:
+        """Cache the final reply for a just-completed session (see Issue 17
+        and the constructor's completed_session_grace_seconds docstring)."""
+        self._completed_sessions[(sender_id, session_id)] = (time.time(), message)
+
+    def _send_nack(self, session_id: str, sender_id: str, detail: str) -> str:
         msg = f"BTC_NACK|{session_id}|{detail}"
         if len(msg) > _MAX_NACK_LEN:
             msg = msg[: _MAX_NACK_LEN - 3] + "..."
         self._send(msg, sender_id)
+        return msg
 
     def check_timeouts(self) -> None:
-        """Check for and NACK stale reassembly sessions. Call periodically."""
+        """Check for and NACK stale reassembly sessions, and prune expired
+        completed-session cache entries (see Issue 17). Call periodically."""
+        now = time.time()
+        expired_keys = [
+            key for key, (completed_at, _) in self._completed_sessions.items()
+            if now - completed_at > self._completed_session_grace_seconds
+        ]
+        for key in expired_keys:
+            del self._completed_sessions[key]
+
         for session_info in self.reassembler.cleanup_stale_sessions():
             self._send_nack(
                 session_info["tx_session_id"],
