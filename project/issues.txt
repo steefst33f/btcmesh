@@ -509,6 +509,67 @@ nothing back to the client at all** ✅ RESOLVED
 
 ---
 
+**Issue 19: `uhubctl`-based power cycling (Story 26.1/EPIC 5) can silently
+fail to cut real power - it only guarantees a USB data-link disconnect,
+not a genuine VBUS power cycle** 🔍 OPEN
+
+- Found while implementing and hardware-verifying Story 26.1
+  (`transport/power_control.py`, `UhubctlPowerControl`), part of EPIC 5
+  (Device Power-Cycle Recovery/Watchdog - see
+  `project/plans/story_26_1.md`). EPIC 5 exists so a relay server can
+  recover automatically from a wedged Meshtastic device (Issue 12/16)
+  without a human physically unplugging/replugging it - important for
+  anyone running this server unattended.
+- `uhubctl` works by sending a standard USB hub-class `PORT_POWER` control
+  request to the upstream hub. This is a well-documented, real limitation
+  of the tool itself (see its own README/FAQ): many hub controller ICs
+  advertise power-switching support in their USB descriptor without the
+  PCB actually having a physical load switch wired to the downstream VBUS
+  line - so the hub acknowledges the request and its own status register
+  updates correctly, the OS loses the data connection (which looks exactly
+  like a real power-off from software: `scan_meshtastic_devices()` stops
+  finding the port, a `connect()` attempt mid-outage times out), but the
+  device **never actually loses power**.
+- **Verified with real hardware**: testing against two different hubs in
+  an actual deployment (one bus-powered off a second hub, one with its own
+  independent power input - i.e. both a "ganged" and, separately, a
+  higher-power hub were tried) confirmed this failure mode directly by
+  physically watching the connected devices' status LEDs during a held
+  `off` state. In both cases the LEDs never went dark, despite `uhubctl`
+  reporting success and the hub's own status register reading `off`.
+  Restoring power brought both devices back immediately, confirmed
+  functional via real `connect()` calls.
+- **Why this matters for any deployment**: a data-link-only
+  disconnect/reconnect does not reset a hung device's firmware, so
+  `UhubctlPowerControl` cannot be trusted to actually recover a wedged
+  device unless the specific hub in use is independently confirmed to cut
+  real VBUS power - `uhubctl`'s own FAQ recommends testing this with a
+  phone or USB light before relying on it for anything. Anyone deploying
+  this project's watchdog feature should not assume "the hub is
+  `uhubctl`-compatible" is sufficient; it must be verified.
+- Buying a hub with genuinely working, verified real power switching is
+  one valid path (some specific models are documented as verified-real
+  ppps hubs by the `uhubctl`/Raspberry-Pi community), but suitable current
+  options can be expensive or hard to reliably source, and hardware
+  revisions of the "same" model can silently differ even when a listed
+  model is found.
+- **Resolution direction**: Story 26.7's DIY relay-based power control
+  (an ESP32 driving a small relay module, spliced into a device's own USB
+  VBUS wire directly) is hardware-independent - it doesn't rely on
+  whatever hub happens to be upstream, or on its power-switching claims
+  being accurate. This is being promoted from a conditional fallback to
+  the epic's primary, recommended approach, since it's the only one that
+  provides a real guarantee regardless of what hub an operator has. See
+  `project/plans/story_26_7.md`.
+- `transport/power_control.py`'s `UhubctlPowerControl`/`BasePowerControl`
+  remain valid, tested, and available for anyone whose hub genuinely
+  supports real VBUS switching (verified per the FAQ's phone-charging
+  test) - they are a legitimate, simpler option when that's confirmed true.
+  Story 26.7 exists for everyone else, or for anyone who'd rather not
+  depend on hub compatibility at all.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -528,3 +589,4 @@ nothing back to the client at all** ✅ RESOLVED
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **FIXED** |
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
+| 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **Open** |
