@@ -5,7 +5,7 @@ concise error mapping, malformed chunks, timeout handling, and message
 filtering. Uses dependency injection (mock transport + mock RPC client).
 """
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from server.receiver import (
     BroadcastResult,
@@ -508,6 +508,99 @@ class TestTransactionReceiverWireCallbacks(unittest.TestCase):
         on_wire_sent.assert_called_once_with(
             "BTC_NACK|sessTimeout|Timed out waiting for chunks"
         )
+
+
+class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
+    """Tests for Issue 17: if the client never got the final ACK/NACK for a
+    just-completed session and retransmits the last chunk, the server must
+    resend that same cached reply instead of treating it as chunk 1 of a
+    brand-new (bogus) session."""
+
+    def test_retransmitted_last_chunk_after_success_resends_cached_ack(self):
+        receiver, transport, rpc_client, handler = make_receiver()
+        rpc_client.broadcast_transaction.return_value = ("mytxid", None)
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.reset_mock()
+        rpc_client.broadcast_transaction.reset_mock()
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")  # client retransmits, never saw the ACK
+
+        transport.send.assert_called_once_with("BTC_ACK|sess1|TXID:mytxid", "!sender1")
+        rpc_client.broadcast_transaction.assert_not_called()
+        self.assertEqual(receiver.get_active_sessions(), [])
+
+    def test_retransmitted_last_chunk_after_broadcast_failure_resends_cached_nack(self):
+        receiver, transport, rpc_client, handler = make_receiver()
+        rpc_client.broadcast_transaction.return_value = (None, "insufficient fee for this tx")
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.reset_mock()
+        rpc_client.broadcast_transaction.reset_mock()
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.assert_called_once_with("BTC_NACK|sess1|Insufficient fee", "!sender1")
+        rpc_client.broadcast_transaction.assert_not_called()
+
+    def test_retransmitted_last_chunk_when_rpc_not_connected_resends_cached_nack(self):
+        transport = Mock(spec=BaseTransport)
+        receiver = TransactionReceiver(transport, None)
+        handler = transport.set_message_handler.call_args[0][0]
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.reset_mock()
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.assert_called_once_with("BTC_NACK|sess1|Bitcoin RPC not connected", "!sender1")
+
+    def test_different_sender_with_same_session_id_not_confused(self):
+        """Session IDs are only unique per-sender - a retransmission cache
+        keyed on session_id alone would leak one sender's cached reply to
+        an unrelated sender who happens to reuse the same random id."""
+        receiver, transport, rpc_client, handler = make_receiver()
+        rpc_client.broadcast_transaction.return_value = ("firsttxid", None)
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.reset_mock()
+        rpc_client.broadcast_transaction.reset_mock()
+        rpc_client.broadcast_transaction.return_value = ("secondtxid", None)
+        handler("BTC_TX|sess1|1/1|beefdead", "!sender2")
+
+        rpc_client.broadcast_transaction.assert_called_once_with("beefdead")
+        final_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_call.args[0], "BTC_ACK|sess1|TXID:secondtxid")
+        self.assertEqual(final_call.args[1], "!sender2")
+
+    def test_cache_entry_expires_after_grace_period(self):
+        with patch("server.receiver.time.time") as mock_time:
+            mock_time.return_value = 1000.0
+            receiver, transport, rpc_client, handler = make_receiver(
+                completed_session_grace_seconds=100
+            )
+            rpc_client.broadcast_transaction.return_value = ("mytxid", None)
+            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+            rpc_client.broadcast_transaction.assert_called_once()
+
+            mock_time.return_value = 1000.0 + 101  # past the grace period
+            rpc_client.broadcast_transaction.reset_mock()
+            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+            # Cache entry expired - treated as a genuinely new session, broadcasts again
+            rpc_client.broadcast_transaction.assert_called_once()
+
+    def test_check_timeouts_prunes_expired_completed_sessions(self):
+        with patch("server.receiver.time.time") as mock_time:
+            mock_time.return_value = 1000.0
+            receiver, transport, rpc_client, handler = make_receiver(
+                completed_session_grace_seconds=100
+            )
+            rpc_client.broadcast_transaction.return_value = ("mytxid", None)
+            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+            self.assertEqual(len(receiver._completed_sessions), 1)
+
+            mock_time.return_value = 1000.0 + 101
+            receiver.check_timeouts()
+
+            self.assertEqual(len(receiver._completed_sessions), 0)
 
 
 if __name__ == "__main__":

@@ -380,7 +380,7 @@ limitation, not a code bug
 **Issue 17: If the final chunk's ACK or the broadcast ACK/NACK is lost in
 transit, the client retries the last chunk - but the server has already
 deleted the (now-completed) session, so the retry starts a confusing new
-one** 🔍 OPEN — protocol-level gap, not yet fixed
+one** ✅ RESOLVED
 
 - Reported by the user while testing: "if all chunks do get properly
   received, reassembled and broadcasted on server side, [and] the ACK or
@@ -416,6 +416,29 @@ one** 🔍 OPEN — protocol-level gap, not yet fixed
   final result: TXID or error) for some grace period after completion, so a
   retransmitted last chunk for an already-completed session gets the cached
   final ACK/NACK resent directly instead of spawning a new phantom session.
+- **Resolved 2026-07-27**: `TransactionReceiver` now keeps a
+  `(sender_id, session_id) -> (completed_at, final_message)` cache,
+  populated the instant a session's final ACK/NACK is sent (success,
+  broadcast failure, or "RPC not connected" - all three paths in
+  `_broadcast()`). Before handing a chunk to the reassembler, `_on_message()`
+  checks this cache first: if the sender+session already completed within
+  `completed_session_grace_seconds` (default 300s, comfortably covering the
+  client's own worst-case retry window of ~120s), the cached reply is resent
+  directly and the reassembler is never touched - no phantom session, no
+  confusing timeout NACK. Entries are pruned lazily (on lookup, once
+  expired) and periodically (in `check_timeouts()`). Keyed on
+  `(sender_id, session_id)` rather than `session_id` alone, since session
+  IDs are only unique per-sender. See
+  `tests/test_server_receiver.py`'s `TestTransactionReceiverCompletedSessionCache`.
+- **Confirmed on real hardware** the same day: ran a real 15-chunk
+  transaction end-to-end between two physical devices (RPC unreachable in
+  this environment, so the session completed via the "Bitcoin RPC not
+  connected" NACK path); then manually resent the exact same last-chunk
+  wire message to simulate "client never got the NACK." The server's log
+  shows no second "New reassembly session started" line (proof `add_chunk()`
+  was never reached) and immediately resent the identical
+  `BTC_NACK|<session>|Bitcoin RPC not connected` - confirming the cache-hit
+  path fires correctly outside of mocks too.
 
 ---
 
@@ -503,5 +526,5 @@ nothing back to the client at all** ✅ RESOLVED
 | -     | Known-nodes lastHeard may not reflect direct-message traffic | Minor (UX/data accuracy) | **Open / Suspected** |
 | -     | Reassembler doesn't enforce strict in-order chunk arrival | Minor (robustness gap) | **Open / Follow-up** |
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
-| -     | Client retries after server already completed session | **Major (protocol gap)** | **Open** |
+| -     | Client retries after server already completed session | **Major (protocol gap)** | **FIXED** |
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
