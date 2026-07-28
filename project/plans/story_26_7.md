@@ -34,13 +34,21 @@ from the host.
 **Outcome:** `SerialRelayPowerControl` (implementing the existing
 `BasePowerControl` ABC from Story 26.1, alongside `UhubctlPowerControl`)
 talks over a serial connection to a companion ESP32 running custom
-firmware, which drives a 2-channel relay module to cut/restore power to
-each of two Meshtastic devices independently. This gives any operator —
-regardless of their USB hub — a verified, hardware-independent way to
-recover a wedged device automatically, which is what actually keeps a
-relay server available to receive transactions. Confirmed on real
-hardware, this time with an actual LED-off check (not just software
-signals) as the acceptance bar, given what Story 26.1's testing revealed.
+firmware, which drives a relay module to cut/restore power to a
+Meshtastic device. This gives any operator — regardless of their USB hub
+— a verified, hardware-independent way to recover a wedged device
+automatically, which is what actually keeps a relay server (or client)
+available to send/receive transactions. Confirmed on real hardware, this
+time with an actual LED-off check (not just software signals) as the
+acceptance bar, given what Story 26.1's testing revealed.
+
+Note on channel count: the server and client each run on their own
+machine in a typical deployment, each managing a single local Meshtastic
+device, so **one relay channel per machine is the normal case**. The
+protocol and firmware support multiple channels from one ESP32 (useful if
+someone runs several Meshtastic devices from a single machine, e.g. a
+local development/test setup), but that's the exception, not the
+default — see the shopping list and Key Design Decisions below.
 
 ---
 
@@ -81,13 +89,14 @@ the ESP32's line response (with a read timeout comfortably longer than
 `off_seconds`), and raises `PowerControlError` on `ERR`, timeout, or any
 `pyserial` exception.
 
-### Physical wiring (per device)
+### Physical wiring (per device being controlled)
 
 - A cheap USB extension/pass-through cable is cut open; only the **VBUS
   (red) wire** is spliced through one channel of the relay module's
   NO/COM contacts. GND/D+/D- (black/white/green) are spliced straight
   through, untouched.
-- Relay module IN1/IN2 ← ESP32 GPIO pins (two, one per channel).
+- Relay module IN pin(s) ← ESP32 GPIO pin(s), one per device being
+  controlled from that machine (typically just one, per the note above).
 - Relay module VCC/GND ← ESP32 5V/GND pins (the ESP32's own board rail,
   since the ESP32 itself stays continuously powered from a **separate,
   unswitched** USB port on the host — it must never be on a circuit it
@@ -102,14 +111,16 @@ the ESP32's line response (with a read timeout comfortably longer than
 
 Arduino-framework sketch (ESP32 has first-class Arduino Core support):
 reads lines from `Serial`, parses `CYCLE <channel> <seconds>`, drives the
-matching GPIO through the module's trigger level (most cheap 2-channel
-relay modules are **active-LOW** — verify against the actual module once
+matching GPIO through the module's trigger level (most cheap relay
+modules are **active-LOW** — verify against the actual module once
 bought; kept as a single `#define ACTIVE_LOW` flag for an easy flip) low
 for `<seconds>`, then high, then writes `OK`. Malformed commands or an
 out-of-range channel get `ERR <reason>`. A blocking `delay()` for the
 off-duration is fine here — the host's own `power_cycle()` call blocks for
 the same duration anyway (matches `UhubctlPowerControl`'s existing
-behavior/interface contract).
+behavior/interface contract). The firmware supports more than one channel
+(useful for a multi-device machine), but a single-device machine only
+needs one wired up — the second GPIO simply goes unused.
 
 ### Why the host never auto-detects the relay's serial port
 
@@ -161,13 +172,22 @@ This story only builds and hardware-verifies the standalone
 
 ### Shopping list (cheap, no special hardware required beyond an ESP32)
 
+For the normal case — a single Meshtastic device on this machine (e.g. a
+server or client each on its own host):
+
 - 1× ESP32 dev board (any variant with enough free GPIO pins — the
   firmware's pin numbers are `#define` constants to adjust per board)
-- 1× 2-channel 5V relay module (~$5-9, ubiquitous on Amazon/AliExpress —
-  no specific brand required; just confirm active-low vs active-high
+- 1× single-channel 5V relay module (~$2-5, ubiquitous on Amazon/AliExpress
+  — no specific brand required; just confirm active-low vs active-high
   trigger from its datasheet/silkscreen once it arrives)
-- 2× cheap USB 2.0 extension cables (to cut and splice the VBUS wire)
+- 1× cheap USB 2.0 extension cable (to cut and splice the VBUS wire)
 - Basic jumper wires
+
+If a single machine is managing more than one Meshtastic device (e.g. a
+local development/test setup, not the typical deployment), use a
+multi-channel relay module instead and wire one channel per device —
+the firmware and `SerialRelayPowerControl`'s `channel` parameter already
+support this.
 
 ---
 
@@ -192,11 +212,15 @@ This story only builds and hardware-verifies the standalone
    USB-power-switching use case; no need for a hand-designed MOSFET
    gate-drive circuit for a project whose actual goal is reliability
    infrastructure, not hardware novelty.
-2. **Per-device channels (2), not ganged** — this is the direct fix for the
-   limitation that undermined Story 26.1's hub-based approach: a ganged
-   switch can't recover one wedged device without also bouncing a healthy
-   one on the same hub. A 2-channel relay module costs about the same as a
-   1-channel one.
+2. **One relay channel per device, not ganged** — matches how the server
+   and client actually get deployed: each typically runs on its own
+   machine managing a single local Meshtastic device, so a single-channel
+   relay module is the normal, cheapest choice. This still avoids Story
+   26.1's ganged-switching problem (a ganged switch can't recover one
+   wedged device without bouncing a healthy one on the same hub) for the
+   less common case of one machine managing several devices — just use a
+   multi-channel module and one `SerialRelayPowerControl` instance per
+   channel in that case.
 3. **Serial (USB), not WiFi, to the ESP32** — wired and simple; avoids
    adding a network dependency to something whose entire job is recovering
    from *other* reliability failures.
@@ -222,11 +246,11 @@ This story only builds and hardware-verifies the standalone
   exception handling — mirroring `tests/test_power_control.py`'s existing
   `UhubctlPowerControl` test style.
 - **Real hardware** (required before closing Issue 19): flash firmware,
-  wire both channels, run `power_cycle()` per channel, and **visually
-  confirm the LED actually goes dark** this time (not just software
-  signals) — then confirm the device re-enumerates and reconnects
-  successfully afterward, same method already used for Story 26.1's
-  (invalidated) hub-based verification.
+  wire up each device's channel, run `power_cycle()` per channel, and
+  **visually confirm the LED actually goes dark** this time (not just
+  software signals) — then confirm the device re-enumerates and
+  reconnects successfully afterward, same method already used for Story
+  26.1's (invalidated) hub-based verification.
 - **Regression check**: full suite (`python -m unittest discover -s tests
   -p 'test_*.py'`) still passes — this story only adds new code, no
   existing behavior changes.
