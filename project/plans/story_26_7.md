@@ -1,4 +1,4 @@
-# Story 26.7 Implementation Plan: DIY Relay-Based Power Control (ESP32)
+# Story 26.7 Implementation Plan: DIY Relay-Based Power Control (ESP32/ESP8266)
 
 ## Context
 
@@ -26,15 +26,16 @@ it has to be individually verified, and suitable independently-verified
 replacement hubs can be expensive or hard to reliably source.
 
 **Goal:** offer a power-cycle mechanism that works regardless of what hub
-an operator has, by not depending on the hub at all. An ESP32, wired to a
+an operator has, by not depending on the hub at all. A small microcontroller
+(ESP32 or ESP8266, e.g. a NodeMCU V2 - either works, see below), wired to a
 small relay module, physically interrupts a Meshtastic device's own USB
 **VBUS wire only** (data lines untouched), driven over a serial command
 from the host.
 
 **Outcome:** `SerialRelayPowerControl` (implementing the existing
 `BasePowerControl` ABC from Story 26.1, alongside `UhubctlPowerControl`)
-talks over a serial connection to a companion ESP32 running custom
-firmware, which drives a relay module to cut/restore power to a
+talks over a serial connection to a companion microcontroller running
+custom firmware, which drives a relay module to cut/restore power to a
 Meshtastic device. This gives any operator — regardless of their USB hub
 — a verified, hardware-independent way to recover a wedged device
 automatically, which is what actually keeps a relay server (or client)
@@ -109,8 +110,15 @@ the ESP32's line response (with a read timeout comfortably longer than
 
 ### Firmware (`power_relay.ino`)
 
-Arduino-framework sketch (ESP32 has first-class Arduino Core support):
-reads lines from `Serial`, parses `CYCLE <channel> <seconds>`, drives the
+Arduino-framework sketch. Uses only plain Arduino core APIs
+(`Serial`/`pinMode`/`digitalWrite`), nothing platform-specific, so it
+builds for either an **ESP32** or an **ESP8266** board (e.g. a NodeMCU
+V2) — just select the matching board profile in the Arduino IDE before
+flashing. Default GPIO pins are chosen per-platform automatically via
+`#if defined(ARDUINO_ARCH_ESP32) / ARDUINO_ARCH_ESP8266` (NodeMCU uses
+D1/D2 - GPIO5/GPIO4 - which have no boot-mode constraints, unlike
+D0/D3/D4/D8), overridable if wired differently. Reads lines from
+`Serial`, parses `CYCLE <channel> <seconds>`, drives the
 matching GPIO through the module's trigger level (most cheap relay
 modules are **active-LOW** — verify against the actual module once
 bought; kept as a single `#define ACTIVE_LOW` flag for an easy flip) low
@@ -126,8 +134,9 @@ needs one wired up — the second GPIO simply goes unused.
 
 `core/meshtastic_utils.py::scan_meshtastic_devices()` filters ports by a
 small **blacklist** of known non-Meshtastic VIDs, not a whitelist — a
-commodity ESP32 dev board's VID (CP2102 `0x10C4`, CH340 `0x1A86`, or native
-USB `0x303A`) isn't in that blacklist, so it would show up as a false
+commodity ESP32/ESP8266 dev board's VID (CP2102 `0x10C4`, CH340 `0x1A86` -
+common on both, including most NodeMCU boards - or ESP32's native USB
+`0x303A`) isn't in that blacklist, so it would show up as a false
 "Meshtastic candidate" if the relay were ever auto-scanned for. To avoid
 this, `SerialRelayPowerControl`'s port is **always** explicit — a new
 `RELAY_SERIAL_PORT` env var, never auto-detected — and nothing in this
@@ -144,9 +153,10 @@ This story only builds and hardware-verifies the standalone
 ## Implementation Steps
 
 1. **Firmware** — write `hardware/power_relay_firmware/power_relay.ino`
-   implementing the protocol above. GPIO pin numbers as `#define`
-   constants (exact pins depend on the specific ESP32 board in use —
-   confirm the board model before flashing).
+   implementing the protocol above. Supports both ESP32 and ESP8266
+   (e.g. NodeMCU V2) boards via `#if defined(ARDUINO_ARCH_...)`; GPIO
+   pin numbers are `#define` constants with per-platform defaults,
+   overridable if wired differently.
 2. **`transport/power_control.py`** — add `SerialRelayPowerControl`, using
    `pyserial` directly (`import serial`), matching `UhubctlPowerControl`'s
    existing error-wrapping conventions (`PowerControlError` on
@@ -170,13 +180,15 @@ This story only builds and hardware-verifies the standalone
 8. **Update docs** — mark Issue 19 resolved and update
    `project/plans/story_26_1.md` once hardware-verified.
 
-### Shopping list (cheap, no special hardware required beyond an ESP32)
+### Shopping list (cheap, no special hardware required beyond a dev board)
 
 For the normal case — a single Meshtastic device on this machine (e.g. a
 server or client each on its own host):
 
-- 1× ESP32 dev board (any variant with enough free GPIO pins — the
-  firmware's pin numbers are `#define` constants to adjust per board)
+- 1× ESP32 **or** ESP8266 dev board (e.g. a NodeMCU V2) — any variant with
+  enough free GPIO pins; the firmware's pin numbers are `#define`
+  constants with sensible per-platform defaults, adjustable if wired
+  differently
 - 1× single-channel 5V relay module (~$2-5, ubiquitous on Amazon/AliExpress
   — no specific brand required; just confirm active-low vs active-high
   trigger from its datasheet/silkscreen once it arrives)
