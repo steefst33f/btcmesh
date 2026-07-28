@@ -1,0 +1,232 @@
+# Story 26.7 Implementation Plan: DIY Relay-Based Power Control (ESP32)
+
+## Context
+
+**Why this change:**
+EPIC 5 (Device Power-Cycle Recovery/Watchdog, see `project/plans/story_26_1.md`)
+exists so a BTC Mesh Relay server can recover automatically from a wedged
+Meshtastic USB device (Issue 12/16) without a human physically
+unplugging/replugging it — important for anyone running the relay server
+unattended who wants it to stay available and ready to receive incoming
+transactions.
+
+Story 26.1 built `UhubctlPowerControl` to do this via software-controlled
+USB hub port power switching. Real-hardware testing found a real,
+documented limitation of that approach (see `project/issues.txt` Issue
+19): `uhubctl` can report a successful power-off, and the hub's own status
+register can even reflect it, while the device never actually loses power
+— many hub controller chips advertise power-switching support in their USB
+descriptor without the PCB having a physical load switch wired to the
+downstream VBUS line. This was confirmed directly by physically watching
+connected devices' status LEDs stay lit through a held "off" state, on two
+different hubs (one bus-powered, one with its own independent power
+supply) in a real test setup — neither actually cut power, despite both
+reporting success. Whether a given hub genuinely works can't be assumed;
+it has to be individually verified, and suitable independently-verified
+replacement hubs can be expensive or hard to reliably source.
+
+**Goal:** offer a power-cycle mechanism that works regardless of what hub
+an operator has, by not depending on the hub at all. An ESP32, wired to a
+small relay module, physically interrupts a Meshtastic device's own USB
+**VBUS wire only** (data lines untouched), driven over a serial command
+from the host.
+
+**Outcome:** `SerialRelayPowerControl` (implementing the existing
+`BasePowerControl` ABC from Story 26.1, alongside `UhubctlPowerControl`)
+talks over a serial connection to a companion ESP32 running custom
+firmware, which drives a 2-channel relay module to cut/restore power to
+each of two Meshtastic devices independently. This gives any operator —
+regardless of their USB hub — a verified, hardware-independent way to
+recover a wedged device automatically, which is what actually keeps a
+relay server available to receive transactions. Confirmed on real
+hardware, this time with an actual LED-off check (not just software
+signals) as the acceptance bar, given what Story 26.1's testing revealed.
+
+---
+
+## Architecture
+
+```
+transport/power_control.py   (existing file from Story 26.1)
+├── PowerControlError                  (existing, reused)
+├── BasePowerControl                   (existing ABC, reused)
+├── UhubctlPowerControl                (existing — kept; valid for anyone
+│                                        who has verified their hub supports
+│                                        real VBUS switching)
+└── SerialRelayPowerControl (NEW)      — talks to the ESP32 over pyserial
+
+core/config_loader.py (existing file)
+└── get_relay_serial_port(), load_relay_serial_baud()   (NEW getters)
+
+hardware/                    (NEW, non-Python)
+└── power_relay_firmware/
+    └── power_relay.ino      — Arduino-framework ESP32 firmware
+```
+
+### Serial protocol (host ↔ ESP32)
+
+Plain text lines, one command/response pair per power cycle:
+
+```
+→ CYCLE <channel> <off_seconds>\n     e.g. "CYCLE 1 15\n"
+← OK\n                                 (relay cycled successfully)
+← ERR <reason>\n                       (bad channel, bad command, etc.)
+```
+
+`SerialRelayPowerControl` is instantiated **per channel** (one instance per
+Meshtastic device), mirroring how `UhubctlPowerControl` is already
+constructed per hub/port — e.g. `SerialRelayPowerControl(port="/dev/tty...",
+channel=1)`. `power_cycle(off_seconds)` writes the `CYCLE` line, blocks for
+the ESP32's line response (with a read timeout comfortably longer than
+`off_seconds`), and raises `PowerControlError` on `ERR`, timeout, or any
+`pyserial` exception.
+
+### Physical wiring (per device)
+
+- A cheap USB extension/pass-through cable is cut open; only the **VBUS
+  (red) wire** is spliced through one channel of the relay module's
+  NO/COM contacts. GND/D+/D- (black/white/green) are spliced straight
+  through, untouched.
+- Relay module IN1/IN2 ← ESP32 GPIO pins (two, one per channel).
+- Relay module VCC/GND ← ESP32 5V/GND pins (the ESP32's own board rail,
+  since the ESP32 itself stays continuously powered from a **separate,
+  unswitched** USB port on the host — it must never be on a circuit it
+  itself can cut).
+- The relay's COM side connects to whatever "always-on" 5V the device
+  already gets today from its upstream hub/port; NO side connects onward
+  to the device. This makes the DIY relay the *only* power switch that
+  matters — whatever the upstream hub does or doesn't support becomes
+  irrelevant.
+
+### Firmware (`power_relay.ino`)
+
+Arduino-framework sketch (ESP32 has first-class Arduino Core support):
+reads lines from `Serial`, parses `CYCLE <channel> <seconds>`, drives the
+matching GPIO through the module's trigger level (most cheap 2-channel
+relay modules are **active-LOW** — verify against the actual module once
+bought; kept as a single `#define ACTIVE_LOW` flag for an easy flip) low
+for `<seconds>`, then high, then writes `OK`. Malformed commands or an
+out-of-range channel get `ERR <reason>`. A blocking `delay()` for the
+off-duration is fine here — the host's own `power_cycle()` call blocks for
+the same duration anyway (matches `UhubctlPowerControl`'s existing
+behavior/interface contract).
+
+### Why the host never auto-detects the relay's serial port
+
+`core/meshtastic_utils.py::scan_meshtastic_devices()` filters ports by a
+small **blacklist** of known non-Meshtastic VIDs, not a whitelist — a
+commodity ESP32 dev board's VID (CP2102 `0x10C4`, CH340 `0x1A86`, or native
+USB `0x303A`) isn't in that blacklist, so it would show up as a false
+"Meshtastic candidate" if the relay were ever auto-scanned for. To avoid
+this, `SerialRelayPowerControl`'s port is **always** explicit — a new
+`RELAY_SERIAL_PORT` env var, never auto-detected — and nothing in this
+story touches `scan_meshtastic_devices()` at all.
+
+### Explicit non-goal
+
+Wiring this into `DeviceWatchdog` is Story 26.4/26.5/26.6 (not yet built).
+This story only builds and hardware-verifies the standalone
+`SerialRelayPowerControl` backend, matching how Story 26.1 was scoped.
+
+---
+
+## Implementation Steps
+
+1. **Firmware** — write `hardware/power_relay_firmware/power_relay.ino`
+   implementing the protocol above. GPIO pin numbers as `#define`
+   constants (exact pins depend on the specific ESP32 board in use —
+   confirm the board model before flashing).
+2. **`transport/power_control.py`** — add `SerialRelayPowerControl`, using
+   `pyserial` directly (`import serial`), matching `UhubctlPowerControl`'s
+   existing error-wrapping conventions (`PowerControlError` on
+   `serial.SerialException`, `OSError`, timeout, or an `ERR` response).
+3. **`requirements.txt`** — add `pyserial` explicitly (currently only a
+   transitive dependency via `meshtastic`).
+4. **`core/config_loader.py`** — add `get_relay_serial_port()` (mirrors
+   `get_meshtastic_serial_port()`) and a baud-rate getter (mirrors
+   `load_reassembly_timeout()`'s int-with-default-and-logging pattern).
+5. **`tests/test_power_control.py`** — new test class for
+   `SerialRelayPowerControl`, patching `transport.power_control.serial.Serial`
+   (module-qualified, matching the existing `subprocess.run` patch style):
+   command formatting, `OK`/`ERR`/timeout/exception handling.
+6. **Physical build** — shopping list below, wire per the Architecture
+   section.
+7. **Real hardware verification** — flash the firmware, wire it up, run
+   `power_cycle()` against each channel, and **physically confirm the LED
+   actually goes dark** (the check that caught Issue 19's gap in the first
+   place) before declaring success. Confirm re-enumeration/reconnect
+   afterward the same way Story 26.1's verification did.
+8. **Update docs** — mark Issue 19 resolved and update
+   `project/plans/story_26_1.md` once hardware-verified.
+
+### Shopping list (cheap, no special hardware required beyond an ESP32)
+
+- 1× ESP32 dev board (any variant with enough free GPIO pins — the
+  firmware's pin numbers are `#define` constants to adjust per board)
+- 1× 2-channel 5V relay module (~$5-9, ubiquitous on Amazon/AliExpress —
+  no specific brand required; just confirm active-low vs active-high
+  trigger from its datasheet/silkscreen once it arrives)
+- 2× cheap USB 2.0 extension cables (to cut and splice the VBUS wire)
+- Basic jumper wires
+
+---
+
+## Critical Files
+
+| File | Change |
+|------|--------|
+| `transport/power_control.py` | Add `SerialRelayPowerControl` |
+| `core/config_loader.py` | Add `get_relay_serial_port()`, relay baud getter |
+| `requirements.txt` | Add `pyserial` |
+| `tests/test_power_control.py` | New test class for `SerialRelayPowerControl` |
+| `hardware/power_relay_firmware/power_relay.ino` | New — ESP32 firmware |
+| `project/issues.txt` | Mark Issue 19 resolved once hardware-verified |
+| `project/plans/story_26_1.md` | Update epic status once this story lands |
+
+---
+
+## Key Design Decisions
+
+1. **Relay module, not a bare MOSFET** — cheap, ubiquitous, beginner-safe,
+   galvanically isolated, and the standard hobbyist choice for exactly this
+   USB-power-switching use case; no need for a hand-designed MOSFET
+   gate-drive circuit for a project whose actual goal is reliability
+   infrastructure, not hardware novelty.
+2. **Per-device channels (2), not ganged** — this is the direct fix for the
+   limitation that undermined Story 26.1's hub-based approach: a ganged
+   switch can't recover one wedged device without also bouncing a healthy
+   one on the same hub. A 2-channel relay module costs about the same as a
+   1-channel one.
+3. **Serial (USB), not WiFi, to the ESP32** — wired and simple; avoids
+   adding a network dependency to something whose entire job is recovering
+   from *other* reliability failures.
+4. **Relay's own controller (ESP32) is never on a switched circuit** — it
+   must stay powered independently (a separate, always-on USB port) so it
+   can always respond to cycle commands, including immediately after
+   cycling a device.
+5. **Explicit-only serial port config, no auto-detect** — protects against
+   `scan_meshtastic_devices()`'s VID-blacklist approach false-positiving on
+   the ESP32's own serial port (see Architecture section).
+6. **Kept alongside `UhubctlPowerControl`, not a replacement for it** —
+   anyone who has independently verified their hub genuinely cuts VBUS
+   power can still use the simpler, no-extra-hardware `uhubctl` path;
+   this story adds an option for everyone else (or anyone who'd rather not
+   depend on hub compatibility at all).
+
+---
+
+## Verification
+
+- **Unit tests** (mocked `serial.Serial`, no hardware): command formatting,
+  `OK` success path, `ERR <reason>` handling, timeout handling, serial
+  exception handling — mirroring `tests/test_power_control.py`'s existing
+  `UhubctlPowerControl` test style.
+- **Real hardware** (required before closing Issue 19): flash firmware,
+  wire both channels, run `power_cycle()` per channel, and **visually
+  confirm the LED actually goes dark** this time (not just software
+  signals) — then confirm the device re-enumerates and reconnects
+  successfully afterward, same method already used for Story 26.1's
+  (invalidated) hub-based verification.
+- **Regression check**: full suite (`python -m unittest discover -s tests
+  -p 'test_*.py'`) still passes — this story only adds new code, no
+  existing behavior changes.

@@ -44,6 +44,46 @@ def get_meshtastic_serial_port() -> Optional[str]:
     return os.getenv("MESHTASTIC_SERIAL_PORT")
 
 
+def get_relay_serial_port() -> Optional[str]:
+    """
+    Retrieves the DIY power-relay board's serial port from environment
+    variables (Story 26.7). Always explicit - unlike the Meshtastic port,
+    this is never auto-detected, since scan_meshtastic_devices() would
+    otherwise treat the relay board's own serial port as a false-positive
+    Meshtastic candidate (see transport/power_control.py's
+    SerialRelayPowerControl).
+    """
+    if not dotenv_loaded:
+        load_app_config()
+
+    return os.getenv("RELAY_SERIAL_PORT")
+
+
+def load_relay_serial_baud():
+    """
+    Loads the DIY power-relay board's serial baud rate (Story 26.7) from
+    environment variables (.env). Returns (baud: int, source: str); source
+    is 'env' or 'default'. Falls back to the firmware's default (115200) if
+    missing/invalid.
+    """
+    if not dotenv_loaded:
+        load_app_config()
+    val = os.environ.get("RELAY_SERIAL_BAUD")
+    default = 115200
+    if val is None:
+        return default, "default"
+    try:
+        baud = int(val)
+        if baud <= 0:
+            raise ValueError()
+        return baud, "env"
+    except Exception:
+        server_logger.warning(
+            f"Invalid RELAY_SERIAL_BAUD value '{val}'. Using default: {default}."
+        )
+        return default, "default"
+
+
 def load_bitcoin_rpc_config():
     """
     Loads Bitcoin RPC config from environment variables (.env).
