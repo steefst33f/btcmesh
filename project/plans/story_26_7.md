@@ -189,9 +189,15 @@ server or client each on its own host):
   enough free GPIO pins; the firmware's pin numbers are `#define`
   constants with sensible per-platform defaults, adjustable if wired
   differently
-- 1× single-channel 5V relay module (~$2-5, ubiquitous on Amazon/AliExpress
-  — no specific brand required; just confirm active-low vs active-high
-  trigger from its datasheet/silkscreen once it arrives)
+- 1× single-channel **5V** relay module (~$2-5, ubiquitous on Amazon/AliExpress
+  — no specific brand required, but check the relay coil's rated VCC before
+  buying: many cheap "HW-xxx" modules are 12V-coil boards (e.g. the HW-307),
+  which need a separate power supply for the coil - a 5V-VCC module (e.g.
+  the HW-482) runs entirely off the same USB 5V as the microcontroller
+  board, no extra PSU needed. Confirm active-low vs active-high trigger
+  from its datasheet/silkscreen (or by testing) once it arrives - bare,
+  non-opto-isolated boards like the HW-482 are typically active-HIGH,
+  while opto-isolated boards are typically active-LOW)
 - 1× cheap USB 2.0 extension cable (to cut and splice the VBUS wire)
 - Basic jumper wires
 

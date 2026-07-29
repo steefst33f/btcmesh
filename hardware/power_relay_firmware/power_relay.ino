@@ -20,10 +20,12 @@
  * side, and project/plans/story_26_7.md for the full design.
  */
 
-// Most cheap relay modules trigger the relay when the input pin is driven
-// LOW. Flip this to false if your module is active-HIGH instead (check its
-// datasheet/silkscreen).
-#define ACTIVE_LOW true
+// HW-482 (5V, runs off the same USB 5V as the ESP32/ESP8266 board - no
+// separate PSU needed, unlike the 12V HW-307). Bare transistor-driven
+// boards like this, with no opto-isolation stage, are typically
+// active-HIGH. Verify rather than assume: touch IN to 3.3V/5V and check
+// the onboard LED/listen for the click before wiring to a real device.
+#define ACTIVE_LOW false
 
 // Default GPIO pins, chosen per-platform. A single device/channel is the
 // normal case (see story_26_7.md) - RELAY2_PIN is only used if you're
