@@ -69,7 +69,11 @@ core/config_loader.py (existing file)
 
 hardware/                    (NEW, non-Python)
 └── power_relay_firmware/
-    └── power_relay.ino      — Arduino-framework ESP32 firmware
+    ├── platformio.ini       — PlatformIO project file (build/flash from
+    │                          VS Code, no Arduino IDE needed)
+    ├── .gitignore           — excludes PlatformIO's .pio/ build cache
+    └── src/
+        └── power_relay.ino  — Arduino-framework firmware (ESP32/ESP8266)
 ```
 
 ### Serial protocol (host ↔ ESP32)
@@ -152,8 +156,10 @@ This story only builds and hardware-verifies the standalone
 
 ## Implementation Steps
 
-1. **Firmware** — write `hardware/power_relay_firmware/power_relay.ino`
-   implementing the protocol above. Supports both ESP32 and ESP8266
+1. **Firmware** — write `hardware/power_relay_firmware/src/power_relay.ino`
+   (plus a `platformio.ini` alongside it for building/flashing from VS
+   Code's PlatformIO extension, no Arduino IDE needed) implementing the
+   protocol above. Supports both ESP32 and ESP8266
    (e.g. NodeMCU V2) boards via `#if defined(ARDUINO_ARCH_...)`; GPIO
    pin numbers are `#define` constants with per-platform defaults,
    overridable if wired differently.
@@ -217,7 +223,8 @@ support this.
 | `core/config_loader.py` | Add `get_relay_serial_port()`, relay baud getter |
 | `requirements.txt` | Add `pyserial` |
 | `tests/test_power_control.py` | New test class for `SerialRelayPowerControl` |
-| `hardware/power_relay_firmware/power_relay.ino` | New — ESP32 firmware |
+| `hardware/power_relay_firmware/src/power_relay.ino` | New — ESP32/ESP8266 firmware |
+| `hardware/power_relay_firmware/platformio.ini` | New — PlatformIO build config (VS Code) |
 | `project/issues.txt` | Mark Issue 19 resolved once hardware-verified |
 | `project/plans/story_26_1.md` | Update epic status once this story lands |
 
