@@ -12,6 +12,8 @@ import subprocess
 from abc import ABC, abstractmethod
 from typing import Optional
 
+import serial
+
 
 class PowerControlError(Exception):
     """Raised when a power-cycle attempt fails."""
@@ -85,3 +87,45 @@ class UhubctlPowerControl(BasePowerControl):
             raise PowerControlError(
                 (result.stderr or result.stdout or "uhubctl failed").strip()
             )
+
+
+class SerialRelayPowerControl(BasePowerControl):
+    """Power-cycles one channel of a companion ESP32 relay board over serial.
+
+    See hardware/power_relay_firmware/power_relay.ino for the firmware this
+    talks to, and project/plans/story_26_7.md for why this exists: not every
+    USB hub genuinely cuts VBUS power when uhubctl asks it to (see Issue 19),
+    so this DIY relay - spliced into a device's own VBUS wire only - gives a
+    hardware-independent guarantee regardless of what hub is upstream.
+
+    One instance controls one channel (one Meshtastic device), mirroring how
+    UhubctlPowerControl is constructed per hub/port. The serial port is
+    always explicit - never auto-detected - since scan_meshtastic_devices()
+    only blacklists a few known non-Meshtastic VIDs and would otherwise treat
+    this board's own serial port as a false-positive Meshtastic candidate.
+    """
+
+    def __init__(self, port: str, channel: int, baudrate: int = 115200):
+        self._port = port
+        self._channel = channel
+        self._baudrate = baudrate
+
+    def power_cycle(self, off_seconds: float = 15.0) -> None:
+        command = f"CYCLE {self._channel} {int(off_seconds)}\n"
+        timeout = off_seconds + 10
+
+        try:
+            with serial.Serial(self._port, self._baudrate, timeout=timeout) as ser:
+                ser.write(command.encode("ascii"))
+                response = ser.readline().decode("ascii", errors="replace").strip()
+        except serial.SerialException as e:
+            raise PowerControlError(f"Serial error talking to relay board: {e}")
+        except OSError as e:
+            raise PowerControlError(f"Failed to open relay serial port: {e}")
+
+        if response == "":
+            raise PowerControlError(
+                f"Relay board did not respond within {timeout}s"
+            )
+        if response != "OK":
+            raise PowerControlError(f"Relay board error: {response}")
