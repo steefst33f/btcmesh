@@ -139,6 +139,12 @@ class BaseTransport(ABC):
         """
         ...
 
+    @abstractmethod
+    def check_alive(self) -> bool:
+        """Best-effort liveness check. Returns False (never raises) if not
+        connected or the device doesn't respond within a bounded timeout."""
+        ...
+
     @property
     @abstractmethod
     def is_connected(self) -> bool:

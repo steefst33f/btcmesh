@@ -215,6 +215,48 @@ class MeshtasticSerialTransport(BaseTransport):
             self._unsubscribe()
         self._handler = None
 
+    def check_alive(self) -> bool:
+        """Best-effort liveness check. Returns False (never raises) if not
+        connected or the device doesn't respond within the library's default
+        timeout (~20s).
+
+        Sends a local admin "get device metadata" request and waits for a
+        real round-trip acknowledgment - proven by real hardware testing
+        (see project/plans/story_26_2.md) to be the only reliable signal:
+        getMyNodeInfo() only reads an in-memory cache, and sendHeartbeat()/
+        raw writes return successfully even against a genuinely wedged
+        device, since the OS buffers the write regardless of whether
+        firmware actually processes it.
+
+        Deliberately reimplements node.Node.getMetadata() rather than
+        calling it directly: its response handler unconditionally prints
+        firmware/hardware info to stdout, which we don't want firing from a
+        periodic background health check, and globally redirecting stdout
+        around the call would be unsafe once this runs on a background
+        watchdog thread (Story 26.4) alongside other console/log output.
+        """
+        if self._iface is None:
+            return False
+        try:
+            from meshtastic import admin_pb2
+
+            def _quiet_response_handler(p):
+                if "routing" in p["decoded"]:
+                    if p["decoded"]["routing"]["errorReason"] != "NONE":
+                        self._iface._acknowledgment.receivedNak = True
+                else:
+                    self._iface._acknowledgment.receivedAck = True
+
+            p = admin_pb2.AdminMessage()
+            p.get_device_metadata_request = True
+            self._iface.localNode._sendAdmin(
+                p, wantResponse=True, onResponse=_quiet_response_handler
+            )
+            self._iface.waitForAckNak()
+            return True
+        except Exception:
+            return False
+
     @property
     def is_connected(self) -> bool:
         """Whether the transport is currently connected."""

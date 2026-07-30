@@ -824,5 +824,96 @@ class TestMeshtasticSerialTransportProperties(unittest.TestCase):
         self.assertIsNone(transport.local_node_id)
 
 
+# ---------------------------------------------------------------------------
+# check_alive tests (Story 26.2)
+# ---------------------------------------------------------------------------
+
+
+class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
+    """Tests for check_alive(). See project/plans/story_26_2.md for why this
+    reimplements node.Node.getMetadata()'s request/ack round-trip quietly
+    instead of calling the (noisy) public method directly - confirmed by
+    real hardware testing to be the only liveness signal that actually
+    detects a wedged device (unlike getMyNodeInfo(), a pure cache read, or
+    sendHeartbeat()/raw writes, which succeed even against a wedged device).
+    """
+
+    def setUp(self):
+        """Set up mocks for meshtastic."""
+        self.mock_meshtastic = MagicMock()
+        self.mock_serial_iface = MagicMock()
+        self.mock_meshtastic.serial_interface.SerialInterface = MagicMock()
+        sys.modules['meshtastic'] = self.mock_meshtastic
+        sys.modules['meshtastic.serial_interface'] = self.mock_serial_iface
+
+    def tearDown(self):
+        """Clean up mocks."""
+        for mod in ['meshtastic', 'meshtastic.serial_interface']:
+            if mod in sys.modules:
+                del sys.modules[mod]
+
+    def test_returns_false_when_not_connected(self):
+        transport = MeshtasticSerialTransport()
+        self.assertFalse(transport.check_alive())
+
+    def test_returns_true_when_ack_received(self):
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        # waitForAckNak() returning normally (no exception) means an ack
+        # or nak was received - the real library returns None on success.
+        mock_iface.waitForAckNak.return_value = None
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        self.assertTrue(transport.check_alive())
+        mock_iface.localNode._sendAdmin.assert_called_once()
+        _, kwargs = mock_iface.localNode._sendAdmin.call_args
+        self.assertTrue(kwargs.get("wantResponse"))
+
+    def test_returns_false_when_acknak_times_out(self):
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        # Mirrors the real library: raises on timeout rather than
+        # returning False - confirmed against a genuinely wedged device.
+        mock_iface.waitForAckNak.side_effect = RuntimeError(
+            "Timed out waiting for an acknowledgment"
+        )
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        self.assertFalse(transport.check_alive())
+
+    def test_returns_false_on_send_failure(self):
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        mock_iface.localNode._sendAdmin.side_effect = RuntimeError("write failed")
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+
+        self.assertFalse(transport.check_alive())
+
+    def test_never_calls_the_noisy_public_getmetadata(self):
+        """check_alive() must reimplement the request quietly, not call
+        the public getMetadata() (whose response handler prints to
+        stdout on every call - unwanted from a periodic background
+        health check, see project/plans/story_26_2.md)."""
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        mock_iface.waitForAckNak.return_value = None
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport.check_alive()
+
+        mock_iface.localNode.getMetadata.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
