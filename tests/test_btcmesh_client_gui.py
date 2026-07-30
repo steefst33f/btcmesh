@@ -133,7 +133,28 @@ sys.modules['meshtastic.serial_interface'] = unittest.mock.MagicMock()
 # Default serial port enumeration to "no devices" so tests that don't scan
 # explicitly aren't affected by whatever hardware happens to be attached to
 # the machine running the suite; per-test patches override this as needed.
-unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]).start()
+_comports_patcher = unittest.mock.patch(
+    'serial.tools.list_ports.comports', return_value=[]
+)
+_comports_patcher.start()
+
+
+def tearDownModule():
+    """Undo this file's module-level meshtastic/serial mocking once all of
+    its tests have run, so it doesn't leak into other test files that need
+    the real meshtastic.util (e.g. eliminate_duplicate_port) or real
+    serial.tools.list_ports.comports - discovered via a real bug this
+    caused for Story 26.3's tests when run as part of the full suite.
+
+    Kivy/pubsub mocks are deliberately left in place - nothing else in the
+    codebase touches real 'kivy', so they're harmless to leave, and they
+    must exist before this file's own module-level `from btcmesh_client_gui
+    import ...` below anyway.
+    """
+    _comports_patcher.stop()
+    for mod in ('meshtastic', 'meshtastic.util', 'meshtastic.serial_interface'):
+        sys.modules.pop(mod, None)
+
 
 from btcmesh_client_gui import (
     get_log_color,

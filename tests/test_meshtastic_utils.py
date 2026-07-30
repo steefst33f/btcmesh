@@ -79,6 +79,108 @@ class TestScanMeshtasticDevices(unittest.TestCase):
             )
 
 
+class TestScanMeshtasticDevicesDetailed(unittest.TestCase):
+    """Tests for scan_meshtastic_devices_detailed (Story 26.3)."""
+
+    def test_scan_meshtastic_devices_detailed_exists(self):
+        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        self.assertTrue(callable(scan_meshtastic_devices_detailed))
+
+    def test_scan_returns_list(self):
+        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        result = scan_meshtastic_devices_detailed()
+        self.assertIsInstance(result, list)
+
+    def test_scan_returns_empty_when_meshtastic_not_installed(self):
+        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+
+        with unittest.mock.patch.dict(sys.modules, {'meshtastic': None, 'meshtastic.util': None}):
+            import importlib
+            import core.meshtastic_utils
+            importlib.reload(core.meshtastic_utils)
+            result = core.meshtastic_utils.scan_meshtastic_devices_detailed()
+            self.assertEqual(result, [])
+
+    def test_scan_returns_device_info_with_serial_and_description(self):
+        """Given non-blacklisted serial ports, Then returns DeviceInfo
+        entries carrying path, serial_number, and description."""
+        from core import meshtastic_utils
+
+        mock_ports = [
+            unittest.mock.MagicMock(
+                device='/dev/ttyUSB0', vid=0x303a,
+                serial_number='ABC123', description='Some ESP32 board',
+            ),
+            unittest.mock.MagicMock(
+                device='/dev/ttyACM0', vid=0x2886,
+                serial_number=None, description='Some Seeed board',
+            ),
+        ]
+
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
+            result = meshtastic_utils.scan_meshtastic_devices_detailed()
+
+            self.assertEqual([d.path for d in result], ['/dev/ttyACM0', '/dev/ttyUSB0'])
+            by_path = {d.path: d for d in result}
+            self.assertEqual(by_path['/dev/ttyUSB0'].serial_number, 'ABC123')
+            self.assertEqual(by_path['/dev/ttyUSB0'].description, 'Some ESP32 board')
+            self.assertIsNone(by_path['/dev/ttyACM0'].serial_number)
+
+    def test_scan_includes_non_whitelisted_vid_alongside_whitelisted(self):
+        """Same VID-blacklist regression as scan_meshtastic_devices, applied
+        to the detailed variant."""
+        from core import meshtastic_utils
+
+        mock_ports = [
+            unittest.mock.MagicMock(
+                device='/dev/cu.usbmodemESP32', vid=0x303a,
+                serial_number='S1', description='ESP32',
+            ),
+            unittest.mock.MagicMock(
+                device='/dev/cu.usbmodemSeeed', vid=0x2886,
+                serial_number='S2', description='Seeed',
+            ),
+        ]
+
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
+            result = meshtastic_utils.scan_meshtastic_devices_detailed()
+            self.assertEqual(
+                [d.path for d in result],
+                ['/dev/cu.usbmodemESP32', '/dev/cu.usbmodemSeeed'],
+            )
+
+    def test_scan_deduplicates_same_physical_device(self):
+        """Given two OS-level names for the same physical device (a known
+        macOS quirk - see meshtastic.util.eliminate_duplicate_port), Then
+        only the winning DeviceInfo entry is returned, matching the exact
+        same dedup behavior as scan_meshtastic_devices()."""
+        from core import meshtastic_utils
+
+        mock_ports = [
+            unittest.mock.MagicMock(
+                device='/dev/cu.usbserial-1430', vid=0x10c4,
+                serial_number='1430', description='CP2102',
+            ),
+            unittest.mock.MagicMock(
+                device='/dev/cu.wchusbserial1430', vid=0x10c4,
+                serial_number='1430', description='CP2102',
+            ),
+        ]
+
+        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
+            result = meshtastic_utils.scan_meshtastic_devices_detailed()
+            self.assertEqual([d.path for d in result], ['/dev/cu.wchusbserial1430'])
+
+    def test_scan_returns_empty_on_generic_exception(self):
+        from core import meshtastic_utils
+
+        with unittest.mock.patch(
+            'serial.tools.list_ports.comports', side_effect=RuntimeError("boom")
+        ):
+            result = meshtastic_utils.scan_meshtastic_devices_detailed()
+            self.assertEqual(result, [])
+
+
 class TestGetOwnNodeId(unittest.TestCase):
     """Tests for get_own_node_id function."""
 

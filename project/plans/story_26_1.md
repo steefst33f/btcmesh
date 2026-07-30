@@ -133,17 +133,27 @@ open question is whether it actually raises/hangs when the *serial link
 itself* is wedged, versus just returning cached in-memory data regardless of
 whether the device is responsive.
 
-### Story 26.3 — stable device identity in `scan_meshtastic_devices()`
+### Story 26.3 — stable device identity in `scan_meshtastic_devices()` (Done)
 
-Currently returns `List[str]` of paths. Change to also carry each port's
-`serial_number` (from `serial.tools.list_ports.comports()`, already the
-enumeration method after the Issue 9 fix) — either as a parallel dict or by
-introducing a small `DeviceInfo` dataclass (`path`, `serial_number`,
-`description`). Existing callers that only want paths get a thin
-`[d.path for d in devices]` at the call site; check `btcmesh_client_gui.py`'s
-usage before deciding between changing the return type outright vs. adding a
-new `scan_meshtastic_devices_detailed()` alongside the existing function, to
-avoid an unreviewed ripple through both GUIs mid-epic.
+Added `DeviceInfo` (`path`, `serial_number`, `description`) and a new
+`scan_meshtastic_devices_detailed()` alongside the existing function,
+rather than changing its return type - both GUIs use the existing
+`List[str]` result directly for Kivy `Spinner.values`/`connect()`, so
+this avoided an unreviewed ripple through both mid-epic. See
+`project/plans/story_26_3.md`.
+
+**Important caveat for this story (26.4) to design around**: checked
+`serial_number` against every device on hand this session and found its
+reliability is chip-dependent - two CP2102-based boards both reported
+the identical factory-default `"0001"` (not unique across boards of the
+same cheap product), and a CH340-based board reported `None` entirely
+(a well-known limitation of that chip). Only a native-USB ESP32-S3
+board reported a genuinely unique, MAC-derived value. **Don't assume
+`serial_number` uniquely/reliably identifies a device on its own** -
+`DeviceWatchdog`'s re-enumeration matching needs a fallback (e.g.
+treating "the one port that disappeared and reappeared" as a heuristic,
+or falling back to path-based matching) for boards where it's `None` or
+shared.
 
 ### Story 26.4 — `core/device_watchdog.py`
 
@@ -398,14 +408,17 @@ hardware-independent guarantee, it's promoted ahead of the order below,
 which is kept for reference as the original reasoning:
 
 1. Story 26.1 (power_control.py) + Story 26.3 (serial_number in scan) —
-   independent, no hardware needed, low risk
+   independent, no hardware needed, low risk — **Done**
 2. Story 26.2 (check_alive) — needs early real-hardware smoke test to
-   validate the chosen liveness call before building the watchdog around it
-3. Story 26.4 (DeviceWatchdog) — the core orchestration, heaviest test coverage
+   validate the chosen liveness call before building the watchdog around
+   it — **Done**
+3. Story 26.4 (DeviceWatchdog) — the core orchestration, heaviest test
+   coverage — **Next**
 4. Story 26.5 (server wiring) — first real integration point
 5. Story 26.6 (client wiring) — same pattern, second integration point
 6. Story 26.7 (DIY relay) — now the primary approach (see
-   `project/plans/story_26_7.md`), not conditional on 26.1 failing
+   `project/plans/story_26_7.md`), not conditional on 26.1 failing —
+   **Done**
 
 ---
 

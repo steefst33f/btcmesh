@@ -5,6 +5,7 @@ BTCMesh Meshtastic Utilities - Shared utilities for working with Meshtastic devi
 This module provides device scanning, node information retrieval, and formatting
 functions used by CLI, GUI, and server components.
 """
+from dataclasses import dataclass
 from typing import Optional, List, Dict
 
 
@@ -30,6 +31,60 @@ def scan_meshtastic_devices() -> List[str]:
             if port.vid is not None and port.vid not in blacklistVids
         )
         return eliminate_duplicate_port(ports)
+    except ImportError:
+        return []
+    except Exception:
+        return []
+
+
+@dataclass
+class DeviceInfo:
+    """A Meshtastic-candidate serial port and its identifying info.
+
+    serial_number is best-effort, not guaranteed-unique or even present -
+    reliability is chip-dependent (confirmed empirically: CH340-based
+    boards report None; some CP2102 boards share an identical factory-
+    default value across multiple physical devices). Callers must not
+    assume it uniquely identifies a device on its own.
+    """
+    path: str
+    serial_number: Optional[str]
+    description: Optional[str]
+
+
+def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
+    """Like scan_meshtastic_devices(), but also returns each device's
+    serial_number/description for stable-identity matching (Story 26.4's
+    DeviceWatchdog, to recognize a device across re-enumeration after a
+    power cycle even if its OS-assigned path changes).
+
+    Returns:
+        List of DeviceInfo. Empty list if no devices found or meshtastic
+        not installed.
+    """
+    try:
+        from meshtastic.util import blacklistVids, eliminate_duplicate_port
+        import serial.tools.list_ports
+
+        candidates = [
+            port
+            for port in serial.tools.list_ports.comports()
+            if port.vid is not None and port.vid not in blacklistVids
+        ]
+        candidates.sort(key=lambda p: p.device)
+
+        surviving_paths = set(
+            eliminate_duplicate_port([p.device for p in candidates])
+        )
+        return [
+            DeviceInfo(
+                path=p.device,
+                serial_number=p.serial_number,
+                description=p.description,
+            )
+            for p in candidates
+            if p.device in surviving_paths
+        ]
     except ImportError:
         return []
     except Exception:
