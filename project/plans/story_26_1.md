@@ -345,12 +345,15 @@ hub with independently-verified genuine power switching is one option
 (some specific models are documented by the `uhubctl`/Raspberry-Pi
 community), but suitable options can be costly or difficult to reliably
 source, and hardware revisions of a nominally-identical model can differ.
-**Story 26.7's DIY relay-based power control - an ESP32 driving a small
-relay spliced directly into a device's own USB VBUS wire - is
+**Story 26.7's DIY relay-based power control - a microcontroller driving a
+small relay spliced directly into a device's own USB VBUS wire - is
 hardware-independent and gives a real guarantee regardless of what hub an
 operator has upstream, so it is promoted to the epic's primary,
-recommended approach.** See `project/issues.txt` Issue 19 and
-`project/plans/story_26_7.md`.
+recommended approach.** This has since been built and confirmed on real
+hardware (the target device's own LED verified going dark during a power
+cycle, then reconnecting cleanly afterward) - see `project/issues.txt`
+Issue 19 (resolved) and `project/plans/story_26_7.md` for the full
+implementation and verification.
 
 ---
 

@@ -102,10 +102,16 @@ the ESP32's line response (with a read timeout comfortably longer than
   through, untouched.
 - Relay module IN pin(s) ← ESP32 GPIO pin(s), one per device being
   controlled from that machine (typically just one, per the note above).
-- Relay module VCC/GND ← ESP32 5V/GND pins (the ESP32's own board rail,
-  since the ESP32 itself stays continuously powered from a **separate,
-  unswitched** USB port on the host — it must never be on a circuit it
-  itself can cut).
+- Relay module VCC/GND ← the board's own 5V/GND pins, so the relay module
+  runs off the same USB power as the microcontroller itself - no separate
+  PSU needed. **Which pin actually carries 5V varies by board**: on
+  several NodeMCU (ESP8266) clones, `VIN` is only a regulator *input* for
+  external 5-12V and does **not** reflect the USB rail, while a separate
+  `VU` pin (where present) is the true USB-5V passthrough - verify with a
+  multimeter rather than assume either name is correct for a given board.
+  Either way, the microcontroller itself must stay continuously powered
+  from a **separate, unswitched** USB port on the host — it must never be
+  on a circuit it itself can cut.
 - The relay's COM side connects to whatever "always-on" 5V the device
   already gets today from its upstream hub/port; NO side connects onward
   to the device. This makes the DIY relay the *only* power switch that
@@ -279,3 +285,42 @@ support this.
 - **Regression check**: full suite (`python -m unittest discover -s tests
   -p 'test_*.py'`) still passes — this story only adds new code, no
   existing behavior changes.
+
+---
+
+## Implementation Completion
+
+**Status:** Done. Real-hardware verification passed with the rigor Issue
+19 called for: the target Meshtastic device's own LED (not the relay's
+indicator LED) was physically confirmed to go dark during a
+`power_cycle()` call, and the device reconnected cleanly afterward
+(~4.5s, correct node ID) via a real `MeshtasticSerialTransport.connect()`
+call - not just path-visibility.
+
+**Hardware used for verification:** ESP8266 (NodeMCU V2) + a 5V,
+jumper-configurable relay module, spliced into one Meshtastic device's
+USB extension cable's VBUS wire only (data lines untouched), powered
+entirely from the same USB 5V as the microcontroller (no separate PSU).
+
+**Notable findings during bring-up, relevant to anyone repeating this:**
+- On some NodeMCU boards, `VIN` is only a regulator *input* for external
+  5-12V and does **not** reflect the USB 5V rail - a separate `VU` pin
+  (where present) is the actual USB-5V passthrough. Verify with a
+  multimeter rather than assume either pin.
+- A relay's trigger polarity can't be fully trusted from a jumper label
+  or even a manual "touch IN to 3.3V/GND" test - one module tested here
+  responded correctly to a manual touch test in one jumper position, but
+  only toggled correctly in response to an actual `power_cycle()` call in
+  the *other* jumper position. **The only fully reliable check is a real
+  end-to-end test**: send an actual cycle command from the host and watch
+  the relay respond, not just probe the input pin by hand.
+- When something doesn't work, isolate methodically: bench-test the
+  relay/firmware alone first (serial protocol round-trip, LED response)
+  before wiring it into a real device, and when the real-device test
+  still fails, check that the GPIO is actually toggling (multimeter on
+  the pin itself) before assuming the fault is in polarity or firmware
+  logic - it narrows down "host/firmware," "GPIO-to-relay wiring," and
+  "relay/jumper configuration" as independent failure points instead of
+  guessing across all three at once.
+
+**Issue 19 status:** resolved via this story - see `project/issues.txt`.

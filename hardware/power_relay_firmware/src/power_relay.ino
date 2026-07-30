@@ -20,11 +20,14 @@
  * side, and project/plans/story_26_7.md for the full design.
  */
 
-// HW-482 (5V, runs off the same USB 5V as the ESP32/ESP8266 board - no
-// separate PSU needed, unlike the 12V HW-307). Bare transistor-driven
-// boards like this, with no opto-isolation stage, are typically
-// active-HIGH. Verify rather than assume: touch IN to 3.3V/5V and check
-// the onboard LED/listen for the click before wiring to a real device.
+// TinyTronics 5VRELHL (5V, runs off the same USB 5V as the ESP32/ESP8266
+// board - no separate PSU needed). Has a jumper labeled "H"/"L" to select
+// active-high or active-low - confirmed by real end-to-end testing
+// (power_cycle() actually toggling the physical relay, not just a manual
+// touch test) that jumper on "H" matches ACTIVE_LOW false. If using a
+// different module, verify the same way: run an actual power_cycle()
+// end-to-end and watch the relay respond, rather than trusting a jumper
+// label or a manual IN-pin touch test alone - both can be misleading.
 #define ACTIVE_LOW false
 
 // Default GPIO pins, chosen per-platform. A single device/channel is the

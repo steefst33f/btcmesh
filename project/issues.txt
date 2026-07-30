@@ -511,7 +511,7 @@ nothing back to the client at all** ✅ RESOLVED
 
 **Issue 19: `uhubctl`-based power cycling (Story 26.1/EPIC 5) can silently
 fail to cut real power - it only guarantees a USB data-link disconnect,
-not a genuine VBUS power cycle** 🔍 OPEN
+not a genuine VBUS power cycle** ✅ RESOLVED (via Story 26.7)
 
 - Found while implementing and hardware-verifying Story 26.1
   (`transport/power_control.py`, `UhubctlPowerControl`), part of EPIC 5
@@ -567,6 +567,27 @@ not a genuine VBUS power cycle** 🔍 OPEN
   test) - they are a legitimate, simpler option when that's confirmed true.
   Story 26.7 exists for everyone else, or for anyone who'd rather not
   depend on hub compatibility at all.
+- **Resolved via real-hardware verification of Story 26.7's DIY relay**:
+  an ESP8266 (NodeMCU) driving a 5V relay module, spliced into a real
+  Meshtastic device's own USB VBUS wire, was confirmed to **genuinely cut
+  power** - this time verified with the same rigor that caught the
+  original problem: physically watching the *device's own* LED (not just
+  the relay's indicator LED) go dark during a `power_cycle()` call, then
+  confirming a clean, functional reconnect afterward (~4.5s, correct node
+  ID) via `SerialRelayPowerControl`/`MeshtasticSerialTransport`. This
+  closes the gap `uhubctl` couldn't reliably close on this hardware. See
+  `project/plans/story_26_7.md` for the implementation and full
+  verification notes.
+- **Lesson learned during this verification, worth keeping in mind for
+  anyone building the same thing**: a relay's trigger polarity can't be
+  fully trusted from its jumper label or even a manual "touch the IN pin
+  to 3.3V/GND" test alone - one relay module tested during this work
+  responded correctly to a manual touch test in one jumper position, but
+  only actually toggled correctly end-to-end (i.e. in response to a real
+  `power_cycle()` call from the host) in the *other* jumper position. The
+  only fully reliable check is an actual end-to-end test: send a real
+  cycle command and watch the relay respond to it, not just probe the
+  input pin manually.
 
 ---
 
@@ -589,4 +610,4 @@ not a genuine VBUS power cycle** 🔍 OPEN
 | -     | ESP32↔Seeed chunk delivery intermittently unreliable | Unknown (environmental) | **Open / Documented** |
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **FIXED** |
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
-| 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **Open** |
+| 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
