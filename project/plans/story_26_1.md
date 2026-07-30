@@ -278,6 +278,19 @@ real devices before finalizing 26.2 and 26.7:
    data regardless of whether the serial link is responsive? If the latter,
    a different liveness signal is needed (e.g. checking the reader thread's
    last-activity timestamp, or a lower-level serial port health check).
+   **Answered (Story 26.2)**: `getMyNodeInfo()` is confirmed to be a pure
+   in-memory cache lookup - no live check at all. A genuinely wedged
+   device was reproduced (DTR/RTS toggle stress, matching this issue's
+   original "stuck mid-boot" symptom, confirmed via a real `connect()`
+   timing out after ~31s) and used to test candidates directly:
+   `sendHeartbeat()`/raw serial writes both returned successfully even
+   against the wedged device (the OS buffers writes regardless of
+   whether firmware processes them), but `Node.getMetadata()`'s local
+   admin request/ack round-trip genuinely detected it (<1s on a healthy
+   device, `MeshInterfaceError` after ~20s on the wedged one). See
+   `project/plans/story_26_2.md` for the full investigation and the
+   quiet reimplementation `check_alive()` uses instead of the (noisy)
+   public `getMetadata()`.
 2. **Is a given operator's USB hub `uhubctl`-compatible at all?** Run
    `uhubctl -l` (or `uhubctl -f` to also see non-ppps hubs) against the
    actual hardware before relying on Story 26.1 as the sole recovery path.
