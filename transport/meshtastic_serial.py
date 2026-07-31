@@ -6,7 +6,7 @@ message-receive mechanism into the BaseTransport API.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from transport.base import (
     BaseTransport,
@@ -256,6 +256,17 @@ class MeshtasticSerialTransport(BaseTransport):
             return True
         except Exception:
             return False
+
+    def scan_for_reconnect_candidates(self) -> List[str]:
+        """Serial ports to try reconnecting to, for DeviceWatchdog's
+        post-power-cycle recovery. Reuses
+        core.meshtastic_utils.scan_meshtastic_devices_detailed() (the
+        stable-identity-aware scan from Story 26.3), returning just the
+        paths - identity verification against the expected device happens
+        in DeviceWatchdog via local_node_id, not here."""
+        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+
+        return [d.path for d in scan_meshtastic_devices_detailed()]
 
     @property
     def is_connected(self) -> bool:

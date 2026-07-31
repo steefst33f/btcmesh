@@ -98,11 +98,13 @@ class SerialRelayPowerControl(BasePowerControl):
     so this DIY relay - spliced into a device's own VBUS wire only - gives a
     hardware-independent guarantee regardless of what hub is upstream.
 
-    One instance controls one channel (one Meshtastic device), mirroring how
+    One instance controls one channel (one device), mirroring how
     UhubctlPowerControl is constructed per hub/port. The serial port is
-    always explicit - never auto-detected - since scan_meshtastic_devices()
-    only blacklists a few known non-Meshtastic VIDs and would otherwise treat
-    this board's own serial port as a false-positive Meshtastic candidate.
+    always explicit - never auto-detected - since this project's own
+    device-scanning helper (core.meshtastic_utils.scan_meshtastic_devices(),
+    which filters candidates by a VID blacklist rather than a whitelist)
+    would otherwise treat this board's own serial port as a false-positive
+    device candidate.
     """
 
     def __init__(self, port: str, channel: int, baudrate: int = 115200):
