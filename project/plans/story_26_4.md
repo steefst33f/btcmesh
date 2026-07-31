@@ -56,6 +56,27 @@ checking `local_node_id` there is essentially free. This drops the
 connect and check `local_node_id` - a match is authoritative; a mismatch
 means it's some other device, so disconnect and try the next candidate.
 
+**Revised again - candidate enumeration moved onto `BaseTransport`, not
+imported directly from `core.meshtastic_utils`:**
+A second review round caught that `DeviceWatchdog` was only
+*pretending* to be transport-agnostic: it accepted a generic
+`BaseTransport`/`BasePowerControl`, but `_wait_for_device` directly
+imported and called `scan_meshtastic_devices_detailed()` - 100%
+Meshtastic-serial-specific (VID blacklists, `serial.tools.list_ports`).
+Per this project's own architecture (`transport/` is meant to support
+"different protocols... and connections (serial, BLE, WiFi)"), a future
+BLE transport has no "path" concept at all - this would have silently
+broken for anything but `MeshtasticSerialTransport`.
+
+Fix: added `scan_for_reconnect_candidates() -> List[str]` as a new
+abstract method on `BaseTransport` itself. `MeshtasticSerialTransport`
+implements it by calling `scan_meshtastic_devices_detailed()`
+internally; `DeviceWatchdog` now calls
+`self._transport.scan_for_reconnect_candidates()` and no longer imports
+`core.meshtastic_utils` at all. Device discovery becomes the concrete
+transport's job (like `connect`/`local_node_id` already are), not
+something the orchestration layer special-cases.
+
 ---
 
 ## Design
@@ -69,7 +90,6 @@ import time
 
 from transport.base import BaseTransport, TransportConnectionError
 from transport.power_control import BasePowerControl, PowerControlError
-from core.meshtastic_utils import scan_meshtastic_devices_detailed
 
 
 @dataclass
@@ -166,15 +186,17 @@ class DeviceWatchdog:
 
     def _wait_for_device(self) -> Optional[str]:
         """Poll for the device's reappearance with backoff, connecting to
-        each visible candidate and checking its real Meshtastic node ID -
-        the only fully authoritative identity signal (path/serial_number
-        are both unreliable)."""
+        each candidate the transport reports (transport-specific - see
+        BaseTransport.scan_for_reconnect_candidates()) and checking its
+        real node ID via local_node_id - the only fully authoritative
+        identity signal (OS-level path/serial_number are both
+        unreliable)."""
         deadline = time.time() + self._max_reenumerate_wait_seconds
         delay = 2.0
         while time.time() < deadline:
-            for candidate in scan_meshtastic_devices_detailed():
-                if self._try_candidate(candidate.path):
-                    return candidate.path
+            for path in self._transport.scan_for_reconnect_candidates():
+                if self._try_candidate(path):
+                    return path
             time.sleep(delay)
             delay = min(delay * 2, 8.0)
         return None
@@ -227,7 +249,11 @@ class DeviceWatchdog:
 | File | Change |
 |------|--------|
 | `core/device_watchdog.py` | New - `RecoveryOutcome`, `DeviceWatchdog` |
+| `transport/base.py` | Add `scan_for_reconnect_candidates()` abstract method |
+| `transport/meshtastic_serial.py` | Implement it via `scan_meshtastic_devices_detailed()` |
 | `tests/test_device_watchdog.py` | New - full unit test coverage |
+| `tests/test_transport_base.py` | `StubTransport` + ABC enforcement test |
+| `tests/test_meshtastic_serial_transport.py` | New test class for the new method |
 | `project/plans/story_26_1.md` | Mark Story 26.4 done once complete |
 
 ---
@@ -255,6 +281,13 @@ class DeviceWatchdog:
    philosophy: on any failure, report `on_recovery_failed` and stop:
    hammering `power_cycle()` in a tight retry loop is worse than
    surfacing the failure once and letting the operator/caller decide.
+5. **Candidate enumeration lives on `BaseTransport`, not imported
+   directly** — `DeviceWatchdog` calls
+   `self._transport.scan_for_reconnect_candidates()` rather than
+   importing `core.meshtastic_utils` itself. Keeps the orchestration
+   layer genuinely protocol-agnostic (a future BLE transport implements
+   the same method its own way); device discovery is a transport concern,
+   matching how `connect`/`local_node_id` already work.
 
 ---
 
@@ -262,8 +295,9 @@ class DeviceWatchdog:
 
 - **Unit tests** (mocked `BaseTransport`/`BasePowerControl` via
   `Mock(spec=...)`, matching `tests/test_server_receiver.py`'s existing
-  convention; `scan_meshtastic_devices_detailed` patched at the module
-  level it's imported into):
+  convention; `transport.scan_for_reconnect_candidates` configured
+  directly on the mock - `DeviceWatchdog` itself never touches
+  `core.meshtastic_utils`):
   - `record_failure()` trips recovery exactly at `max_consecutive_failures`,
     not before; `record_success()` resets the counter.
   - `tick()` only calls `check_alive()` once `heartbeat_interval_seconds`
@@ -297,10 +331,12 @@ class DeviceWatchdog:
 ## Implementation Completion
 
 **Status:** Done. `core/device_watchdog.py` implemented exactly as
-designed above (including the mid-review redesign from
-`serial_number`/path matching to `local_node_id` matching);
-`tests/test_device_watchdog.py` covers all scenarios listed in
-Verification (15 tests total, all passing).
+designed above, including both mid-review redesigns: `serial_number`/path
+matching → `local_node_id` matching, and direct `core.meshtastic_utils`
+import → `BaseTransport.scan_for_reconnect_candidates()`.
+`tests/test_device_watchdog.py` (15 tests), `tests/test_transport_base.py`,
+and `tests/test_meshtastic_serial_transport.py` all updated/extended
+accordingly, all passing.
 
 **Not yet done**: the real-hardware end-to-end test listed above (wedge
 a relay-equipped device, run a real `DeviceWatchdog` against it) - left

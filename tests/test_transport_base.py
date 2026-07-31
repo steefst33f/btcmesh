@@ -53,6 +53,9 @@ class StubTransport(BaseTransport):
     def check_alive(self):
         return self._connected
 
+    def scan_for_reconnect_candidates(self):
+        return []
+
     @property
     def is_connected(self):
         return self._connected
@@ -125,6 +128,7 @@ class TestABCEnforcement(unittest.TestCase):
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
             @property
@@ -140,6 +144,7 @@ class TestABCEnforcement(unittest.TestCase):
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
             @property
@@ -155,6 +160,7 @@ class TestABCEnforcement(unittest.TestCase):
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
             @property
@@ -170,6 +176,7 @@ class TestABCEnforcement(unittest.TestCase):
             def send(self, message, destination): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
             @property
@@ -185,6 +192,7 @@ class TestABCEnforcement(unittest.TestCase):
             def send(self, message, destination): pass
             def set_message_handler(self, handler): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
             @property
@@ -201,6 +209,7 @@ class TestABCEnforcement(unittest.TestCase):
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def local_node_id(self): return None
 
@@ -215,6 +224,7 @@ class TestABCEnforcement(unittest.TestCase):
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
             def check_alive(self): return False
+            def scan_for_reconnect_candidates(self): return []
             @property
             def is_connected(self): return False
 
@@ -228,6 +238,23 @@ class TestABCEnforcement(unittest.TestCase):
             def send(self, message, destination): pass
             def set_message_handler(self, handler): pass
             def remove_message_handler(self): pass
+            def scan_for_reconnect_candidates(self): return []
+            @property
+            def is_connected(self): return False
+            @property
+            def local_node_id(self): return None
+
+        with self.assertRaises(TypeError):
+            Incomplete()
+
+    def test_missing_scan_for_reconnect_candidates_raises_type_error(self):
+        class Incomplete(BaseTransport):
+            def connect(self, device_path=None): pass
+            def disconnect(self): pass
+            def send(self, message, destination): pass
+            def set_message_handler(self, handler): pass
+            def remove_message_handler(self): pass
+            def check_alive(self): return False
             @property
             def is_connected(self): return False
             @property

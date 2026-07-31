@@ -1,15 +1,17 @@
 """Tests for core/device_watchdog.py — DeviceWatchdog (Story 26.4).
 
 Uses Mock(spec=BaseTransport)/Mock(spec=BasePowerControl), matching
-tests/test_server_receiver.py's existing convention. time.time()/time.sleep
-are patched in the module under test so re-enumeration-wait tests run
-without actually waiting.
+tests/test_server_receiver.py's existing convention. transport.
+scan_for_reconnect_candidates() is configured directly on the mock
+(DeviceWatchdog is transport-agnostic - it never imports
+core.meshtastic_utils itself). time.time()/time.sleep are patched in the
+module under test so re-enumeration-wait tests run without actually
+waiting.
 """
 import unittest
 from unittest.mock import Mock, patch
 
 from core.device_watchdog import DeviceWatchdog, RecoveryOutcome
-from core.meshtastic_utils import DeviceInfo
 from transport.base import BaseTransport, TransportConnectionError
 from transport.power_control import BasePowerControl, PowerControlError
 
@@ -17,6 +19,7 @@ from transport.power_control import BasePowerControl, PowerControlError
 def make_watchdog(**overrides):
     transport = overrides.pop("transport", None) or Mock(spec=BaseTransport)
     power_control = overrides.pop("power_control", Mock(spec=BasePowerControl))
+    transport.scan_for_reconnect_candidates.return_value = []
     kwargs = dict(
         transport=transport,
         power_control=power_control,
@@ -145,12 +148,10 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", on_recovered=on_recovered
         )
-        after = [DeviceInfo(path="/dev/ttyNEW", serial_number=None, description="x")]
+        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!aee5ab3c"
 
-        with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=after
-        ), patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
+        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
             "core.device_watchdog.time.sleep"
         ):
             watchdog.record_failure()
@@ -172,12 +173,10 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id=None, on_recovered=on_recovered
         )
-        after = [DeviceInfo(path="/dev/ttyNEW", serial_number=None, description="x")]
+        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!whatever"
 
-        with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=after
-        ), patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
+        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
             "core.device_watchdog.time.sleep"
         ):
             watchdog.record_failure()
@@ -198,9 +197,9 @@ class TestRecoveryNodeIdMismatch(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", on_recovered=on_recovered
         )
-        after = [
-            DeviceInfo(path="/dev/ttyWRONG", serial_number=None, description="x"),
-            DeviceInfo(path="/dev/ttyRIGHT", serial_number=None, description="x"),
+        transport.scan_for_reconnect_candidates.return_value = [
+            "/dev/ttyWRONG",
+            "/dev/ttyRIGHT",
         ]
         # First candidate connects but is the wrong device; second is ours.
         transport.local_node_id = "!wrongnode"
@@ -211,9 +210,7 @@ class TestRecoveryNodeIdMismatch(unittest.TestCase):
 
         transport.connect.side_effect = connect_side_effect
 
-        with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=after
-        ), patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
+        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
             "core.device_watchdog.time.sleep"
         ):
             watchdog.record_failure()
@@ -236,8 +233,6 @@ class TestRecoveryReenumerationTimeout(unittest.TestCase):
         )
 
         with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=[]
-        ), patch(
             "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 200.0]
         ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
@@ -258,7 +253,7 @@ class TestRecoveryStalePathRejection(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", on_recovered=on_recovered
         )
-        after = [DeviceInfo(path="/dev/ttyNEW", serial_number=None, description="x")]
+        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!aee5ab3c"
         # First connect attempt fails (stale path not yet ready), second succeeds.
         transport.connect.side_effect = [
@@ -267,8 +262,6 @@ class TestRecoveryStalePathRejection(unittest.TestCase):
         ]
 
         with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=after
-        ), patch(
             "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 110.0]
         ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
@@ -284,12 +277,10 @@ class TestRecoveryResetsFailureCounter(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", max_consecutive_failures=3
         )
-        after = [DeviceInfo(path="/dev/ttyNEW", serial_number=None, description="x")]
+        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!aee5ab3c"
 
-        with patch(
-            "core.device_watchdog.scan_meshtastic_devices_detailed", return_value=after
-        ), patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
+        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
             "core.device_watchdog.time.sleep"
         ):
             watchdog.record_failure()

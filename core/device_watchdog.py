@@ -1,9 +1,12 @@
 """Device recovery orchestration for EPIC 5 (Device Power-Cycle Recovery).
 
-DeviceWatchdog detects a wedged Meshtastic device via two complementary
-signals - repeated send/connect failures, and a periodic liveness
-heartbeat (transport.check_alive()) - and drives the recovery cycle:
-disconnect, power-cycle, wait for genuine re-enumeration, reconnect.
+DeviceWatchdog detects a wedged device via two complementary signals -
+repeated send/connect failures, and a periodic liveness heartbeat
+(transport.check_alive()) - and drives the recovery cycle: disconnect,
+power-cycle, wait for genuine re-enumeration, reconnect. Transport-agnostic
+by design: only depends on BaseTransport/BasePowerControl, never on any
+concrete transport's implementation details (e.g. Meshtastic-specific
+scanning) - see BaseTransport.scan_for_reconnect_candidates().
 
 See project/plans/story_26_4.md for the full design rationale.
 """
@@ -13,7 +16,6 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from core.meshtastic_utils import scan_meshtastic_devices_detailed
 from transport.base import BaseTransport, TransportConnectionError
 from transport.power_control import BasePowerControl, PowerControlError
 
@@ -50,16 +52,17 @@ class DeviceWatchdog:
     ):
         """
         Args:
-            device_node_id: the Meshtastic node ID (e.g. '!aee5ab3c') of
-                the device this watchdog is guarding - captured from the
-                transport's own local_node_id while it was still working.
-                This is the authoritative identity check during recovery
-                (see _try_candidate); OS-level path/serial_number are not
+            device_node_id: the local_node_id of the device this watchdog
+                is guarding (format is transport-specific, e.g. Meshtastic's
+                '!aee5ab3c') - captured from the transport's own
+                local_node_id while it was still working. This is the
+                authoritative identity check during recovery (see
+                _try_candidate); OS-level path/serial_number are not
                 trustworthy enough on their own (chip-dependent, and a
                 device can re-enumerate under a different path). If None,
                 any device that successfully connects during recovery is
-                accepted - only safe when exactly one Meshtastic device is
-                ever expected on this machine (the normal single-device
+                accepted - only safe when exactly one device is ever
+                expected on this machine (the normal single-device
                 deployment; see Story 26.7).
         """
         self._transport = transport
@@ -126,26 +129,27 @@ class DeviceWatchdog:
 
     def _wait_for_device(self) -> Optional[str]:
         """Poll for the device's reappearance with backoff, connecting to
-        each visible candidate and checking its real Meshtastic node ID -
-        the only fully authoritative identity signal (OS-level path and
-        USB serial_number are both unreliable - see Story 26.3's
-        findings)."""
+        each candidate the transport reports (transport-specific - see
+        BaseTransport.scan_for_reconnect_candidates()) and checking its
+        real node ID via local_node_id - the only fully authoritative
+        identity signal (OS-level path and USB serial_number are both
+        unreliable - see Story 26.3's findings)."""
         deadline = time.time() + self._max_reenumerate_wait_seconds
         delay = 2.0
         while time.time() < deadline:
-            for candidate in scan_meshtastic_devices_detailed():
-                if self._try_candidate(candidate.path):
-                    return candidate.path
+            for path in self._transport.scan_for_reconnect_candidates():
+                if self._try_candidate(path):
+                    return path
             time.sleep(delay)
             delay = min(delay * 2, 8.0)
         return None
 
     def _try_candidate(self, path: str) -> bool:
         """Connect to a candidate path and check whether it's genuinely
-        our device via its real Meshtastic node ID - not just whether the
-        path connects at all, since a stale path can appear in scan
-        results before the device is functionally ready, and a machine
-        can have more than one Meshtastic-like device connected.
+        our device via its real local_node_id - not just whether the path
+        connects at all, since a stale path can appear in scan results
+        before the device is functionally ready, and a machine can have
+        more than one matching device connected.
 
         Leaves the transport connected on a match (the caller doesn't
         need to reconnect); disconnects again on a mismatch.

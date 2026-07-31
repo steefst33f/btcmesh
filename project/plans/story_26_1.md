@@ -157,13 +157,17 @@ shared.
 
 ### Story 26.4 — `core/device_watchdog.py` (Done)
 
-Built as sketched below, with one important revision made during
-implementation review: matches candidates by the device's real
+Built as sketched below, with two important revisions made during
+implementation review: (1) matches candidates by the device's real
 **Meshtastic node ID** (`transport.local_node_id`), not `serial_number`/
 "new path since before disconnecting" bookkeeping - the original sketch's
 fallback backwards-failed in the common case where a device's path
-*doesn't* change across a clean power cycle. See
-`project/plans/story_26_4.md` for the full rationale and final design.
+*doesn't* change across a clean power cycle; (2) candidate enumeration
+was moved onto `BaseTransport` itself (`scan_for_reconnect_candidates()`)
+rather than `DeviceWatchdog` importing `core.meshtastic_utils` directly -
+the latter would have made the "protocol-agnostic" `BaseTransport`
+dependency a pretense, silently breaking for any non-serial transport.
+See `project/plans/story_26_4.md` for the full rationale and final design.
 
 ```python
 @dataclass
@@ -199,9 +203,9 @@ Recovery cycle (`_recover()`, private):
    and stop (graceful no-op, per Story 26.5's degrade-gracefully scenario)
 3. `power_control.power_cycle()` — propagate `PowerControlError` into
    `on_recovery_failed`
-4. Poll `scan_meshtastic_devices_detailed()` with backoff (e.g. 2s, 4s, 8s,
-   ... capped) up to `max_reenumerate_wait_seconds`; for each visible
-   candidate, connect and check `transport.local_node_id ==
+4. Poll `transport.scan_for_reconnect_candidates()` with backoff (e.g.
+   2s, 4s, 8s, ... capped) up to `max_reenumerate_wait_seconds`; for each
+   visible candidate, connect and check `transport.local_node_id ==
    device_node_id` - the authoritative identity signal, checked for free
    during the connect attempt that already has to happen. A mismatch
    means trying the next candidate (disconnecting first), not giving up.

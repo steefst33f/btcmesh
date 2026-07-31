@@ -915,5 +915,41 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
         mock_iface.localNode.getMetadata.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# scan_for_reconnect_candidates tests (Story 26.4)
+# ---------------------------------------------------------------------------
+
+
+class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase):
+    """Tests for scan_for_reconnect_candidates() - the BaseTransport method
+    DeviceWatchdog (core/device_watchdog.py) uses instead of importing
+    core.meshtastic_utils directly, keeping it transport-agnostic."""
+
+    def test_returns_paths_from_detailed_scan(self):
+        from core.meshtastic_utils import DeviceInfo
+
+        transport = MeshtasticSerialTransport()
+        devices = [
+            DeviceInfo(path="/dev/ttyUSB0", serial_number="A1", description="x"),
+            DeviceInfo(path="/dev/ttyUSB1", serial_number=None, description="y"),
+        ]
+        with patch(
+            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            return_value=devices,
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, ["/dev/ttyUSB0", "/dev/ttyUSB1"])
+
+    def test_returns_empty_list_when_no_devices(self):
+        transport = MeshtasticSerialTransport()
+        with patch(
+            "core.meshtastic_utils.scan_meshtastic_devices_detailed", return_value=[]
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()

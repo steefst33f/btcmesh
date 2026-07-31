@@ -7,7 +7,7 @@ on concrete library details.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,18 @@ class BaseTransport(ABC):
     def check_alive(self) -> bool:
         """Best-effort liveness check. Returns False (never raises) if not
         connected or the device doesn't respond within a bounded timeout."""
+        ...
+
+    @abstractmethod
+    def scan_for_reconnect_candidates(self) -> List[str]:
+        """Return candidate connection targets to try reconnecting to
+        (e.g. serial ports for a serial transport, discovered addresses
+        for a BLE transport). Used by DeviceWatchdog (core/device_watchdog.py)
+        after a recovery power-cycle - kept transport-specific here rather
+        than in the orchestration layer, since what a "candidate" even
+        means (a path? a BLE address?) depends entirely on the concrete
+        transport. Returns an empty list rather than raising if scanning
+        isn't possible."""
         ...
 
     @property

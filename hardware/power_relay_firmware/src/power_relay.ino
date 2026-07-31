@@ -3,7 +3,8 @@
  *
  * Companion firmware for Story 26.7 (EPIC 5: Device Power-Cycle Recovery).
  * Drives a relay module (1 or more channels) to cut/restore VBUS power to
- * one or more Meshtastic USB devices, on command from the host over serial.
+ * one or more USB devices, on command from the host over serial. Nothing
+ * in this firmware is device-specific - it just switches power on request.
  *
  * Board support: ESP32 or ESP8266 (e.g. NodeMCU V2) dev boards both work -
  * this uses only plain Arduino core APIs (Serial/pinMode/digitalWrite),
