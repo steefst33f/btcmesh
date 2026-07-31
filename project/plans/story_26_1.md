@@ -155,7 +155,15 @@ treating "the one port that disappeared and reappeared" as a heuristic,
 or falling back to path-based matching) for boards where it's `None` or
 shared.
 
-### Story 26.4 — `core/device_watchdog.py`
+### Story 26.4 — `core/device_watchdog.py` (Done)
+
+Built as sketched below, with one important revision made during
+implementation review: matches candidates by the device's real
+**Meshtastic node ID** (`transport.local_node_id`), not `serial_number`/
+"new path since before disconnecting" bookkeeping - the original sketch's
+fallback backwards-failed in the common case where a device's path
+*doesn't* change across a clean power cycle. See
+`project/plans/story_26_4.md` for the full rationale and final design.
 
 ```python
 @dataclass
@@ -169,7 +177,7 @@ class DeviceWatchdog:
         self,
         transport: BaseTransport,
         power_control: Optional[BasePowerControl],
-        device_serial_number: Optional[str],
+        device_node_id: Optional[str],
         max_consecutive_failures: int = 3,
         heartbeat_interval_seconds: float = 60.0,
         max_reenumerate_wait_seconds: float = 60.0,
@@ -191,13 +199,17 @@ Recovery cycle (`_recover()`, private):
    and stop (graceful no-op, per Story 26.5's degrade-gracefully scenario)
 3. `power_control.power_cycle()` — propagate `PowerControlError` into
    `on_recovery_failed`
-4. Poll `scan_meshtastic_devices()` with backoff (e.g. 2s, 4s, 8s, ... capped)
-   up to `max_reenumerate_wait_seconds`, looking for `device_serial_number`
-5. On match: `transport.connect(matched_path)`, re-`set_message_handler()`
-   with the handler the caller originally registered (watchdog must be
-   constructed with a reference to it, or the caller re-registers in the
-   `on_recovered` callback — simpler, avoids the watchdog needing to know
-   about message routing at all)
+4. Poll `scan_meshtastic_devices_detailed()` with backoff (e.g. 2s, 4s, 8s,
+   ... capped) up to `max_reenumerate_wait_seconds`; for each visible
+   candidate, connect and check `transport.local_node_id ==
+   device_node_id` - the authoritative identity signal, checked for free
+   during the connect attempt that already has to happen. A mismatch
+   means trying the next candidate (disconnecting first), not giving up.
+5. On match: already connected (no second connect needed) - re-
+   `set_message_handler()` with the handler the caller originally
+   registered (watchdog must be constructed with a reference to it, or
+   the caller re-registers in the `on_recovered` callback — simpler,
+   avoids the watchdog needing to know about message routing at all)
 6. Report `on_recovered`/`on_recovery_failed` with a `RecoveryOutcome`
 
 Design choice: re-registering the message handler is the *caller's*
@@ -413,8 +425,8 @@ which is kept for reference as the original reasoning:
    validate the chosen liveness call before building the watchdog around
    it — **Done**
 3. Story 26.4 (DeviceWatchdog) — the core orchestration, heaviest test
-   coverage — **Next**
-4. Story 26.5 (server wiring) — first real integration point
+   coverage — **Done**. See `project/plans/story_26_4.md`.
+4. Story 26.5 (server wiring) — first real integration point — **Next**
 5. Story 26.6 (client wiring) — same pattern, second integration point
 6. Story 26.7 (DIY relay) — now the primary approach (see
    `project/plans/story_26_7.md`), not conditional on 26.1 failing —
