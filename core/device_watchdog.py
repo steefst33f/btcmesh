@@ -46,6 +46,7 @@ class DeviceWatchdog:
         max_consecutive_failures: int = 3,
         heartbeat_interval_seconds: float = 60.0,
         max_reenumerate_wait_seconds: float = 60.0,
+        recovery_cooldown_seconds: float = 60.0,
         on_recovery_attempt: Optional[Callable[[], None]] = None,
         on_recovered: Optional[Callable[[RecoveryOutcome], None]] = None,
         on_recovery_failed: Optional[Callable[[RecoveryOutcome], None]] = None,
@@ -64,6 +65,18 @@ class DeviceWatchdog:
                 accepted - only safe when exactly one device is ever
                 expected on this machine (the normal single-device
                 deployment; see Story 26.7).
+            recovery_cooldown_seconds: minimum time to wait after a
+                recovery cycle finishes (success or failure) before
+                starting another one. Without this, a device that's
+                merely slower to reboot than max_reenumerate_wait_seconds
+                can get stuck in a self-inflicted loop: a failed cycle
+                leaves the transport disconnected, so the very next
+                tick()/record_failure() immediately starts another cycle
+                (another power cut) right as the device might be about
+                to finish booting from the previous one - never giving
+                it one clean, uninterrupted window long enough to
+                actually come up. Found via real-hardware testing (see
+                Issue 20 in project/issues.txt).
         """
         self._transport = transport
         self._power_control = power_control
@@ -71,12 +84,14 @@ class DeviceWatchdog:
         self._max_consecutive_failures = max_consecutive_failures
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._max_reenumerate_wait_seconds = max_reenumerate_wait_seconds
+        self._recovery_cooldown_seconds = recovery_cooldown_seconds
         self._on_recovery_attempt = on_recovery_attempt
         self._on_recovered = on_recovered
         self._on_recovery_failed = on_recovery_failed
 
         self._consecutive_failures = 0
         self._last_heartbeat_time = 0.0
+        self._last_recovery_finished_time = 0.0
 
     def record_success(self) -> None:
         """Call after any successful send/receive/connect - resets the
@@ -100,25 +115,46 @@ class DeviceWatchdog:
             self._recover()
 
     def _recover(self) -> None:
+        now = time.time()
+        if now - self._last_recovery_finished_time < self._recovery_cooldown_seconds:
+            # Still cooling down from the last attempt - skip silently
+            # rather than hammering a device that may just need a clean,
+            # uninterrupted window to finish booting (Issue 20).
+            return
+        try:
+            self._recover_once()
+        finally:
+            self._last_recovery_finished_time = time.time()
+
+    def _recover_once(self) -> None:
         if self._on_recovery_attempt:
             self._on_recovery_attempt()
 
         self._transport.disconnect()
 
-        if self._power_control is None:
-            self._fail("No power control configured - cannot recover automatically")
-            return
+        # Try an immediate, single reconnect pass before cutting power at
+        # all - the device may have already come back on its own (e.g.
+        # during the cooldown window since a previous failed cycle), and
+        # power-cycling it again would just interrupt it needlessly
+        # (Issue 20: repeatedly cutting power right as a slow-to-enumerate
+        # device is finishing its boot is what defeats recovery).
+        matched_path = self._try_reconnect_without_power_cycle()
 
-        try:
-            self._power_control.power_cycle()
-        except PowerControlError as e:
-            self._fail(f"Power cycle failed: {e}")
-            return
-
-        matched_path = self._wait_for_device()
         if matched_path is None:
-            self._fail("Device did not reappear within the wait window")
-            return
+            if self._power_control is None:
+                self._fail("No power control configured - cannot recover automatically")
+                return
+
+            try:
+                self._power_control.power_cycle()
+            except PowerControlError as e:
+                self._fail(f"Power cycle failed: {e}")
+                return
+
+            matched_path = self._wait_for_device()
+            if matched_path is None:
+                self._fail("Device did not reappear within the wait window")
+                return
 
         # _try_candidate() already connected as part of confirming the
         # match - nothing more to do here.
@@ -126,6 +162,15 @@ class DeviceWatchdog:
         outcome = RecoveryOutcome(success=True, new_device_path=matched_path)
         if self._on_recovered:
             self._on_recovered(outcome)
+
+    def _try_reconnect_without_power_cycle(self) -> Optional[str]:
+        """A single, immediate pass over currently-visible candidates - no
+        power cycle, no backoff/polling. Used only to skip an unnecessary
+        power cut when the device is already back and reachable."""
+        for path in self._transport.scan_for_reconnect_candidates():
+            if self._try_candidate(path):
+                return path
+        return None
 
     def _wait_for_device(self) -> Optional[str]:
         """Poll for the device's reappearance with backoff, connecting to

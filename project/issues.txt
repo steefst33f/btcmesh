@@ -591,6 +591,118 @@ not a genuine VBUS power cycle** ✅ RESOLVED (via Story 26.7)
 
 ---
 
+**Issue 20: `DeviceWatchdog` recovery cycles can repeatedly re-trigger
+before a slow-to-enumerate device finishes rebooting, defeating recovery
+even though the relay itself works correctly** ✅ FIXED
+
+- Found while hardware-testing Story 26.5's server wiring
+  (`btcmesh_server_cli.py` + `core/device_watchdog.py`) for real, end to
+  end: running the actual server against a Meshtastic device wired
+  through a CP2102 USB-to-UART bridge dongle, with the Story 26.7 relay
+  spliced into that dongle's VBUS line.
+- **Reproduction**: with the server running and connected, the device's
+  serial port (`/dev/cu.usbserial-0001` / its `/dev/cu.SLAB_USBtoUART`
+  alias) disappeared from the OS's port list on its own (cause unclear -
+  possibly related to an earlier manual USB replug during the same
+  session). `DeviceWatchdog`'s next heartbeat correctly called
+  `check_alive()`, got `False`, and correctly triggered a real recovery
+  cycle - confirmed physically (the device's own LED was watched cutting
+  out and coming back on each cycle, matching the log). But
+  `_wait_for_device()` (60s default `max_reenumerate_wait_seconds`)
+  consistently timed out without finding the device again - reproduced
+  identically across **6 consecutive real recovery attempts** (each
+  cycle taking ~110s: 60s wait + power-cycle overhead + immediate
+  re-trigger), all logging `"Automatic device recovery failed: Device
+  did not reappear within the wait window"`.
+- **Root cause**: because a failed recovery leaves the transport
+  disconnected, `DeviceWatchdog`'s very next heartbeat tick (60s later)
+  immediately calls `check_alive()` again, which returns `False` for a
+  disconnected transport without attempting any device call -
+  re-triggering another full recovery cycle (another power cut) right as
+  the device might be mid-boot from the previous one. This device just
+  takes longer than the default 60s `max_reenumerate_wait_seconds` to
+  fully reboot and re-enumerate as a serial port after a real VBUS power
+  cycle (plausibly a slower/different re-enumeration path for a CP2102
+  bridge dongle than whatever board Story 26.7's original verification
+  used, which measured only a ~4.5s reconnect) - but the self-retrigger
+  is what turns "somewhat slow" into "never recovers": each cycle cuts
+  power again just as the device might be about to finish coming up, so
+  it never gets one clean, uninterrupted window long enough to actually
+  finish booting.
+- **Confirmed via a second, independent, controlled reproduction** (the
+  first run's initial trigger was a spontaneous disappearance with an
+  unclear cause, and the observation of "goes on and off" was made while
+  the operator was partly distracted - this run fixed both gaps): the
+  server was restarted against a device confirmed healthy, then a
+  *single* manual `SerialRelayPowerControl.power_cycle()` was fired
+  directly (bypassing `DeviceWatchdog` entirely) to deterministically put
+  the device in the same "gone from the OS's port list" starting state.
+  That single, isolated cut+restore was clean - the device reappeared in
+  a port scan within seconds, confirming the relay and the device itself
+  are not inherently the problem. The very next heartbeat then correctly
+  found the transport stale and started `DeviceWatchdog`'s own recovery -
+  which then failed the same way, 4 more times in a row (5 cycles total
+  across both runs). Critically, a port scan taken *while the 4th cycle
+  was still in progress* caught the device already back and present -
+  moments before the next automatic retry cut its power again. The
+  operator confirmed watching the device reboot during the tracked
+  cycle, then again just seconds later as an immediate follow-on reboot -
+  consistent with the device being caught mid-boot by the next cut, not
+  with the relay's own 15s off-timer. Stopping the server (halting the
+  retries) let the same device settle back to fully functional within
+  seconds, exactly as in the first run.
+- **Why this matters**: as implemented, `DeviceWatchdog` has no cooldown
+  between *failed recovery cycles* (only backoff *within* a single
+  cycle's re-scan polling, per Story 26.4) and no configurable
+  `max_reenumerate_wait_seconds` (a deliberate Story 26.5 scope
+  decision, to avoid speculative config surface - see
+  `project/plans/story_26_5.md`). For a device whose real boot+enumerate
+  time exceeds the default 60s window, this combination means automatic
+  recovery can loop indefinitely without ever succeeding, even though
+  the underlying relay hardware and detection logic are both working
+  correctly.
+- **Fix**: added a `recovery_cooldown_seconds` parameter to
+  `DeviceWatchdog.__init__()` (default 60.0, same order of magnitude as
+  the other timing constants). `_recover()` now checks, before doing
+  anything else, whether less than `recovery_cooldown_seconds` has
+  elapsed since the *previous* recovery cycle finished (success or
+  failure, tracked via a new `_last_recovery_finished_time`) - if so, it
+  returns immediately without touching the transport or the relay at
+  all. This applies uniformly to both trigger paths
+  (`tick()`'s heartbeat and `record_failure()`'s threshold), since both
+  go through the same `_recover()` entry point. A device that fails to
+  come back still gets retried automatically (nothing needed a retry
+  cap or manual intervention) - it just now gets a real, uninterrupted
+  settle window between attempts instead of being re-cut within about a
+  second of the previous cycle giving up. No new env var/CLI config was
+  added for this - `build_device_watchdog()` just relies on the new
+  constructor default, consistent with Story 26.5's original decision to
+  avoid speculative config surface. See `core/device_watchdog.py`
+  (`_recover()`/`_recover_once()`) and `tests/test_device_watchdog.py`
+  (`TestRecoveryCooldown`) for the implementation and tests.
+- **Follow-up fix, found while re-verifying the cooldown fix on real
+  hardware**: the cooldown correctly spaced retries out (confirmed: a
+  retry that used to fire ~1s after a failure now correctly waited the
+  full ~60s), but each cycle was still unconditionally power-cycling the
+  device even when it had already come back on its own during the
+  cooldown window - a port scan taken right before one retry confirmed
+  the device was already present, yet that cycle still failed, because
+  it cut power again before ever checking. Fixed by having
+  `_recover_once()` try one immediate, no-power-cut reconnect pass
+  first (`_try_reconnect_without_power_cycle()`); it only falls back to
+  an actual `power_cycle()` if that doesn't find the device. See
+  `TestRecoveryPreCheckSkipsPowerCycle`.
+- **Verified on the real hardware that surfaced this issue**, with both
+  fixes in place: triggered the same "gone from the OS's port list"
+  starting condition via a manual `power_cycle()`, then let the running
+  server's own heartbeat catch it. It recovered in ~5 seconds
+  (`"Device recovered. Reconnected at /dev/cu.SLAB_USBtoUART."`) via the
+  new pre-check path alone, with no additional power cycle needed - the
+  device had already come back on its own by the time the heartbeat
+  noticed, and this time nothing cut its power again to get in the way.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -611,3 +723,4 @@ not a genuine VBUS power cycle** ✅ RESOLVED (via Story 26.7)
 | -     | Client retries after server already completed session | **Major (protocol gap)** | **FIXED** |
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
+| 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
