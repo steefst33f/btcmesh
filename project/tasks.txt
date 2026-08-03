@@ -1301,85 +1301,89 @@ lora/
 
 ### 26. Power Control & Watchdog Infrastructure
 
-- [ ] **Story 26.1: Create transport/power_control.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** an abstract power-control interface with a uhubctl-backed implementation,
-- [ ] *   **So that** a device's USB port can be power-cycled under software control, independent of which physical switching hardware is used.
-    - [ ] *   **Scenario:** Successful power cycle via uhubctl
-        - [ ] *   **Given** a `UhubctlPowerControl` configured with a hub location and port number.
-        - [ ] *   **When** `power_cycle(off_seconds=15)` is called.
-        - [ ] *   **Then** it shells out to `uhubctl -l <location> -p <port> -a cycle -d 15`.
-        - [ ] *   **And** raises `PowerControlError` if the subprocess exits non-zero or `uhubctl` is not installed.
-    - [ ] *   **Scenario:** Abstract interface
-        - [ ] *   **Given** `BasePowerControl`.
-        - [ ] *   **Then** it defines `power_cycle(off_seconds: float) -> None` as the only required method, so alternate backends (Story 26.7) can be swapped in without changing callers.
+- [x] **Story 26.1: Create transport/power_control.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** an abstract power-control interface with a uhubctl-backed implementation,
+- [x] *   **So that** a device's USB port can be power-cycled under software control, independent of which physical switching hardware is used.
+    - [x] *   **Scenario:** Successful power cycle via uhubctl
+        - [x] *   **Given** a `UhubctlPowerControl` configured with a hub location and port number.
+        - [x] *   **When** `power_cycle(off_seconds=15)` is called.
+        - [x] *   **Then** it shells out to `uhubctl -l <location> -p <port> -a cycle -d 15`.
+        - [x] *   **And** raises `PowerControlError` if the subprocess exits non-zero or `uhubctl` is not installed.
+    - [x] *   **Scenario:** Abstract interface
+        - [x] *   **Given** `BasePowerControl`.
+        - [x] *   **Then** it defines `power_cycle(off_seconds: float) -> None` as the only required method, so alternate backends (Story 26.7) can be swapped in without changing callers.
     *   _Note: `power_cycle` is a single call — uhubctl's `-a cycle -d <seconds>` already handles off→wait→on internally, no manual `time.sleep()` needed in this class._
+    *   _Note: Real-hardware testing found neither of the operator's USB hubs actually cut VBUS power via `uhubctl` (reported success but device LEDs stayed lit) — see `project/issues.txt` Issue 19 (resolved via Story 26.7). `UhubctlPowerControl` remains implemented as a `BasePowerControl` backend, but the DIY relay board (Story 26.7) is now the primary/recommended recovery mechanism instead of uhubctl._
 
-- [ ] **Story 26.2: Add check_alive() liveness check to BaseTransport**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a lightweight way to check whether a connected Meshtastic device is actually still responsive,
-- [ ] *   **So that** the watchdog can detect a wedged-but-still-"connected" device during idle periods, not just at connect time.
-    - [ ] *   **Scenario:** Device is responsive
-        - [ ] *   **Given** a connected `MeshtasticSerialTransport`.
-        - [ ] *   **When** `check_alive()` is called.
-        - [ ] *   **Then** it makes a local (non-RF) call against the device (e.g. `iface.getMyNodeInfo()`) and returns `True` if it succeeds within a short timeout.
-    - [ ] *   **Scenario:** Device is wedged
-        - [ ] *   **Given** a connected transport whose underlying serial link has hung.
-        - [ ] *   **When** `check_alive()` is called.
-        - [ ] *   **Then** it returns `False` (timeout or exception) rather than blocking indefinitely or raising.
-    - [ ] *   **Scenario:** Not connected
-        - [ ] *   **Given** a transport that is not currently connected.
-        - [ ] *   **Then** `check_alive()` returns `False` without attempting any device call.
-    *   _Note: Needs real-hardware verification that the chosen local call actually fails against a genuinely wedged device — this is a best-guess pending that test (see plan's open questions)._
+- [x] **Story 26.2: Add check_alive() liveness check to BaseTransport**
+- [x] *   **As a** developer,
+- [x] *   **I want** a lightweight way to check whether a connected Meshtastic device is actually still responsive,
+- [x] *   **So that** the watchdog can detect a wedged-but-still-"connected" device during idle periods, not just at connect time.
+    - [x] *   **Scenario:** Device is responsive
+        - [x] *   **Given** a connected `MeshtasticSerialTransport`.
+        - [x] *   **When** `check_alive()` is called.
+        - [x] *   **Then** it makes a local (non-RF) call against the device (e.g. `iface.getMyNodeInfo()`) and returns `True` if it succeeds within a short timeout.
+    - [x] *   **Scenario:** Device is wedged
+        - [x] *   **Given** a connected transport whose underlying serial link has hung.
+        - [x] *   **When** `check_alive()` is called.
+        - [x] *   **Then** it returns `False` (timeout or exception) rather than blocking indefinitely or raising.
+    - [x] *   **Scenario:** Not connected
+        - [x] *   **Given** a transport that is not currently connected.
+        - [x] *   **Then** `check_alive()` returns `False` without attempting any device call.
+    *   _Note: Real-hardware verified against a genuinely reproduced wedge (rapid DTR/RTS toggling — see `project/plans/story_26_2.md` for the reproduction recipe). `getMyNodeInfo()` turned out to be pure local cache and does NOT detect a wedge; the working implementation instead reimplements `Node.getMetadata()`'s quiet local admin request/ack round-trip (`waitForAckNak()`), which is the only mechanism confirmed to actually fail against a wedged device._
 
-- [ ] **Story 26.3: Expose stable device identity for re-enumeration matching**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** `scan_meshtastic_devices()` to report each port's stable USB serial number alongside its path,
-- [ ] *   **So that** the watchdog can re-identify a device after a power cycle even if the OS assigns it a new `/dev/tty*`/`/dev/cu.*` path.
-    - [ ] *   **Scenario:** Serial number available
-        - [ ] *   **Given** a connected device whose USB-serial adapter reports a hardware serial number.
-        - [ ] *   **When** `scan_meshtastic_devices()` runs.
-        - [ ] *   **Then** the returned info includes that serial number alongside the port path.
-    - [ ] *   **Scenario:** Serial number unavailable
-        - [ ] *   **Given** an adapter that doesn't expose a serial number.
-        - [ ] *   **Then** the port is still returned, with a `None`/empty serial number (path-only matching as a fallback, on a best-effort basis).
+- [x] **Story 26.3: Expose stable device identity for re-enumeration matching**
+- [x] *   **As a** developer,
+- [x] *   **I want** `scan_meshtastic_devices()` to report each port's stable USB serial number alongside its path,
+- [x] *   **So that** the watchdog can re-identify a device after a power cycle even if the OS assigns it a new `/dev/tty*`/`/dev/cu.*` path.
+    - [x] *   **Scenario:** Serial number available
+        - [x] *   **Given** a connected device whose USB-serial adapter reports a hardware serial number.
+        - [x] *   **When** `scan_meshtastic_devices()` runs.
+        - [x] *   **Then** the returned info includes that serial number alongside the port path.
+    - [x] *   **Scenario:** Serial number unavailable
+        - [x] *   **Given** an adapter that doesn't expose a serial number.
+        - [x] *   **Then** the port is still returned, with a `None`/empty serial number (path-only matching as a fallback, on a best-effort basis).
+    *   _Note: Implemented as a new `scan_meshtastic_devices_detailed()` (returning `DeviceInfo(path, serial_number, description)`) alongside the original `scan_meshtastic_devices()`, which is left untouched since both GUIs depend on its plain `List[str]` return type. Also fixed a pre-existing test-isolation bug found while adding coverage for this (`tests/test_btcmesh_client_gui.py` was permanently shadowing `eliminate_duplicate_port` for any test file run afterward in the same process)._
 
-- [ ] **Story 26.4: Create core/device_watchdog.py**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a shared `DeviceWatchdog` class combining failure detection and recovery,
-- [ ] *   **So that** both the client and server can reuse the same recovery logic instead of duplicating it.
-    - [ ] *   **Scenario:** Passive trip via repeated failures
-        - [ ] *   **Given** a `DeviceWatchdog` wrapping a transport and power control.
-        - [ ] *   **When** `record_failure()` is called `max_consecutive_failures` times in a row without an intervening `record_success()`.
-        - [ ] *   **Then** a recovery cycle is triggered.
-    - [ ] *   **Scenario:** Active trip via heartbeat
-        - [ ] *   **Given** a `DeviceWatchdog` ticked periodically via `tick()`.
-        - [ ] *   **When** `check_alive()` returns `False` on a scheduled heartbeat check.
-        - [ ] *   **Then** a recovery cycle is triggered, same as the passive path.
-    - [ ] *   **Scenario:** Recovery cycle
-        - [ ] *   **Given** a triggered recovery.
-        - [ ] *   **Then** the watchdog disconnects the transport, calls `power_control.power_cycle()`, polls `scan_meshtastic_devices()` (with backoff, up to a configurable max wait) for the device's known serial number to reappear, reconnects on the matching port, and re-registers the message handler.
-    - [ ] *   **Scenario:** Recovery outcome reporting
-        - [ ] *   **Given** optional `on_recovery_attempt`, `on_recovered`, `on_recovery_failed` callbacks.
-        - [ ] *   **Then** they fire at the appropriate points so a GUI/CLI can log/display recovery progress.
-    - [ ] *   **Scenario:** Recovery gives up
-        - [ ] *   **Given** the device does not reappear within the max wait after a power cycle.
-        - [ ] *   **Then** `on_recovery_failed` fires with a clear error, and the watchdog does not retry indefinitely without backoff.
+- [x] **Story 26.4: Create core/device_watchdog.py**
+- [x] *   **As a** developer,
+- [x] *   **I want** a shared `DeviceWatchdog` class combining failure detection and recovery,
+- [x] *   **So that** both the client and server can reuse the same recovery logic instead of duplicating it.
+    - [x] *   **Scenario:** Passive trip via repeated failures
+        - [x] *   **Given** a `DeviceWatchdog` wrapping a transport and power control.
+        - [x] *   **When** `record_failure()` is called `max_consecutive_failures` times in a row without an intervening `record_success()`.
+        - [x] *   **Then** a recovery cycle is triggered.
+    - [x] *   **Scenario:** Active trip via heartbeat
+        - [x] *   **Given** a `DeviceWatchdog` ticked periodically via `tick()`.
+        - [x] *   **When** `check_alive()` returns `False` on a scheduled heartbeat check.
+        - [x] *   **Then** a recovery cycle is triggered, same as the passive path.
+    - [x] *   **Scenario:** Recovery cycle
+        - [x] *   **Given** a triggered recovery.
+        - [x] *   **Then** the watchdog disconnects the transport, calls `power_control.power_cycle()`, polls for the device's known identity to reappear (with backoff, up to a configurable max wait), reconnects on the matching port, and re-registers the message handler.
+    - [x] *   **Scenario:** Recovery outcome reporting
+        - [x] *   **Given** optional `on_recovery_attempt`, `on_recovered`, `on_recovery_failed` callbacks.
+        - [x] *   **Then** they fire at the appropriate points so a GUI/CLI can log/display recovery progress.
+    - [x] *   **Scenario:** Recovery gives up
+        - [x] *   **Given** the device does not reappear within the max wait after a power cycle.
+        - [x] *   **Then** `on_recovery_failed` fires with a clear error, and the watchdog does not retry indefinitely without backoff.
+    *   _Note: Design revised twice from the original sketch during implementation (see `project/plans/story_26_4.md`): (1) re-enumeration matching uses the device's real `local_node_id` (checked for free during the already-necessary connect probe) instead of serial-number/path heuristics, which were found to fail in the common case of a device reappearing under the same path; (2) `scan_for_reconnect_candidates()` was added as a new abstract method on `BaseTransport` (implemented by `MeshtasticSerialTransport`) so `DeviceWatchdog` never imports `core.meshtastic_utils` directly, keeping it genuinely transport-agnostic rather than Meshtastic-specific._
 
-- [ ] **Story 26.5: Wire DeviceWatchdog into the server (GUI + CLI)**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** the server to automatically recover a wedged Meshtastic device,
-- [ ] *   **So that** the relay keeps running unattended without needing a manual power cycle.
-    - [ ] *   **Scenario:** Watchdog ticks alongside existing timeout checks
-        - [ ] *   **Given** the server's existing background loop (the one already calling `receiver.check_timeouts()` every ~10s).
-        - [ ] *   **When** the loop runs.
-        - [ ] *   **Then** it also ticks the `DeviceWatchdog` on its own schedule, and reports recovery attempts/outcomes to the activity log.
-    - [ ] *   **Scenario:** Recovery reconnects the receiver
-        - [ ] *   **Given** a successful recovery cycle.
-        - [ ] *   **Then** `TransactionReceiver` is left attached to the newly-reconnected transport, with no loss of already-completed sessions.
-    - [ ] *   **Scenario:** Power control not configured
-        - [ ] *   **Given** no power-control backend is configured (e.g. no hardware set up yet).
-        - [ ] *   **Then** the watchdog logs detected lockups but skips the power-cycle step, so the feature degrades gracefully rather than erroring.
+- [x] **Story 26.5: Wire DeviceWatchdog into the server (GUI + CLI)**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** the server to automatically recover a wedged Meshtastic device,
+- [x] *   **So that** the relay keeps running unattended without needing a manual power cycle.
+    - [x] *   **Scenario:** Watchdog ticks alongside existing timeout checks
+        - [x] *   **Given** the server's existing background loop (the one already calling `receiver.check_timeouts()` every ~10s).
+        - [x] *   **When** the loop runs.
+        - [x] *   **Then** it also ticks the `DeviceWatchdog` on its own schedule, and reports recovery attempts/outcomes to the activity log.
+    - [x] *   **Scenario:** Recovery reconnects the receiver
+        - [x] *   **Given** a successful recovery cycle.
+        - [x] *   **Then** `TransactionReceiver` is left attached to the newly-reconnected transport, with no loss of already-completed sessions.
+    - [x] *   **Scenario:** Power control not configured
+        - [x] *   **Given** no power-control backend is configured (e.g. no hardware set up yet).
+        - [x] *   **Then** the watchdog logs detected lockups but skips the power-cycle step, so the feature degrades gracefully rather than erroring.
+    *   _Note: Wired into `btcmesh_server_cli.py` only; `btcmesh_server_gui.py` wiring is a scoped, similarly-shaped follow-up (see `project/plans/story_26_5.md`). Along the way, fixed a real pre-existing gap in `TransactionReceiver._send()` (`server/receiver.py`), which had no error handling — a send failure during pubsub-dispatched message handling was silently swallowed, and one during `check_timeouts()` would have crashed the server loop. Fixed via a new `on_transport_error` callback plus a catch-and-continue cleanup loop. Config + `DeviceWatchdog` construction is shared via a new `build_device_watchdog()` factory (`core/device_watchdog.py`), reused by both CLI and (future) GUI wiring, since that part has no UI-specific variation — unlike `TransactionReceiver`'s callback wiring, which stays duplicated per UI._
 
 - [ ] **Story 26.6: Wire DeviceWatchdog into the client (GUI + CLI)**
 - [ ] *   **As a** user of the client,
@@ -1392,18 +1396,18 @@ lora/
         - [ ] *   **Given** a transaction send in progress when the device wedges.
         - [ ] *   **Then** the in-flight send fails cleanly (existing retry/timeout handling), and the watchdog's next tick recovers the device for the next attempt, rather than the recovery racing the send.
 
-- [ ] **Story 26.7: DIY relay companion firmware (fallback if uhubctl is incompatible)**
-- [ ] *   **As a** relay operator without a uhubctl-compatible USB hub,
-- [ ] *   **I want** a `SerialRelayPowerControl` backend plus matching microcontroller firmware,
-- [ ] *   **So that** I can build a cheap DIY power-cycling board when no compatible off-the-shelf hub is available.
-    - [ ] *   **Scenario:** SerialRelayPowerControl protocol
-        - [ ] *   **Given** a companion microcontroller (e.g. Arduino Nano) connected via its own serial port, running the matching firmware.
-        - [ ] *   **When** `power_cycle(off_seconds)` is called.
-        - [ ] *   **Then** it sends `CYCLE <channel> <off_seconds>\n` and waits for an `OK\n` response, raising `PowerControlError` on timeout or an `ERR ...` response.
-    - [ ] *   **Scenario:** Firmware sketch
-        - [ ] *   **Given** `hardware/power_relay_firmware/power_relay.ino`.
-        - [ ] *   **Then** it implements the `CYCLE`/`OK`/`ERR` protocol above, toggling a relay/MOSFET GPIO pin wired across the target device's USB VBUS line.
-    *   _Note: Only needed if Story 26.1's `uhubctl -l` check comes back incompatible with the operator's hub — build this last, after confirming that._
+- [x] **Story 26.7: DIY relay companion firmware (fallback if uhubctl is incompatible)**
+- [x] *   **As a** relay operator without a uhubctl-compatible USB hub,
+- [x] *   **I want** a `SerialRelayPowerControl` backend plus matching microcontroller firmware,
+- [x] *   **So that** I can build a cheap DIY power-cycling board when no compatible off-the-shelf hub is available.
+    - [x] *   **Scenario:** SerialRelayPowerControl protocol
+        - [x] *   **Given** a companion microcontroller (ESP32 or ESP8266, e.g. NodeMCU V2) connected via its own serial port, running the matching firmware.
+        - [x] *   **When** `power_cycle(off_seconds)` is called.
+        - [x] *   **Then** it sends `CYCLE <channel> <off_seconds>\n` and waits for an `OK\n` response, raising `PowerControlError` on timeout or an `ERR ...` response.
+    - [x] *   **Scenario:** Firmware sketch
+        - [x] *   **Given** `hardware/power_relay_firmware/src/power_relay.ino`.
+        - [x] *   **Then** it implements the `CYCLE`/`OK`/`ERR` protocol above, toggling a relay/MOSFET GPIO pin wired across the target device's USB VBUS line.
+    *   _Note: Promoted from "fallback" to the primary recovery mechanism after real-hardware testing showed `uhubctl` doesn't cut real VBUS power on either of the operator's hubs (Issue 19). Verified end-to-end on real hardware: relay cuts power (device's own LED confirmed going dark) and the device reconnects cleanly afterward. Supports both ESP32 and ESP8266 (e.g. NodeMCU V2) boards via `#if defined(...)`; a single relay channel is the normal case. Also added a PlatformIO project (`hardware/power_relay_firmware/platformio.ini`) as an alternative to the Arduino IDE for flashing. See `project/plans/story_26_7.md` for the full design, polarity-discovery process, and verification notes._
 
 ---
 
