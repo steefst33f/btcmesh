@@ -84,6 +84,33 @@ def load_relay_serial_baud():
         return default, "default"
 
 
+def get_relay_channel() -> int:
+    """
+    Loads the DIY power-relay board's channel number (Story 26.7) from
+    environment variables (.env). Defaults to 1 - a single relay channel
+    per device is the normal deployment (server/client each typically
+    manage one local device); only set RELAY_CHANNEL if this machine's
+    relay controls more than one device. Falls back to the default on any
+    invalid value.
+    """
+    if not dotenv_loaded:
+        load_app_config()
+    val = os.environ.get("RELAY_CHANNEL")
+    default = 1
+    if val is None:
+        return default
+    try:
+        channel = int(val)
+        if channel <= 0:
+            raise ValueError()
+        return channel
+    except Exception:
+        server_logger.warning(
+            f"Invalid RELAY_CHANNEL value '{val}'. Using default: {default}."
+        )
+        return default
+
+
 def load_bitcoin_rpc_config():
     """
     Loads Bitcoin RPC config from environment variables (.env).

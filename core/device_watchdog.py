@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from transport.base import BaseTransport, TransportConnectionError
 from transport.power_control import BasePowerControl, PowerControlError
@@ -171,3 +171,46 @@ class DeviceWatchdog:
     def _fail(self, message: str) -> None:
         if self._on_recovery_failed:
             self._on_recovery_failed(RecoveryOutcome(success=False, error=message))
+
+
+def build_device_watchdog(
+    transport: BaseTransport,
+    on_recovery_attempt: Optional[Callable[[], None]] = None,
+    on_recovered: Optional[Callable[[RecoveryOutcome], None]] = None,
+    on_recovery_failed: Optional[Callable[[RecoveryOutcome], None]] = None,
+) -> Tuple[DeviceWatchdog, Optional[BasePowerControl]]:
+    """Build a DeviceWatchdog for the given (already-connected) transport,
+    reading power-control config from .env - shared by any UI layer
+    (CLI/GUI, Story 26.5/26.6) so the config-parsing + construction logic
+    isn't duplicated; only the callback bodies (how to report progress)
+    are UI-specific.
+
+    Returns (watchdog, power_control) - power_control is also returned
+    (rather than only living inside the watchdog) so the caller can log/
+    display whether automatic recovery is actually enabled without
+    reaching into the watchdog's internals.
+    """
+    from core.config_loader import (
+        get_relay_channel,
+        get_relay_serial_port,
+        load_relay_serial_baud,
+    )
+    from transport.power_control import SerialRelayPowerControl
+
+    power_control: Optional[BasePowerControl] = None
+    relay_port = get_relay_serial_port()
+    if relay_port:
+        relay_baud, _ = load_relay_serial_baud()
+        power_control = SerialRelayPowerControl(
+            relay_port, get_relay_channel(), relay_baud
+        )
+
+    watchdog = DeviceWatchdog(
+        transport,
+        power_control,
+        device_node_id=transport.local_node_id,
+        on_recovery_attempt=on_recovery_attempt,
+        on_recovered=on_recovered,
+        on_recovery_failed=on_recovery_failed,
+    )
+    return watchdog, power_control

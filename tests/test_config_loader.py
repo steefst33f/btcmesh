@@ -187,6 +187,93 @@ class TestReassemblyTimeoutConfigStory52(unittest.TestCase):
                     )
 
 
+class TestRelayConfigStory267(unittest.TestCase):
+    """Tests for the DIY power-relay config getters (Story 26.7/26.5):
+    get_relay_serial_port(), load_relay_serial_baud(), get_relay_channel().
+    """
+
+    def test_relay_serial_port_returns_env_value(self):
+        from core.config_loader import get_relay_serial_port
+
+        with unittest.mock.patch.dict(
+            "os.environ", {"RELAY_SERIAL_PORT": "/dev/ttyUSB9"}, clear=True
+        ):
+            self.assertEqual(get_relay_serial_port(), "/dev/ttyUSB9")
+
+    def test_relay_serial_port_none_when_unset(self):
+        from core.config_loader import get_relay_serial_port
+
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(get_relay_serial_port())
+
+    def test_relay_serial_baud_loaded_from_env(self):
+        from core.config_loader import load_relay_serial_baud
+
+        with unittest.mock.patch.dict(
+            "os.environ", {"RELAY_SERIAL_BAUD": "9600"}, clear=True
+        ):
+            baud, source = load_relay_serial_baud()
+            self.assertEqual(baud, 9600)
+            self.assertEqual(source, "env")
+
+    def test_relay_serial_baud_missing_uses_default(self):
+        from core.config_loader import load_relay_serial_baud
+
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            baud, source = load_relay_serial_baud()
+            self.assertEqual(baud, 115200)
+            self.assertEqual(source, "default")
+
+    def test_relay_serial_baud_invalid_uses_default_and_logs_warning(self):
+        from core.config_loader import load_relay_serial_baud
+
+        with unittest.mock.patch.dict(
+            "os.environ", {"RELAY_SERIAL_BAUD": "notanint"}, clear=True
+        ):
+            with unittest.mock.patch("core.config_loader.server_logger") as mock_logger:
+                baud, source = load_relay_serial_baud()
+                self.assertEqual(baud, 115200)
+                self.assertEqual(source, "default")
+                mock_logger.warning.assert_any_call(
+                    "Invalid RELAY_SERIAL_BAUD value 'notanint'. Using default: 115200."
+                )
+
+    def test_relay_channel_loaded_from_env(self):
+        from core.config_loader import get_relay_channel
+
+        with unittest.mock.patch.dict(
+            "os.environ", {"RELAY_CHANNEL": "2"}, clear=True
+        ):
+            self.assertEqual(get_relay_channel(), 2)
+
+    def test_relay_channel_missing_uses_default_of_one(self):
+        from core.config_loader import get_relay_channel
+
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(get_relay_channel(), 1)
+
+    def test_relay_channel_invalid_uses_default_and_logs_warning(self):
+        from core.config_loader import get_relay_channel
+
+        with unittest.mock.patch.dict(
+            "os.environ", {"RELAY_CHANNEL": "notanint"}, clear=True
+        ):
+            with unittest.mock.patch("core.config_loader.server_logger") as mock_logger:
+                self.assertEqual(get_relay_channel(), 1)
+                mock_logger.warning.assert_any_call(
+                    "Invalid RELAY_CHANNEL value 'notanint'. Using default: 1."
+                )
+
+    def test_relay_channel_zero_or_negative_uses_default(self):
+        from core.config_loader import get_relay_channel
+
+        for bad_val in ["0", "-1"]:
+            with unittest.mock.patch.dict(
+                "os.environ", {"RELAY_CHANNEL": bad_val}, clear=True
+            ):
+                self.assertEqual(get_relay_channel(), 1)
+
+
 class TestLoadAppConfig(unittest.TestCase):
     """Tests for load_app_config()'s .env loading and idempotency.
 

@@ -11,9 +11,9 @@ waiting.
 import unittest
 from unittest.mock import Mock, patch
 
-from core.device_watchdog import DeviceWatchdog, RecoveryOutcome
+from core.device_watchdog import DeviceWatchdog, RecoveryOutcome, build_device_watchdog
 from transport.base import BaseTransport, TransportConnectionError
-from transport.power_control import BasePowerControl, PowerControlError
+from transport.power_control import BasePowerControl, PowerControlError, SerialRelayPowerControl
 
 
 def make_watchdog(**overrides):
@@ -292,6 +292,65 @@ class TestRecoveryResetsFailureCounter(unittest.TestCase):
         power_control.power_cycle.reset_mock()
         watchdog.record_failure()
         power_control.power_cycle.assert_not_called()
+
+
+class TestBuildDeviceWatchdog(unittest.TestCase):
+    """Tests for build_device_watchdog() (Story 26.5) - the shared
+    CLI/GUI factory that reads relay config from .env and constructs a
+    DeviceWatchdog, so config-parsing + construction isn't duplicated
+    between UI layers."""
+
+    def test_returns_none_power_control_when_relay_port_unset(self):
+        transport = Mock(spec=BaseTransport)
+        transport.local_node_id = "!aee5ab3c"
+        with patch("core.config_loader.get_relay_serial_port", return_value=None):
+            watchdog, power_control = build_device_watchdog(transport)
+
+        self.assertIsNone(power_control)
+        self.assertIsInstance(watchdog, DeviceWatchdog)
+
+    def test_returns_serial_relay_power_control_when_relay_port_set(self):
+        transport = Mock(spec=BaseTransport)
+        transport.local_node_id = "!aee5ab3c"
+        with patch(
+            "core.config_loader.get_relay_serial_port", return_value="/dev/ttyUSB5"
+        ), patch(
+            "core.config_loader.load_relay_serial_baud", return_value=(9600, "env")
+        ), patch(
+            "core.config_loader.get_relay_channel", return_value=2
+        ):
+            watchdog, power_control = build_device_watchdog(transport)
+
+        self.assertIsInstance(power_control, SerialRelayPowerControl)
+        self.assertEqual(power_control._port, "/dev/ttyUSB5")
+        self.assertEqual(power_control._channel, 2)
+        self.assertEqual(power_control._baudrate, 9600)
+
+    def test_watchdog_uses_transports_local_node_id(self):
+        transport = Mock(spec=BaseTransport)
+        transport.local_node_id = "!deadbeef"
+        with patch("core.config_loader.get_relay_serial_port", return_value=None):
+            watchdog, _ = build_device_watchdog(transport)
+
+        self.assertEqual(watchdog._device_node_id, "!deadbeef")
+
+    def test_callbacks_pass_through_to_watchdog(self):
+        transport = Mock(spec=BaseTransport)
+        transport.local_node_id = "!aee5ab3c"
+        on_recovery_attempt = Mock()
+        on_recovered = Mock()
+        on_recovery_failed = Mock()
+        with patch("core.config_loader.get_relay_serial_port", return_value=None):
+            watchdog, _ = build_device_watchdog(
+                transport,
+                on_recovery_attempt=on_recovery_attempt,
+                on_recovered=on_recovered,
+                on_recovery_failed=on_recovery_failed,
+            )
+
+        self.assertIs(watchdog._on_recovery_attempt, on_recovery_attempt)
+        self.assertIs(watchdog._on_recovered, on_recovered)
+        self.assertIs(watchdog._on_recovery_failed, on_recovery_failed)
 
 
 if __name__ == "__main__":
