@@ -245,11 +245,20 @@ the full design, including two revisions made during implementation:
 - Wired to `btcmesh_server_cli.py` only; GUI wiring is scoped as a
   follow-up that reuses the same factory.
 
-**Story 26.6 (client)** - not yet done. Same `tick()`/`record_success()`/
-`record_failure()` pattern, but the client doesn't have a standing
-background loop when idle - needs a lightweight `Clock.schedule_interval`
-(GUI) or a small poll loop (CLI) purely to drive `watchdog.tick()` even
-between sends.
+**Story 26.6 (client) - decided against, not implemented.** A design was
+drafted (`project/plans/story_26_6.md`, including scoping the CLI out
+entirely - it's a one-shot process with no idle period a heartbeat could
+run during, unlike this sketch originally assumed). Stepping back from
+that design raised a more fundamental question: does client-side
+automatic recovery make sense at all? Concluded no - the server's whole
+premise is unattended operation, while the GUI is used in short,
+attended sessions where the user is already present to reconnect
+manually if needed. More importantly, the relay hardware `DeviceWatchdog`
+needs to actually recover a device (Story 26.7) is operator
+infrastructure for an always-on relay node, not something a typical
+client machine would have wired up - without it, this story would only
+ever add a nicer log message, never real recovery. **EPIC 5 is
+considered complete at the server** (Stories 26.1-26.5, 26.7).
 
 ### Story 26.7 — DIY relay fallback (build only if uhubctl fails on real hardware)
 
@@ -444,11 +453,20 @@ which is kept for reference as the original reasoning:
    it — **Done**
 3. Story 26.4 (DeviceWatchdog) — the core orchestration, heaviest test
    coverage — **Done**. See `project/plans/story_26_4.md`.
-4. Story 26.5 (server wiring) — first real integration point — **Done**
-5. Story 26.6 (client wiring) — same pattern, second integration point — **Next**
+4. Story 26.5 (server wiring) — first real integration point — **Done**,
+   including a real recovery-loop bug (Issue 20) found and fixed via
+   real-hardware testing after initial completion
+5. Story 26.6 (client wiring) — **Decided against, not implemented**
+   (see `project/plans/story_26_6.md`) — client-side automatic recovery
+   doesn't have a strong enough case: the GUI is used in short, attended
+   sessions (unlike the server's unattended-operation premise), and the
+   relay hardware this depends on is operator infrastructure unlikely to
+   be present on a typical client machine
 6. Story 26.7 (DIY relay) — now the primary approach (see
    `project/plans/story_26_7.md`), not conditional on 26.1 failing —
    **Done**
+
+**EPIC 5 is considered complete** with Stories 26.1-26.5 and 26.7 done.
 
 ---
 

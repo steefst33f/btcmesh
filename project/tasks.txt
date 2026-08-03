@@ -1385,7 +1385,7 @@ lora/
         - [x] *   **Then** the watchdog logs detected lockups but skips the power-cycle step, so the feature degrades gracefully rather than erroring.
     *   _Note: Wired into `btcmesh_server_cli.py` only; `btcmesh_server_gui.py` wiring is a scoped, similarly-shaped follow-up (see `project/plans/story_26_5.md`). Along the way, fixed a real pre-existing gap in `TransactionReceiver._send()` (`server/receiver.py`), which had no error handling — a send failure during pubsub-dispatched message handling was silently swallowed, and one during `check_timeouts()` would have crashed the server loop. Fixed via a new `on_transport_error` callback plus a catch-and-continue cleanup loop. Config + `DeviceWatchdog` construction is shared via a new `build_device_watchdog()` factory (`core/device_watchdog.py`), reused by both CLI and (future) GUI wiring, since that part has no UI-specific variation — unlike `TransactionReceiver`'s callback wiring, which stays duplicated per UI._
 
-- [ ] **Story 26.6: Wire DeviceWatchdog into the client (GUI + CLI)**
+- [ ] **Story 26.6: Wire DeviceWatchdog into the client (GUI + CLI)** — **Decided against, not implementing** (see `project/plans/story_26_6.md`)
 - [ ] *   **As a** user of the client,
 - [ ] *   **I want** the same automatic recovery available on the client side,
 - [ ] *   **So that** a wedged device doesn't require restarting the client mid-send.
@@ -1395,6 +1395,7 @@ lora/
     - [ ] *   **Scenario:** Recovery during an active send
         - [ ] *   **Given** a transaction send in progress when the device wedges.
         - [ ] *   **Then** the in-flight send fails cleanly (existing retry/timeout handling), and the watchdog's next tick recovers the device for the next attempt, rather than the recovery racing the send.
+    *   _Note: A design was drafted (`project/plans/story_26_6.md`), including scoping the CLI out entirely (it's a one-shot process with no idle period a heartbeat could run during). Stepping back from that design raised a bigger question: does client-side automatic recovery make sense at all? Decided no — the server's premise is unattended operation (nobody around to physically intervene), while the GUI is used in short, attended sessions where the user is already present to reconnect manually. More fundamentally, the relay hardware `DeviceWatchdog` needs to actually recover a device (Story 26.7) is operator infrastructure for an always-on relay node, not something a typical client machine would have wired up — without it, this story would only ever add a nicer log message, never real recovery. EPIC 5 is considered complete at the server (Stories 26.1-26.5, 26.7)._
 
 - [x] **Story 26.7: DIY relay companion firmware (fallback if uhubctl is incompatible)**
 - [x] *   **As a** relay operator without a uhubctl-compatible USB hub,
