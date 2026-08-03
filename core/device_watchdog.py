@@ -132,20 +132,29 @@ class DeviceWatchdog:
 
         self._transport.disconnect()
 
-        if self._power_control is None:
-            self._fail("No power control configured - cannot recover automatically")
-            return
+        # Try an immediate, single reconnect pass before cutting power at
+        # all - the device may have already come back on its own (e.g.
+        # during the cooldown window since a previous failed cycle), and
+        # power-cycling it again would just interrupt it needlessly
+        # (Issue 20: repeatedly cutting power right as a slow-to-enumerate
+        # device is finishing its boot is what defeats recovery).
+        matched_path = self._try_reconnect_without_power_cycle()
 
-        try:
-            self._power_control.power_cycle()
-        except PowerControlError as e:
-            self._fail(f"Power cycle failed: {e}")
-            return
-
-        matched_path = self._wait_for_device()
         if matched_path is None:
-            self._fail("Device did not reappear within the wait window")
-            return
+            if self._power_control is None:
+                self._fail("No power control configured - cannot recover automatically")
+                return
+
+            try:
+                self._power_control.power_cycle()
+            except PowerControlError as e:
+                self._fail(f"Power cycle failed: {e}")
+                return
+
+            matched_path = self._wait_for_device()
+            if matched_path is None:
+                self._fail("Device did not reappear within the wait window")
+                return
 
         # _try_candidate() already connected as part of confirming the
         # match - nothing more to do here.
@@ -153,6 +162,15 @@ class DeviceWatchdog:
         outcome = RecoveryOutcome(success=True, new_device_path=matched_path)
         if self._on_recovered:
             self._on_recovered(outcome)
+
+    def _try_reconnect_without_power_cycle(self) -> Optional[str]:
+        """A single, immediate pass over currently-visible candidates - no
+        power cycle, no backoff/polling. Used only to skip an unnecessary
+        power cut when the device is already back and reachable."""
+        for path in self._transport.scan_for_reconnect_candidates():
+            if self._try_candidate(path):
+                return path
+        return None
 
     def _wait_for_device(self) -> Optional[str]:
         """Poll for the device's reappearance with backoff, connecting to

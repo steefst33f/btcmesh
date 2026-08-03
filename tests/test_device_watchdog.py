@@ -148,7 +148,11 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", on_recovered=on_recovered
         )
-        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
+        # First call is the pre-power-cycle reconnect check (finds
+        # nothing yet), second is inside _wait_for_device() after the
+        # power cycle - so this test actually exercises the power-cycle
+        # path, not the pre-check shortcut.
+        transport.scan_for_reconnect_candidates.side_effect = [[], ["/dev/ttyNEW"]]
         transport.local_node_id = "!aee5ab3c"
 
         with patch(
@@ -173,7 +177,7 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id=None, on_recovered=on_recovered
         )
-        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
+        transport.scan_for_reconnect_candidates.side_effect = [[], ["/dev/ttyNEW"]]
         transport.local_node_id = "!whatever"
 
         with patch(
@@ -254,7 +258,14 @@ class TestRecoveryStalePathRejection(unittest.TestCase):
         watchdog, transport, power_control = make_watchdog(
             device_node_id="!aee5ab3c", on_recovered=on_recovered
         )
-        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
+        # First call is the pre-power-cycle reconnect check (finds
+        # nothing yet, so the power cycle actually happens); the next
+        # two are inside _wait_for_device()'s own poll loop.
+        transport.scan_for_reconnect_candidates.side_effect = [
+            [],
+            ["/dev/ttyNEW"],
+            ["/dev/ttyNEW"],
+        ]
         transport.local_node_id = "!aee5ab3c"
         # First connect attempt fails (stale path not yet ready), second succeeds.
         transport.connect.side_effect = [
@@ -294,6 +305,44 @@ class TestRecoveryResetsFailureCounter(unittest.TestCase):
         power_control.power_cycle.reset_mock()
         watchdog.record_failure()
         power_control.power_cycle.assert_not_called()
+
+
+class TestRecoveryPreCheckSkipsPowerCycle(unittest.TestCase):
+    """Issue 20 follow-up: if the device is already reachable (e.g. it
+    came back on its own during a cooldown window), recovery shouldn't
+    cut its power again just to go through the motions."""
+
+    def test_skips_power_cycle_when_device_already_reachable(self):
+        on_recovered = Mock()
+        watchdog, transport, power_control = make_watchdog(
+            device_node_id="!aee5ab3c", on_recovered=on_recovered
+        )
+        transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
+        transport.local_node_id = "!aee5ab3c"
+
+        watchdog.record_failure()
+        watchdog.record_failure()
+        watchdog.record_failure()
+
+        power_control.power_cycle.assert_not_called()
+        transport.connect.assert_called_once_with("/dev/ttyNEW")
+        on_recovered.assert_called_once()
+        outcome = on_recovered.call_args[0][0]
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.new_device_path, "/dev/ttyNEW")
+
+    def test_falls_back_to_power_cycle_when_not_reachable(self):
+        watchdog, transport, power_control = make_watchdog(
+            device_node_id="!aee5ab3c"
+        )
+        transport.scan_for_reconnect_candidates.return_value = []
+        power_control.power_cycle.side_effect = PowerControlError("test")
+
+        watchdog.record_failure()
+        watchdog.record_failure()
+        watchdog.record_failure()
+
+        power_control.power_cycle.assert_called_once()
 
 
 class TestRecoveryCooldown(unittest.TestCase):
