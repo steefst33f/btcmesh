@@ -679,9 +679,27 @@ even though the relay itself works correctly** ✅ FIXED
   constructor default, consistent with Story 26.5's original decision to
   avoid speculative config surface. See `core/device_watchdog.py`
   (`_recover()`/`_recover_once()`) and `tests/test_device_watchdog.py`
-  (`TestRecoveryCooldown`) for the implementation and tests; the fix was
-  not yet re-verified against the real hardware that surfaced this
-  issue.
+  (`TestRecoveryCooldown`) for the implementation and tests.
+- **Follow-up fix, found while re-verifying the cooldown fix on real
+  hardware**: the cooldown correctly spaced retries out (confirmed: a
+  retry that used to fire ~1s after a failure now correctly waited the
+  full ~60s), but each cycle was still unconditionally power-cycling the
+  device even when it had already come back on its own during the
+  cooldown window - a port scan taken right before one retry confirmed
+  the device was already present, yet that cycle still failed, because
+  it cut power again before ever checking. Fixed by having
+  `_recover_once()` try one immediate, no-power-cut reconnect pass
+  first (`_try_reconnect_without_power_cycle()`); it only falls back to
+  an actual `power_cycle()` if that doesn't find the device. See
+  `TestRecoveryPreCheckSkipsPowerCycle`.
+- **Verified on the real hardware that surfaced this issue**, with both
+  fixes in place: triggered the same "gone from the OS's port list"
+  starting condition via a manual `power_cycle()`, then let the running
+  server's own heartbeat catch it. It recovered in ~5 seconds
+  (`"Device recovered. Reconnected at /dev/cu.SLAB_USBtoUART."`) via the
+  new pre-check path alone, with no additional power cycle needed - the
+  device had already come back on its own by the time the heartbeat
+  noticed, and this time nothing cut its power again to get in the way.
 
 ---
 
