@@ -114,6 +114,14 @@ class TransactionReceiver:
         # from on_broadcast (which only fires once the RPC call returns) so a
         # caller can show a distinct "broadcasting..." step for the RPC
         # round-trip, which can take a noticeable moment (e.g. over Tor).
+        on_transport_error: Optional[Callable[[Exception], None]] = None,
+        # on_transport_error(exc) - fires whenever a reply send actually
+        # fails at the transport layer (device wedged/disconnected), right
+        # before the exception propagates exactly as it does today (this
+        # callback is purely additive - it changes no existing control
+        # flow). Intended for a caller to hook into
+        # DeviceWatchdog.record_failure() (Story 26.5) - this class has no
+        # knowledge of DeviceWatchdog itself.
         completed_session_grace_seconds: int = 300,
         # How long to remember a just-completed session's final ACK/NACK
         # (see Issue 17): if the client never got that reply and retransmits
@@ -132,6 +140,7 @@ class TransactionReceiver:
         self._on_wire_sent = on_wire_sent
         self._on_wire_received = on_wire_received
         self._on_broadcast_started = on_broadcast_started
+        self._on_transport_error = on_transport_error
         self._completed_session_grace_seconds = completed_session_grace_seconds
         # (sender_id, session_id) -> (completed_at, final_message_text)
         self._completed_sessions: Dict[Tuple[Any, str], Tuple[float, str]] = {}
@@ -139,7 +148,12 @@ class TransactionReceiver:
 
     def _send(self, message: str, sender_id: str) -> None:
         """Send a reply and report its raw wire text via on_wire_sent."""
-        self.transport.send(message, sender_id)
+        try:
+            self.transport.send(message, sender_id)
+        except Exception as e:
+            if self._on_transport_error:
+                self._on_transport_error(e)
+            raise
         if self._on_wire_sent:
             self._on_wire_sent(message)
 
@@ -288,11 +302,17 @@ class TransactionReceiver:
             del self._completed_sessions[key]
 
         for session_info in self.reassembler.cleanup_stale_sessions():
-            self._send_nack(
-                session_info["tx_session_id"],
-                session_info["sender_id_str"],
-                session_info["error_message"],
-            )
+            try:
+                self._send_nack(
+                    session_info["tx_session_id"],
+                    session_info["sender_id_str"],
+                    session_info["error_message"],
+                )
+            except Exception:
+                # on_transport_error already fired inside _send() - don't
+                # let a wedged device crash this loop or block cleaning up
+                # the remaining stale sessions.
+                pass
             if self._on_error:
                 self._on_error(
                     session_info["tx_session_id"],

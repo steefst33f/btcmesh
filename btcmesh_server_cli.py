@@ -15,6 +15,7 @@ from core.config_loader import (
     load_bitcoin_rpc_config,
     load_reassembly_timeout,
 )
+from core.device_watchdog import build_device_watchdog
 from core.logger_setup import server_logger
 from core.reassembler import TransactionReassembler
 from core.rpc_client import BitcoinRPCClient
@@ -40,10 +41,11 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def build_receiver(transport, rpc_client, reassembly_timeout, history) -> TransactionReceiver:
+def build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog) -> TransactionReceiver:
     """Wire TransactionReceiver's callbacks to server_logger + history - the
     same callback set and log wording btcmesh_server_gui.py's Activity Log
-    uses, just logged instead of pushed to a GUI queue."""
+    uses, just logged instead of pushed to a GUI queue. Also wires
+    record_success()/record_failure() into watchdog (Story 26.5)."""
 
     def on_chunk_received(evt: ChunkReceived):
         server_logger.info(f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}")
@@ -51,6 +53,9 @@ def build_receiver(transport, rpc_client, reassembly_timeout, history) -> Transa
             server_logger.info(f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...")
         else:
             server_logger.info(f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.")
+        # Only reached once the ack for this chunk has already been sent
+        # successfully - a correct "this device is genuinely working" signal.
+        watchdog.record_success()
 
     def on_broadcast_started(session_id, sender_id):
         server_logger.info(f"[{session_id}] Broadcasting transaction to Bitcoin network...")
@@ -84,6 +89,7 @@ def build_receiver(transport, rpc_client, reassembly_timeout, history) -> Transa
         on_error=on_error,
         on_wire_sent=on_wire_sent,
         on_wire_received=on_wire_received,
+        on_transport_error=lambda e: watchdog.record_failure(),
     )
 
 
@@ -112,9 +118,30 @@ def run_server(port=None) -> int:
         rpc_client = None
         server_logger.error(f"Failed to connect to Bitcoin Core RPC node: {e}. Continuing without RPC connection.")
 
+    watchdog, power_control = build_device_watchdog(
+        transport,
+        on_recovery_attempt=lambda: server_logger.warning(
+            "Device appears wedged - attempting automatic recovery..."
+        ),
+        on_recovered=lambda outcome: server_logger.info(
+            f"Device recovered. Reconnected at {outcome.new_device_path}."
+        ),
+        on_recovery_failed=lambda outcome: server_logger.error(
+            f"Automatic device recovery failed: {outcome.error}"
+        ),
+    )
+    if power_control:
+        server_logger.info("Automatic device-recovery enabled via relay.")
+    else:
+        server_logger.info(
+            "RELAY_SERIAL_PORT not configured - automatic device-wedge "
+            "recovery is disabled (wedge detection still logs, but won't "
+            "recover on its own)."
+        )
+
     reassembly_timeout, _source = load_reassembly_timeout()
     history = TransactionHistory()
-    receiver = build_receiver(transport, rpc_client, reassembly_timeout, history)
+    receiver = build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog)
 
     server_logger.info("Server started. Listening for incoming transactions... (Ctrl+C to stop)")
     try:
@@ -124,6 +151,7 @@ def run_server(port=None) -> int:
             if now - last_cleanup >= CHECK_TIMEOUTS_INTERVAL_SECONDS:
                 receiver.check_timeouts()
                 last_cleanup = now
+            watchdog.tick(now)
             time.sleep(1)
     except KeyboardInterrupt:
         server_logger.info("Server shutting down by user request (Ctrl+C).")

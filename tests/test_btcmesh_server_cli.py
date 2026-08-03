@@ -58,6 +58,10 @@ class TestRunServerConnection(unittest.TestCase):
             patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")),
             patch("btcmesh_server_cli.TransactionHistory"),
             patch("btcmesh_server_cli.build_receiver"),
+            patch(
+                "btcmesh_server_cli.build_device_watchdog",
+                return_value=(MagicMock(), None),
+            ),
         ]
         for p in patches:
             p.start()
@@ -113,6 +117,143 @@ class TestRunServerConnection(unittest.TestCase):
         mock_transport.disconnect.assert_called_once()
 
 
+class TestRunServerDeviceWatchdog(unittest.TestCase):
+    """Tests for run_server()'s DeviceWatchdog wiring (Story 26.5)."""
+
+    def _patch_successful_startup(self):
+        patches = [
+            patch("btcmesh_server_cli.load_app_config"),
+            patch("btcmesh_server_cli.load_bitcoin_rpc_config", return_value={}),
+            patch("btcmesh_server_cli.BitcoinRPCClient"),
+            patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")),
+            patch("btcmesh_server_cli.TransactionHistory"),
+            patch("btcmesh_server_cli.build_receiver"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_tick_called_each_loop_iteration(self):
+        self._patch_successful_startup()
+        mock_watchdog = MagicMock()
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    return_value=(mock_watchdog, None),
+                ), \
+                patch(
+                    "btcmesh_server_cli.time.sleep",
+                    side_effect=[None, None, KeyboardInterrupt],
+                ):
+            cli.run_server()
+
+        self.assertEqual(mock_watchdog.tick.call_count, 3)
+
+    def test_logs_enabled_when_power_control_configured(self):
+        self._patch_successful_startup()
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    return_value=(MagicMock(), MagicMock()),
+                ), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+
+        mock_logger.info.assert_any_call("Automatic device-recovery enabled via relay.")
+
+    def test_logs_disabled_when_power_control_not_configured(self):
+        self._patch_successful_startup()
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    return_value=(MagicMock(), None),
+                ), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+
+        mock_logger.info.assert_any_call(
+            "RELAY_SERIAL_PORT not configured - automatic device-wedge "
+            "recovery is disabled (wedge detection still logs, but won't "
+            "recover on its own)."
+        )
+
+    def test_on_recovery_attempt_logs_warning(self):
+        self._patch_successful_startup()
+        captured = {}
+
+        def fake_build_device_watchdog(transport, **kwargs):
+            captured.update(kwargs)
+            return MagicMock(), None
+
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    side_effect=fake_build_device_watchdog,
+                ), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+            captured["on_recovery_attempt"]()
+
+        mock_logger.warning.assert_any_call(
+            "Device appears wedged - attempting automatic recovery..."
+        )
+
+    def test_on_recovered_logs_new_path(self):
+        self._patch_successful_startup()
+        captured = {}
+
+        def fake_build_device_watchdog(transport, **kwargs):
+            captured.update(kwargs)
+            return MagicMock(), None
+
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    side_effect=fake_build_device_watchdog,
+                ), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+            from core.device_watchdog import RecoveryOutcome
+            captured["on_recovered"](RecoveryOutcome(success=True, new_device_path="/dev/ttyNEW"))
+
+        mock_logger.info.assert_any_call("Device recovered. Reconnected at /dev/ttyNEW.")
+
+    def test_on_recovery_failed_logs_error(self):
+        self._patch_successful_startup()
+        captured = {}
+
+        def fake_build_device_watchdog(transport, **kwargs):
+            captured.update(kwargs)
+            return MagicMock(), None
+
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    side_effect=fake_build_device_watchdog,
+                ), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+            from core.device_watchdog import RecoveryOutcome
+            captured["on_recovery_failed"](
+                RecoveryOutcome(success=False, error="Power cycle failed: no relay")
+            )
+
+        mock_logger.error.assert_any_call(
+            "Automatic device recovery failed: Power cycle failed: no relay"
+        )
+
+
 class TestRunServerRpcFailure(unittest.TestCase):
     """Regression test for the exact bug fixed in Story 23.2's GUI equivalent:
     a failed RPC connection must not stop the server - Meshtastic keeps
@@ -127,6 +268,10 @@ class TestRunServerRpcFailure(unittest.TestCase):
                 patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")), \
                 patch("btcmesh_server_cli.TransactionHistory"), \
                 patch("btcmesh_server_cli.build_receiver") as mock_build_receiver, \
+                patch(
+                    "btcmesh_server_cli.build_device_watchdog",
+                    return_value=(MagicMock(), None),
+                ), \
                 patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             code = cli.run_server()
@@ -143,26 +288,42 @@ class TestRunServerRpcFailure(unittest.TestCase):
 class TestBuildReceiver(unittest.TestCase):
     """Tests for build_receiver()'s callback wiring to server_logger + history."""
 
-    def _extract_callbacks(self):
+    def _extract_callbacks(self, watchdog=None):
         history = MagicMock()
+        watchdog = watchdog if watchdog is not None else MagicMock()
         with patch("btcmesh_server_cli.TransactionReceiver") as mock_receiver_cls:
-            cli.build_receiver(MagicMock(), MagicMock(), 300, history)
+            cli.build_receiver(MagicMock(), MagicMock(), 300, history, watchdog)
             kwargs = mock_receiver_cls.call_args.kwargs
         return kwargs, history
 
-    def test_wires_all_six_callbacks_and_reassembler_timeout(self):
+    def test_wires_all_seven_callbacks_and_reassembler_timeout(self):
         with patch("btcmesh_server_cli.TransactionReceiver") as mock_receiver_cls, \
                 patch("btcmesh_server_cli.TransactionReassembler") as mock_reassembler_cls:
-            cli.build_receiver(MagicMock(), MagicMock(), 300, MagicMock())
+            cli.build_receiver(MagicMock(), MagicMock(), 300, MagicMock(), MagicMock())
 
         mock_reassembler_cls.assert_called_once_with(timeout_seconds=300)
         kwargs = mock_receiver_cls.call_args.kwargs
         for name in (
             "on_chunk_received", "on_broadcast_started", "on_broadcast",
-            "on_error", "on_wire_sent", "on_wire_received",
+            "on_error", "on_wire_sent", "on_wire_received", "on_transport_error",
         ):
             self.assertIn(name, kwargs)
             self.assertTrue(callable(kwargs[name]))
+
+    def test_on_transport_error_calls_watchdog_record_failure(self):
+        watchdog = MagicMock()
+        kwargs, _ = self._extract_callbacks(watchdog=watchdog)
+        kwargs["on_transport_error"](RuntimeError("device wedged"))
+        watchdog.record_failure.assert_called_once()
+
+    def test_on_chunk_received_calls_watchdog_record_success(self):
+        watchdog = MagicMock()
+        kwargs, _ = self._extract_callbacks(watchdog=watchdog)
+        with patch("btcmesh_server_cli.server_logger"):
+            kwargs["on_chunk_received"](
+                ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=1, total_chunks=1)
+            )
+        watchdog.record_success.assert_called_once()
 
     def test_on_chunk_received_logs_progress_when_not_last_chunk(self):
         kwargs, _ = self._extract_callbacks()

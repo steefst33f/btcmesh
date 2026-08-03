@@ -224,18 +224,32 @@ decoupling used throughout this codebase.
 
 ### Story 26.5 / 26.6 — wiring into server/client
 
-Server: extend the existing loop at
-[btcmesh_server_gui.py:856-862](../../btcmesh_server_gui.py#L856-L862) —
-add `watchdog.tick(time.time())` alongside the existing `check_timeouts()`
-cadence check, and route `record_failure()`/`record_success()` calls from
-wherever `TransactionReceiver`'s transport-level exceptions currently
-surface. On `on_recovered`, re-attach `TransactionReceiver` to the new
-transport instance (construct a fresh `TransactionReceiver` with the same
-callbacks — it re-registers its own handler in `__init__`).
+**Story 26.5 (server CLI) - Done.** See `project/plans/story_26_5.md` for
+the full design, including two revisions made during implementation:
+- **No `TransactionReceiver` reconstruction needed on recovery** (unlike
+  what this sketch originally assumed) - `DeviceWatchdog` reuses the same
+  `BaseTransport` instance throughout, and
+  `MeshtasticSerialTransport` preserves and auto-re-subscribes its message
+  handler across a disconnect/reconnect cycle.
+- **A real gap found and fixed first**: `TransactionReceiver._send()` had
+  no error handling, so a send failure during message handling was
+  silently swallowed by the transport's pubsub dispatch, and a send
+  failure during `check_timeouts()` would have crashed the server loop.
+  Fixed via a new `on_transport_error` callback (fires then re-raises,
+  changing no existing control flow) plus making `check_timeouts()`'s
+  cleanup loop catch-and-continue per session.
+- `build_device_watchdog()` (`core/device_watchdog.py`) is a shared
+  factory - not duplicated per the CLI/GUI precedent `TransactionReceiver`
+  set - since the config-parsing + construction logic has zero
+  UI-specific variation, only the callback bodies do.
+- Wired to `btcmesh_server_cli.py` only; GUI wiring is scoped as a
+  follow-up that reuses the same factory.
 
-Client: same pattern, but the client doesn't have a standing background loop
-when idle — needs a lightweight `Clock.schedule_interval` (GUI) or a small
-poll loop (CLI) purely to drive `watchdog.tick()` even between sends.
+**Story 26.6 (client)** - not yet done. Same `tick()`/`record_success()`/
+`record_failure()` pattern, but the client doesn't have a standing
+background loop when idle - needs a lightweight `Clock.schedule_interval`
+(GUI) or a small poll loop (CLI) purely to drive `watchdog.tick()` even
+between sends.
 
 ### Story 26.7 — DIY relay fallback (build only if uhubctl fails on real hardware)
 
@@ -430,8 +444,8 @@ which is kept for reference as the original reasoning:
    it — **Done**
 3. Story 26.4 (DeviceWatchdog) — the core orchestration, heaviest test
    coverage — **Done**. See `project/plans/story_26_4.md`.
-4. Story 26.5 (server wiring) — first real integration point — **Next**
-5. Story 26.6 (client wiring) — same pattern, second integration point
+4. Story 26.5 (server wiring) — first real integration point — **Done**
+5. Story 26.6 (client wiring) — same pattern, second integration point — **Next**
 6. Story 26.7 (DIY relay) — now the primary approach (see
    `project/plans/story_26_7.md`), not conditional on 26.1 failing —
    **Done**

@@ -110,6 +110,83 @@ class TestTransactionReceiverChunkHandling(unittest.TestCase):
         rpc_client.broadcast_transaction.assert_called_once_with("deadbeef")
 
 
+class TestTransactionReceiverTransportError(unittest.TestCase):
+    """Tests for on_transport_error (Story 26.5) - fired from _send() when
+    the transport-level send actually fails (device wedged/disconnected)."""
+
+    def test_on_transport_error_fires_when_ack_send_fails(self):
+        on_transport_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        send_error = RuntimeError("device wedged")
+        # Ack-send fails; the generic handler's own NACK retry attempt
+        # succeeds - isolates this test to exactly the one failure being
+        # tested (a device that fails every send is covered separately).
+        transport.send.side_effect = [send_error, None]
+        receiver = TransactionReceiver(
+            transport, rpc_client, on_transport_error=on_transport_error
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_transport_error.assert_called_once_with(send_error)
+
+    def test_on_transport_error_fires_for_every_failed_send_attempt(self):
+        """A genuinely wedged device fails every send, including the
+        generic handler's own NACK retry attempt - on_transport_error
+        fires once per failed attempt, not just the first."""
+        on_transport_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        transport.send.side_effect = RuntimeError("device wedged")
+        receiver = TransactionReceiver(
+            transport, rpc_client, on_transport_error=on_transport_error
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        self.assertEqual(on_transport_error.call_count, 2)
+
+    def test_on_chunk_received_does_not_fire_when_ack_send_fails(self):
+        """Regression guard: on_transport_error must be purely additive -
+        existing control flow (on_chunk_received only firing after a
+        successful ack) must be unchanged."""
+        on_chunk_received = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        transport.send.side_effect = RuntimeError("device wedged")
+        receiver = TransactionReceiver(
+            transport, rpc_client, on_chunk_received=on_chunk_received
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_chunk_received.assert_not_called()
+
+    def test_send_failure_still_reaches_generic_error_handler(self):
+        """The generic except Exception branch in _on_message() still
+        catches the re-raised transport error (unchanged from today) - so
+        on_error also fires, in addition to on_transport_error."""
+        on_error = Mock()
+        on_transport_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        transport.send.side_effect = [RuntimeError("device wedged"), None]
+        receiver = TransactionReceiver(
+            transport, rpc_client,
+            on_error=on_error, on_transport_error=on_transport_error,
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_transport_error.assert_called_once()
+        on_error.assert_called_once()
+
+
 class TestTransactionReceiverBroadcast(unittest.TestCase):
     """Tests for RPC broadcast success/failure handling."""
 
@@ -390,6 +467,39 @@ class TestTransactionReceiverTimeouts(unittest.TestCase):
         on_error.assert_called_once_with(
             "sessTimeout", "!sender1", "Timed out waiting for chunks"
         )
+
+    def test_does_not_crash_when_nack_send_fails_and_cleans_up_remaining_sessions(self):
+        """A wedged device failing the NACK send during cleanup must not
+        crash check_timeouts() (Story 26.5) or block cleaning up other
+        stale sessions - on_transport_error still fires, on_error still
+        fires for every session regardless of send success."""
+        on_error = Mock()
+        on_transport_error = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        transport.send.side_effect = RuntimeError("device wedged")
+        reassembler = Mock(spec=TransactionReassembler)
+        reassembler.cleanup_stale_sessions.return_value = [
+            {
+                "sender_id_str": "!sender1",
+                "tx_session_id": "sessA",
+                "error_message": "Timed out waiting for chunks",
+            },
+            {
+                "sender_id_str": "!sender2",
+                "tx_session_id": "sessB",
+                "error_message": "Timed out waiting for chunks",
+            },
+        ]
+        receiver = TransactionReceiver(
+            transport, rpc_client, reassembler=reassembler,
+            on_error=on_error, on_transport_error=on_transport_error,
+        )
+
+        receiver.check_timeouts()  # must not raise
+
+        self.assertEqual(on_transport_error.call_count, 2)
+        self.assertEqual(on_error.call_count, 2)
 
 
 class TestTransactionReceiverActiveSessions(unittest.TestCase):
