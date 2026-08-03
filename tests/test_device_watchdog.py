@@ -151,9 +151,9 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!aee5ab3c"
 
-        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
-            "core.device_watchdog.time.sleep"
-        ):
+        with patch(
+            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 100.0, 100.0]
+        ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
             watchdog.record_failure()
@@ -176,9 +176,9 @@ class TestRecoverySuccessPaths(unittest.TestCase):
         transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!whatever"
 
-        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
-            "core.device_watchdog.time.sleep"
-        ):
+        with patch(
+            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 100.0, 100.0]
+        ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
             watchdog.record_failure()
@@ -210,9 +210,9 @@ class TestRecoveryNodeIdMismatch(unittest.TestCase):
 
         transport.connect.side_effect = connect_side_effect
 
-        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
-            "core.device_watchdog.time.sleep"
-        ):
+        with patch(
+            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 100.0, 100.0]
+        ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
             watchdog.record_failure()
@@ -233,7 +233,8 @@ class TestRecoveryReenumerationTimeout(unittest.TestCase):
         )
 
         with patch(
-            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 200.0]
+            "core.device_watchdog.time.time",
+            side_effect=[100.0, 100.0, 100.0, 200.0, 200.0],
         ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
@@ -262,7 +263,8 @@ class TestRecoveryStalePathRejection(unittest.TestCase):
         ]
 
         with patch(
-            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 110.0]
+            "core.device_watchdog.time.time",
+            side_effect=[100.0, 100.0, 100.0, 110.0, 110.0],
         ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
@@ -280,9 +282,9 @@ class TestRecoveryResetsFailureCounter(unittest.TestCase):
         transport.scan_for_reconnect_candidates.return_value = ["/dev/ttyNEW"]
         transport.local_node_id = "!aee5ab3c"
 
-        with patch("core.device_watchdog.time.time", side_effect=[100.0, 100.0]), patch(
-            "core.device_watchdog.time.sleep"
-        ):
+        with patch(
+            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 100.0, 100.0]
+        ), patch("core.device_watchdog.time.sleep"):
             watchdog.record_failure()
             watchdog.record_failure()
             watchdog.record_failure()
@@ -292,6 +294,54 @@ class TestRecoveryResetsFailureCounter(unittest.TestCase):
         power_control.power_cycle.reset_mock()
         watchdog.record_failure()
         power_control.power_cycle.assert_not_called()
+
+
+class TestRecoveryCooldown(unittest.TestCase):
+    """Issue 20: a failed recovery cycle must not immediately re-trigger
+    another one - a device that's merely slower than
+    max_reenumerate_wait_seconds needs one clean, uninterrupted window to
+    finish booting, not to have its power cut again moments later."""
+
+    def test_second_recovery_attempt_within_cooldown_is_skipped(self):
+        on_recovery_attempt = Mock()
+        watchdog, transport, power_control = make_watchdog(
+            recovery_cooldown_seconds=60.0,
+            heartbeat_interval_seconds=60.0,
+            on_recovery_attempt=on_recovery_attempt,
+        )
+        transport.check_alive.return_value = False
+        # Short-circuit at the power_cycle step - this test only cares
+        # whether a second attempt starts, not about the full path.
+        power_control.power_cycle.side_effect = PowerControlError("test")
+
+        with patch(
+            "core.device_watchdog.time.time", side_effect=[100.0, 100.0, 130.0]
+        ):
+            watchdog.tick(now=100.0)  # trips recovery, finishes at t=100.0
+            watchdog.tick(now=200.0)  # next heartbeat; cooldown check at t=130.0 - only 30s since last
+
+        self.assertEqual(on_recovery_attempt.call_count, 1)
+        transport.disconnect.assert_called_once()
+
+    def test_recovery_attempt_after_cooldown_elapses_proceeds(self):
+        on_recovery_attempt = Mock()
+        watchdog, transport, power_control = make_watchdog(
+            recovery_cooldown_seconds=60.0,
+            heartbeat_interval_seconds=60.0,
+            on_recovery_attempt=on_recovery_attempt,
+        )
+        transport.check_alive.return_value = False
+        power_control.power_cycle.side_effect = PowerControlError("test")
+
+        with patch(
+            "core.device_watchdog.time.time",
+            side_effect=[100.0, 100.0, 200.0, 200.0],
+        ):
+            watchdog.tick(now=100.0)  # trips recovery, finishes at t=100.0
+            watchdog.tick(now=200.0)  # next heartbeat; cooldown check at t=200.0 - 100s since last, cooldown elapsed
+
+        self.assertEqual(on_recovery_attempt.call_count, 2)
+        self.assertEqual(transport.disconnect.call_count, 2)
 
 
 class TestBuildDeviceWatchdog(unittest.TestCase):
