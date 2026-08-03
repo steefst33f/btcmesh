@@ -1412,3 +1412,56 @@ lora/
 
 ---
 
+# EPIC 6: Device Identification in GUI Dropdowns
+
+**Goal:** Show each connected Meshtastic device's node ID alongside its serial port path in both GUIs' device dropdowns, so an operator with multiple devices attached doesn't have to guess or remember which physical device is on which port.
+
+**Background:** Both GUIs' device dropdowns (client GUI's device spinner, server GUI's Story 18.2 device settings spinner) currently list only OS-level port paths (e.g. `/dev/cu.usbserial-0001`), populated by `core/meshtastic_utils.py`'s `scan_meshtastic_devices()`. The node ID is a Meshtastic protocol-level identity, not a USB-level one - getting it requires actually connecting to the device (there's no lighter-weight query), so it's never been surfaced at scan time.
+
+**Priority:** Low - a real usability improvement, not a functional gap.
+
+---
+
+## Stories
+
+### 27. Node ID Display in Device Dropdowns
+
+- [ ] **Story 27.1: Add a shared device-node-ID lookup helper**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** a shared helper that connects briefly to a device path and returns its node ID,
+- [ ] *   **So that** both GUIs can reuse the same logic instead of duplicating it.
+    - [ ] *   **Scenario:** Device responds normally
+        - [ ] *   **Given** a real Meshtastic device at a given serial port path.
+        - [ ] *   **When** the helper is called with that path.
+        - [ ] *   **Then** it connects, retrieves the node ID, disconnects, and returns the node ID.
+    - [ ] *   **Scenario:** Device doesn't respond / isn't a Meshtastic device
+        - [ ] *   **Given** a serial port path that isn't a genuine Meshtastic device (e.g. a false-positive candidate from the VID-blacklist scan, such as the Story 26.7 relay board).
+        - [ ] *   **When** the helper is called with that path.
+        - [ ] *   **Then** it returns `None` rather than raising, once the connection attempt fails or times out.
+
+- [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
+- [ ] *   **As a** client GUI user,
+- [ ] *   **I want** to see each device's node ID next to its port path,
+- [ ] *   **So that** I don't have to guess or remember which node is on which port.
+    - [ ] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
+        - [ ] *   **Given** the client GUI scans for devices.
+        - [ ] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
+        - [ ] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
+    - [ ] *   **Scenario:** Currently-connected device is not re-probed
+        - [ ] *   **Given** the app already holds an active connection to one of the listed devices.
+        - [ ] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
+    - [ ] *   **Scenario:** Selecting a device still works
+        - [ ] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
+        - [ ] *   **When** the user selects it.
+        - [ ] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+
+- [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** the same node-ID-labeled dropdown in the server GUI's device settings,
+- [ ] *   **So that** I can identify the right device when configuring the relay server, the same way as the client.
+    - [ ] *   **Scenario:** Same behavior as Story 27.2, applied to the server GUI's device settings spinner
+        - [ ] *   **Given** the server GUI's "Scan" button is used (Story 18.2).
+        - [ ] *   **Then** the dropdown behaves identically to the client GUI's (immediate path-only list, node IDs filled in afterward, correct path resolved on selection/start).
+
+---
+
