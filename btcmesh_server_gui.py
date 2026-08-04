@@ -92,6 +92,12 @@ DEVICE_NO_DEVICES = "No devices found"
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
+LIVENESS_LOG_INTERVAL_SECONDS = 300
+# Issue 21: an operator checking the log later has no way to tell the
+# server was actually still running vs. silently dead/hung, unless some
+# other activity happened to log something. A periodic positive signal
+# closes that gap regardless of whether anything else is happening.
+
 
 class BTCMeshServerGUI(BoxLayout):
     """Main server GUI widget."""
@@ -878,12 +884,21 @@ class BTCMeshServerGUI(BoxLayout):
             # of the loop.
             try:
                 last_cleanup_time = time.time()
+                last_liveness_log = time.time()
                 while not self._stop_event.is_set():
-                    self.result_queue.put(('active_sessions', receiver.get_active_sessions()))
+                    active_sessions = receiver.get_active_sessions()
+                    self.result_queue.put(('active_sessions', active_sessions))
                     now = time.time()
                     if now - last_cleanup_time >= 10:
                         receiver.check_timeouts()
                         last_cleanup_time = now
+                    if now - last_liveness_log >= LIVENESS_LOG_INTERVAL_SECONDS:
+                        self.result_queue.put((
+                            'log',
+                            f"Server heartbeat: alive, listening. {len(active_sessions)} active session(s).",
+                            logging.INFO,
+                        ))
+                        last_liveness_log = now
                     time.sleep(1)
             finally:
                 transport.disconnect()

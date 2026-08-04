@@ -1354,6 +1354,63 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                         mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
 
 
+class TestServerLivenessLogStory282(unittest.TestCase):
+    """Tests for run_server()'s periodic liveness log (Story 28.2 / Issue 21)."""
+
+    def _run_server_with_one_loop_iteration(self, active_sessions, time_values):
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver') as mock_receiver_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'time') as mock_time:
+                    mock_receiver_cls.return_value.get_active_sessions.return_value = active_sessions
+                    mock_time.time.side_effect = time_values
+                    mock_time.sleep = lambda *_: None
+
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    # One loop iteration: is_set() False (enter loop), then True (exit)
+                    gui._stop_event.is_set.side_effect = [False, True]
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.device_spinner.text = btcmesh_server_gui.DEVICE_AUTO_DETECT
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+                    target_fn()
+
+                    logged_messages = []
+                    while True:
+                        try:
+                            result = gui.result_queue.get_nowait()
+                        except Exception:
+                            break
+                        if result[0] == 'log':
+                            logged_messages.append(result[1])
+                    return logged_messages
+
+    def test_liveness_log_fires_after_interval_elapses(self):
+        # last_cleanup_time=100.0, last_liveness_log=100.0, now=401.0 (>=300s later)
+        logged = self._run_server_with_one_loop_iteration(
+            active_sessions=['s1', 's2'], time_values=[100.0, 100.0, 401.0]
+        )
+        self.assertIn(
+            "Server heartbeat: alive, listening. 2 active session(s).", logged
+        )
+
+    def test_liveness_log_does_not_fire_before_interval_elapses(self):
+        # now=150.0 - only 50s since last_liveness_log, below the 300s interval
+        logged = self._run_server_with_one_loop_iteration(
+            active_sessions=[], time_values=[100.0, 100.0, 150.0]
+        )
+        self.assertFalse(any("heartbeat" in msg for msg in logged))
+
+
 class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
     """Tests for Story 18.3: Reassembly Timeout Settings."""
 

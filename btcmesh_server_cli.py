@@ -25,6 +25,11 @@ from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
 
 CHECK_TIMEOUTS_INTERVAL_SECONDS = 10
+LIVENESS_LOG_INTERVAL_SECONDS = 300
+# Issue 21: an operator checking the log later has no way to tell the
+# server was actually still running vs. silently dead/hung, unless some
+# other activity happened to log something. A periodic positive signal
+# closes that gap regardless of whether anything else is happening.
 
 
 def parse_args(argv=None):
@@ -146,11 +151,16 @@ def run_server(port=None) -> int:
     server_logger.info("Server started. Listening for incoming transactions... (Ctrl+C to stop)")
     try:
         last_cleanup = time.time()
+        last_liveness_log = time.time()
         while True:
             now = time.time()
             if now - last_cleanup >= CHECK_TIMEOUTS_INTERVAL_SECONDS:
                 receiver.check_timeouts()
                 last_cleanup = now
+            if now - last_liveness_log >= LIVENESS_LOG_INTERVAL_SECONDS:
+                active = len(receiver.get_active_sessions())
+                server_logger.info(f"Server heartbeat: alive, listening. {active} active session(s).")
+                last_liveness_log = now
             watchdog.tick(now)
             time.sleep(1)
     except KeyboardInterrupt:
