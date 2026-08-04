@@ -1465,3 +1465,60 @@ lora/
 
 ---
 
+# EPIC 7: Reliability Hardening from Overnight Field Testing
+
+**Goal:** Fix a critical client GUI freeze found during real overnight operation (Issue 21), and close the observability/detection gaps that let it go unnoticed until it caused a hang requiring a force-kill.
+
+**Background:** Running the client and server GUIs unattended overnight surfaced a real bug: `TransactionSender`'s send path has no timeout around the underlying transport call, so a genuinely wedged device can freeze the entire client GUI with no way to abort out of it. Investigating this also surfaced that neither the client nor the server GUI (only `btcmesh_server_cli.py`) has `DeviceWatchdog` wired in - so an overnight wedge on either could currently go completely undetected. See Issue 21 in `project/issues.txt` and `project/plans/story_28_1.md` for the full design.
+
+**Priority:** High - the send hang is a real, reproduced application freeze requiring a force-kill.
+
+---
+
+## Stories
+
+### 28. Send Timeout, Liveness Logging, and Watchdog Coverage
+
+- [ ] **Story 28.1: Bound `MeshtasticSerialTransport.send()` with a hard timeout**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** `transport.send()` to give up after a bounded time instead of blocking forever,
+- [ ] *   **So that** a wedged device can't freeze the client GUI or crash the server's send path (Issue 21).
+    - [ ] *   **Scenario:** Send completes normally
+        - [ ] *   **Given** a healthy, connected device.
+        - [ ] *   **When** `send()` is called.
+        - [ ] *   **Then** it behaves exactly as today - no observable change for the normal case.
+    - [ ] *   **Scenario:** Underlying send call never returns
+        - [ ] *   **Given** a device in a state where `iface.sendText()` blocks indefinitely.
+        - [ ] *   **When** `send()` is called.
+        - [ ] *   **Then** it raises `TransportSendError` after a bounded timeout rather than blocking forever.
+
+- [ ] **Story 28.2: Periodic "still alive" logging for both server entry points**
+- [ ] *   **As a** relay operator,
+- [ ] *   **I want** the server to periodically log that it's still running,
+- [ ] *   **So that** I can confirm from the log alone that it didn't silently die or hang overnight.
+    - [ ] *   **Scenario:** Server runs for an extended period
+        - [ ] *   **Given** the server (CLI or GUI) has been running for a while with no other activity.
+        - [ ] *   **Then** a periodic INFO log line confirms it's still alive and listening, without needing any incoming traffic to produce log activity.
+
+- [ ] **Story 28.3: Wire DeviceWatchdog into btcmesh_server_gui.py**
+- [ ] *   **As a** relay operator using the server GUI,
+- [ ] *   **I want** the same automatic device recovery the server CLI already has,
+- [ ] *   **So that** the GUI isn't silently unprotected against the exact overnight-wedge scenario the CLI already handles (Story 26.5's originally scoped-out follow-up).
+    - [ ] *   **Scenario:** Server GUI wires the same watchdog pattern as the CLI
+        - [ ] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
+        - [ ] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
+
+- [ ] **Story 28.4: Detection-only DeviceWatchdog for the client GUI**
+- [ ] *   **As a** client GUI user,
+- [ ] *   **I want** the app to notice when its device has gone unresponsive during idle time,
+- [ ] *   **So that** a wedge is caught and shown before I try to send, not discovered by a frozen send.
+    - [ ] *   **Scenario:** Idle heartbeat detects a wedge
+        - [ ] *   **Given** the client GUI is connected but not actively sending.
+        - [ ] *   **Then** a periodic heartbeat notices if the device stops responding and reports it in the activity log - without needing relay hardware, since most client machines won't have any.
+    - [ ] *   **Scenario:** No relay configured - detection only, no silent auto-recovery claim
+        - [ ] *   **Given** no `RELAY_SERIAL_PORT` is configured (the common client case).
+        - [ ] *   **Then** the reported message clearly reflects "device unresponsive, please reconnect" rather than implying an automatic recovery was attempted and failed.
+    *   _Note: Revives Story 26.6 (previously decided against - see `project/plans/story_26_6.md`) in a smaller, detection-only form. `build_device_watchdog()` already degrades gracefully with `power_control=None` when no relay is configured, so this reuses the same infrastructure rather than needing something new._
+
+---
+

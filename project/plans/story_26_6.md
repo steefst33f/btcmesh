@@ -1,6 +1,34 @@
 # Story 26.6 Implementation Plan: Wire DeviceWatchdog into the client (GUI)
 
-## Decision: Not Implemented
+## Update: Revived as Story 28.4 (detection-only)
+
+Real overnight field testing (Issue 21, `project/issues.txt`) surfaced a
+serious client GUI freeze whose root cause traces directly back to the
+gap this story would have closed: with no watchdog at all, the client
+had nothing checking its device's liveness during idle time, so a
+device that wedged at some point overnight sat there undetected until
+the first real send hung and eventually froze the whole application.
+
+The original decision below still holds for *automatic recovery* - a
+regular client machine almost certainly doesn't have relay hardware
+wired up, so full recovery isn't realistic to expect there. What this
+incident changed is recognizing that *detection alone* has real,
+standalone value independent of whether recovery is ever possible:
+`build_device_watchdog()` already degrades gracefully to detect-only
+when no relay is configured, so surfacing "device appears unresponsive"
+during idle time - before the user tries to send into a stale connection -
+is a much smaller addition than the original full-recovery scope, and
+would have caught this exact incident early. See
+`project/plans/story_28_1.md` (Story 28.4) for the updated, smaller
+scope; the design below (background thread, `result_queue` routing,
+`self.iface` refresh, etc.) is reused essentially unchanged, with one
+addition: the "recovery failed" message is worded differently when
+`power_control is None` (the expected, common case) versus a genuine
+failed recovery attempt with a relay present.
+
+---
+
+## Original Decision (superseded above): Not Implemented
 
 After drafting the design below and getting the CLI-vs-GUI scope
 question resolved (GUI only), a step back at the resulting design raised

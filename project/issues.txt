@@ -703,6 +703,68 @@ even though the relay itself works correctly** ✅ FIXED
 
 ---
 
+**Issue 21: Client GUI froze completely and required a force-kill after
+`transport.send()` hung indefinitely on an unattended overnight-wedged
+device; Abort had no effect**
+
+- Reported by the operator after running the client GUI and server GUI
+  unattended overnight. In the morning, sending a transaction logged
+  "Sending chunk 1/N..." and then showed nothing further for
+  approximately 5 minutes - no retry messages, meaning it never reached
+  the (properly 30s-bounded) ACK-wait step at all. Clicking Abort logged
+  "Abort requested..." but had no effect; the entire GUI window then
+  became fully unresponsive, requiring a force-kill. Physically
+  unplugging the device made no difference to the frozen application.
+- **Root cause**: `TransactionSender._send_all_chunks()`
+  (`client/sender.py`) calls `self.transport.send(...)` synchronously,
+  with no timeout of any kind. This is the one call in the entire send
+  path with no bound - the 30s ACK-wait timeout only starts *after*
+  `send()` returns, and the abort flag (`_abort_event`) is only checked
+  after that wait completes. If the underlying
+  `MeshtasticSerialTransport.send()` → `iface.sendText(...)` call itself
+  never returns, nothing in the design can ever interrupt it.
+- **Why unplugging didn't help**: this points away from a simple
+  OS/driver-level write() block (which physically removing the device
+  would typically eventually unstick, one way or another) and toward a
+  Python-level lock held inside the Meshtastic library itself - the send
+  call blocked while holding it, and the whole GUI window (not just the
+  Send button) freezing is consistent with the main thread eventually
+  needing that same lock for something else and blocking too.
+- **Why this didn't happen on the client before, and likely wouldn't
+  happen the same way on the server**: the client has no
+  `DeviceWatchdog` at all (Story 26.6 was explicitly decided against -
+  see `project/plans/story_26_6.md`), so nothing was checking the
+  device's liveness during the idle overnight stretch; a wedge could
+  happen at any point and sit there completely undetected until the
+  first real send tried to use the stale connection. Checking whether
+  the *server* needed to recover overnight (asked by the operator)
+  turned up a related, separate gap: `btcmesh_server_gui.py` (which is
+  what was actually run, not the CLI) has **no `DeviceWatchdog` wiring
+  at all** either - Story 26.5 only covered `btcmesh_server_cli.py`; the
+  GUI wiring was explicitly scoped out as a follow-up that was never
+  implemented. So the server log's silence overnight isn't evidence
+  nothing went wrong - there was nothing running that would have logged
+  it either way.
+- **Fix direction** (see `project/plans/story_28_1.md`):
+  1. Wrap `MeshtasticSerialTransport.send()`'s call to `sendText()` in a
+     bounded worker-thread timeout, so a genuinely stuck call can't
+     block the caller forever - fixed once at the shared transport
+     layer, protecting both the client and the server.
+  2. Add periodic "still alive" logging to both server entry points, so
+     an operator checking logs later has a positive signal the process
+     was actually running, not just silence.
+  3. Finish wiring `DeviceWatchdog` into `btcmesh_server_gui.py` (Story
+     26.5's originally scoped-out follow-up).
+  4. Revisit client-side watchdog wiring (previously decided against in
+     Story 26.6) as a detection-only mode (no relay hardware assumed) -
+     `build_device_watchdog()` already degrades gracefully to
+     detect-only when no relay is configured, so this is a much smaller
+     addition than originally scoped, and would have caught this exact
+     overnight wedge before the user ever tried to send.
+- **Status**: Open / documented. Not yet fixed.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -724,3 +786,4 @@ even though the relay itself works correctly** ✅ FIXED
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
+| -     | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Open** |
