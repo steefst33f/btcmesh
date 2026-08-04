@@ -240,6 +240,23 @@ elif result[0] == 'watchdog_failed':
 
 ---
 
+## Implementation Progress
+
+- **Story 28.1 - Done, real-hardware verified.** `send()`'s worker-thread
+  timeout wrapper is implemented and unit-tested
+  (`tests/test_meshtastic_serial_transport.py::test_send_raises_timeout_error_when_sendtext_blocks`).
+  Verified end-to-end against a real, genuinely unresponsive device
+  (relay power-cut) via `scripts/hw_tests/send_timeout_test.py`: `send()`
+  returned a `TransportSendError` after exactly the configured 10s bound
+  instead of hanging. See Issue 21 in `project/issues.txt` for the full
+  output and a related finding (`SerialInterface` opens its underlying
+  port with `write_timeout=0`, which refines the root-cause theory -
+  weakens "blocked in a raw write() syscall" in favor of "stuck holding
+  a Python-level lock inside the Meshtastic library").
+- Stories 28.2-28.4 not yet implemented.
+
+---
+
 ## Verification
 
 - **Unit tests**:
