@@ -347,7 +347,7 @@ class TestBuildReceiver(unittest.TestCase):
             kwargs = mock_receiver_cls.call_args.kwargs
         return kwargs, history
 
-    def test_wires_all_seven_callbacks_and_reassembler_timeout(self):
+    def test_wires_all_eight_callbacks_and_reassembler_timeout(self):
         with patch("btcmesh_server_cli.TransactionReceiver") as mock_receiver_cls, \
                 patch("btcmesh_server_cli.TransactionReassembler") as mock_reassembler_cls:
             cli.build_receiver(MagicMock(), MagicMock(), 300, MagicMock(), MagicMock())
@@ -357,6 +357,7 @@ class TestBuildReceiver(unittest.TestCase):
         for name in (
             "on_chunk_received", "on_broadcast_started", "on_broadcast",
             "on_error", "on_wire_sent", "on_wire_received", "on_transport_error",
+            "on_transport_success",
         ):
             self.assertIn(name, kwargs)
             self.assertTrue(callable(kwargs[name]))
@@ -367,13 +368,10 @@ class TestBuildReceiver(unittest.TestCase):
         kwargs["on_transport_error"](RuntimeError("device wedged"))
         watchdog.record_failure.assert_called_once()
 
-    def test_on_chunk_received_calls_watchdog_record_success(self):
+    def test_on_transport_success_calls_watchdog_record_success(self):
         watchdog = MagicMock()
         kwargs, _ = self._extract_callbacks(watchdog=watchdog)
-        with patch("btcmesh_server_cli.server_logger"):
-            kwargs["on_chunk_received"](
-                ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=1, total_chunks=1)
-            )
+        kwargs["on_transport_success"]()
         watchdog.record_success.assert_called_once()
 
     def test_on_chunk_received_logs_progress_when_not_last_chunk(self):

@@ -270,22 +270,24 @@ elif result[0] == 'watchdog_failed':
   `"Server heartbeat: alive, listening. N active session(s)."` every 5
   minutes. Unit-tested in `tests/test_btcmesh_server_cli.py::TestRunServerLivenessLog`
   and `tests/test_btcmesh_server_gui.py::TestServerLivenessLogStory282`.
-- **Story 28.3 - base wiring done, one fix pending review approval.**
+- **Story 28.3 - Done, including the review fix.**
   `btcmesh_server_gui.py` builds and ticks a `DeviceWatchdog` the same
   way the CLI does - `build_device_watchdog()` called right after
-  `transport.connect()` succeeds, `on_transport_error` wired into
-  `TransactionReceiver`, `watchdog.tick(now)` added to the existing
-  maintenance loop, all callback output routed through `result_queue`
-  rather than calling `server_logger` directly. Unit-tested in
-  `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`
-  (8 tests, mirroring the CLI's `TestRunServerDeviceWatchdog` coverage).
-  **Found in review, not yet fixed**: `record_success()` was wired into
+  `transport.connect()` succeeds, `watchdog.tick(now)` added to the
+  existing maintenance loop, all callback output routed through
+  `result_queue` rather than calling `server_logger` directly.
+  **Review fix applied**: the initial wiring had `record_success()` in
   `on_chunk_received` (matching the CLI's existing Story 26.5 pattern) -
   an asymmetry with `on_transport_error`, which already fires for any
-  failed reply send, not just chunk-acks. See
-  `project/plans/story_28_3.md` for the corrected design
-  (`on_transport_success`, symmetric with `on_transport_error`, fixing
-  both the GUI and the already-merged CLI) - not yet implemented.
+  failed reply send, not just chunk-acks. Fixed via a new
+  `on_transport_success` callback on `TransactionReceiver`
+  (`server/receiver.py`), fired in `_send()` symmetric with
+  `on_transport_error` - applied to both the GUI and the already-merged
+  CLI. See `project/plans/story_28_3.md` for the full design. Unit-tested
+  across `tests/test_server_receiver.py::TestTransactionReceiverTransportSuccess`,
+  `tests/test_btcmesh_server_cli.py::TestBuildReceiver`, and
+  `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`.
+  Full suite: 724 tests passing.
 - Story 28.4 not yet implemented.
 
 ---

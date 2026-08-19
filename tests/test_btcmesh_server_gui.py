@@ -1463,19 +1463,17 @@ class TestServerDeviceWatchdogStory283(unittest.TestCase):
             self._logged_messages(gui),
         )
 
-    def test_on_chunk_received_calls_record_success(self):
-        from server.receiver import ChunkReceived
-        mock_watchdog, _, _, mock_receiver_cls = self._run_server()
-        on_chunk_received = mock_receiver_cls.call_args.kwargs["on_chunk_received"]
-        evt = ChunkReceived(session_id="s1", chunk_num=1, total_chunks=1, sender_id="!aaa")
-        on_chunk_received(evt)
-        mock_watchdog.record_success.assert_called_once()
-
     def test_transaction_receiver_wired_to_record_failure(self):
         mock_watchdog, _, _, mock_receiver_cls = self._run_server()
         on_transport_error = mock_receiver_cls.call_args.kwargs["on_transport_error"]
         on_transport_error(RuntimeError("send failed"))
         mock_watchdog.record_failure.assert_called_once()
+
+    def test_transaction_receiver_wired_to_record_success(self):
+        mock_watchdog, _, _, mock_receiver_cls = self._run_server()
+        on_transport_success = mock_receiver_cls.call_args.kwargs["on_transport_success"]
+        on_transport_success()
+        mock_watchdog.record_success.assert_called_once()
 
 
 class TestServerLivenessLogStory282(unittest.TestCase):

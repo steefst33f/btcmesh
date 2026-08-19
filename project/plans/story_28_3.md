@@ -195,22 +195,24 @@ recovery checks.
 
 ## Implementation Progress
 
-The base GUI wiring (everything except the `on_transport_success` fix
-below) was already implemented and committed before this review caught
-the success/failure asymmetry - that fix, and its propagation back to
-the already-merged CLI, is what still needs approval and implementing.
+**Done.** All items implemented and tested.
 
 - [x] Wire the shared `build_device_watchdog()` factory into the GUI server
       startup path
 - [x] Wire `on_transport_error` into the GUI's `TransactionReceiver` construction
 - [x] Add `watchdog.tick(now)` in the GUI loop alongside the existing
       timeout and heartbeat checks
-- [ ] Add `on_transport_success` to `TransactionReceiver`/`_send()` (`server/receiver.py`)
-- [ ] Fix the CLI's Story 26.5 wiring to use `on_transport_success` instead of
+- [x] Add `on_transport_success` to `TransactionReceiver`/`_send()` (`server/receiver.py`)
+- [x] Fix the CLI's Story 26.5 wiring to use `on_transport_success` instead of
       calling `record_success()` from `on_chunk_received`
-- [ ] Fix the GUI wiring the same way (remove `record_success()` from
-      `on_chunk_received`, wire `on_transport_success` instead)
-- [ ] Update/add tests across all three affected files
+- [x] Fix the GUI wiring the same way (removed `record_success()` from
+      `on_chunk_received`, wired `on_transport_success` instead)
+- [x] Update/add tests across all three affected files:
+      `tests/test_server_receiver.py::TestTransactionReceiverTransportSuccess`
+      (3 tests, including a NACK-send case proving the signal isn't tied
+      to chunk validity), `tests/test_btcmesh_server_cli.py::TestBuildReceiver`
+      (updated), `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`
+      (updated). Full suite: 724 tests passing.
 
 ---
 

@@ -809,11 +809,6 @@ class BTCMeshServerGUI(BoxLayout):
             history = TransactionHistory()
 
             def on_chunk_received(evt: ChunkReceived):
-                # Only reached once the ack for this chunk has already been
-                # sent successfully - a correct "this device is genuinely
-                # working" signal (matches btcmesh_server_cli.py's Story 26.5
-                # wiring).
-                watchdog.record_success()
                 self.result_queue.put((
                     'log',
                     f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
@@ -891,6 +886,7 @@ class BTCMeshServerGUI(BoxLayout):
                     on_wire_sent=on_wire_sent,
                     on_wire_received=on_wire_received,
                     on_transport_error=lambda e: watchdog.record_failure(),
+                    on_transport_success=lambda: watchdog.record_success(),
                 )
             except Exception as e:
                 self.result_queue.put(('init_error', str(e)))

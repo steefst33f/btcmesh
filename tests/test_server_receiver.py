@@ -187,6 +187,57 @@ class TestTransactionReceiverTransportError(unittest.TestCase):
         on_error.assert_called_once()
 
 
+class TestTransactionReceiverTransportSuccess(unittest.TestCase):
+    """Tests for on_transport_success (Story 28.3 review fix) - fired from
+    _send() symmetric with on_transport_error, for *any* successful reply
+    send (chunk-ack, NACK, or final ACK alike), not just a fully-received
+    chunk. See project/plans/story_28_3.md for why this needed fixing."""
+
+    def test_on_transport_success_fires_when_ack_send_succeeds(self):
+        on_transport_success = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_transport_success=on_transport_success
+        )
+        rpc_client.broadcast_transaction.return_value = ("mytxid", None)
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        # Two successful sends for a single-chunk transaction that
+        # completes: the chunk-ack, then the final BTC_ACK reply - both are
+        # genuine successful local sends, both count.
+        self.assertEqual(on_transport_success.call_count, 2)
+
+    def test_on_transport_success_fires_for_a_nack_send_too(self):
+        """A malformed chunk never reaches on_chunk_received, but the NACK
+        reply for it is still a genuine successful local send - proof the
+        device is alive even though the higher-level outcome is a failure."""
+        on_transport_success = Mock()
+        on_chunk_received = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_transport_success=on_transport_success,
+            on_chunk_received=on_chunk_received,
+        )
+
+        handler("BTC_TX|sessBad|notanumber/2|deadbeef", "!sender1")
+
+        on_chunk_received.assert_not_called()
+        on_transport_success.assert_called_once_with()
+
+    def test_on_transport_success_does_not_fire_when_send_fails(self):
+        on_transport_success = Mock()
+        transport = Mock(spec=BaseTransport)
+        rpc_client = Mock(spec=BitcoinRPCClient)
+        transport.send.side_effect = RuntimeError("device wedged")
+        receiver = TransactionReceiver(
+            transport, rpc_client, on_transport_success=on_transport_success
+        )
+        handler = transport.set_message_handler.call_args[0][0]
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        on_transport_success.assert_not_called()
+
+
 class TestTransactionReceiverBroadcast(unittest.TestCase):
     """Tests for RPC broadcast success/failure handling."""
 
