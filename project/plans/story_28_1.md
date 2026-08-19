@@ -240,6 +240,37 @@ elif result[0] == 'watchdog_failed':
 
 ---
 
+## Implementation Progress
+
+- **Story 28.1 - Done, real-hardware verified.** `send()`'s worker-thread
+  timeout wrapper is implemented and unit-tested
+  (`tests/test_meshtastic_serial_transport.py::test_send_raises_timeout_error_when_sendtext_blocks`).
+  Verified end-to-end against a real, genuinely unresponsive device
+  (relay power-cut) via `scripts/hw_tests/send_timeout_test.py`: `send()`
+  returned a `TransportSendError` after exactly the configured 10s bound
+  instead of hanging. See Issue 21 in `project/issues.txt` for the full
+  output and a related finding (`SerialInterface` opens its underlying
+  port with `write_timeout=0`, which refines the root-cause theory -
+  weakens "blocked in a raw write() syscall" in favor of "stuck holding
+  a Python-level lock inside the Meshtastic library").
+- **Story 28.2 - Done.** Both server entry points log
+  `"Server heartbeat: alive, listening. N active session(s)."` every 5
+  minutes. Unit-tested in `tests/test_btcmesh_server_cli.py::TestRunServerLivenessLog`
+  and `tests/test_btcmesh_server_gui.py::TestServerLivenessLogStory282`.
+- **Story 28.3 - Done.** `btcmesh_server_gui.py` now builds and ticks a
+  `DeviceWatchdog` the same way the CLI does - `build_device_watchdog()`
+  called right after `transport.connect()` succeeds,
+  `on_transport_error`/`record_success()` wired into
+  `TransactionReceiver`/`on_chunk_received`, `watchdog.tick(now)` added
+  to the existing maintenance loop, all callback output routed through
+  `result_queue` (matching every other callback in this GUI's
+  `run_server()` closure) rather than calling `server_logger` directly.
+  Unit-tested in `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`
+  (8 tests, mirroring the CLI's `TestRunServerDeviceWatchdog` coverage).
+- Story 28.4 not yet implemented.
+
+---
+
 ## Verification
 
 - **Unit tests**:
