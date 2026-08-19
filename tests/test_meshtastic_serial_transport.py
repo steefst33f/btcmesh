@@ -11,6 +11,7 @@ Tests verify:
 - Text extraction from packets
 """
 import sys
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -337,6 +338,29 @@ class TestMeshtasticSerialTransportSend(unittest.TestCase):
         with self.assertRaises(TransportSendError) as ctx:
             transport.send("hello", "!deadbeef")
         self.assertIn("Failed to send message", str(ctx.exception))
+
+    def test_send_raises_timeout_error_when_sendtext_blocks(self):
+        """Issue 21: a genuinely wedged device can make sendText() block
+        indefinitely. send() must give up after _SEND_TIMEOUT_SECONDS
+        rather than hanging forever."""
+        release_event = threading.Event()
+
+        def blocking_send_text(**kwargs):
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        mock_iface = MockSerialInterface()
+        mock_iface.sendText = MagicMock(side_effect=blocking_send_text)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport._SEND_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertRaises(TransportSendError) as ctx:
+            transport.send("hello", "!deadbeef")
+        self.assertIn("timed out", str(ctx.exception))
+
+        release_event.set()  # let the abandoned worker thread finish, tidy shutdown
 
 
 # ---------------------------------------------------------------------------

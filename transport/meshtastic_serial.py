@@ -6,6 +6,7 @@ message-receive mechanism into the BaseTransport API.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, List, Optional
 
 from transport.base import (
@@ -40,6 +41,13 @@ class MeshtasticSerialTransport(BaseTransport):
 
     _WANT_ACK: bool = False
     _RECEIVE_TOPIC: str = "meshtastic.receive"
+    _SEND_TIMEOUT_SECONDS: float = 10.0
+    # A generous bound over sendText()'s normal near-instant completion
+    # (see project/plans/story_26_2.md - raw writes return in ~0ms even
+    # against a wedged device in the common case), while far short of the
+    # multi-minute hang documented in Issue 21 - a genuinely wedged/stalled
+    # device froze the entire client GUI, with no way to time out or abort
+    # the underlying blocked call.
 
     def __init__(self) -> None:
         self._iface: Any = None
@@ -172,21 +180,44 @@ class MeshtasticSerialTransport(BaseTransport):
 
         Raises:
             TransportConnectionError: If not connected.
-            TransportSendError: If the send operation fails.
+            TransportSendError: If the send operation fails, including
+                if it doesn't complete within _SEND_TIMEOUT_SECONDS (see
+                Issue 21 - a wedged device caused this call to block
+                indefinitely, freezing the entire client GUI with no way
+                to time out or abort it).
         """
         if self._iface is None:
             raise TransportConnectionError("Not connected")
 
-        try:
-            self._iface.sendText(
-                text=message,
-                destinationId=destination,
-                wantAck=self._WANT_ACK,
-            )
-        except Exception as exc:
+        outcome: dict = {}
+
+        def _do_send() -> None:
+            try:
+                self._iface.sendText(
+                    text=message,
+                    destinationId=destination,
+                    wantAck=self._WANT_ACK,
+                )
+            except Exception as exc:
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=_do_send, daemon=True)
+        worker.start()
+        worker.join(timeout=self._SEND_TIMEOUT_SECONDS)
+
+        if worker.is_alive():
+            # Can't forcibly stop the underlying blocked call - it's
+            # abandoned, not killed. This still fixes the actual bug:
+            # the caller (a retry loop, an abort flag, a GUI thread) is
+            # no longer held hostage by it forever.
             raise TransportSendError(
-                f"Failed to send message: {exc}"
-            ) from exc
+                f"Send timed out after {self._SEND_TIMEOUT_SECONDS}s - "
+                "device may be unresponsive"
+            )
+        if "error" in outcome:
+            raise TransportSendError(
+                f"Failed to send message: {outcome['error']}"
+            ) from outcome["error"]
 
     def set_message_handler(self, handler: MessageHandler) -> None:
         """Register a callback for incoming text messages.
