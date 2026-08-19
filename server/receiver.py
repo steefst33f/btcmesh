@@ -122,6 +122,16 @@ class TransactionReceiver:
         # flow). Intended for a caller to hook into
         # DeviceWatchdog.record_failure() (Story 26.5) - this class has no
         # knowledge of DeviceWatchdog itself.
+        on_transport_success: Optional[Callable[[], None]] = None,
+        # on_transport_success() - fires whenever a reply send succeeds at
+        # the transport layer, symmetric with on_transport_error. Fires for
+        # every successful reply (chunk-ack, NACK, or final ACK alike), not
+        # just a fully-received chunk - deliberately broad, since any
+        # successful local send is equally strong proof the device is
+        # responsive. Intended for a caller to hook into
+        # DeviceWatchdog.record_success() (Story 28.3) - keeps that signal
+        # about local transport health only, never chunk-protocol validity
+        # or remote-peer ACKs.
         completed_session_grace_seconds: int = 300,
         # How long to remember a just-completed session's final ACK/NACK
         # (see Issue 17): if the client never got that reply and retransmits
@@ -141,6 +151,7 @@ class TransactionReceiver:
         self._on_wire_received = on_wire_received
         self._on_broadcast_started = on_broadcast_started
         self._on_transport_error = on_transport_error
+        self._on_transport_success = on_transport_success
         self._completed_session_grace_seconds = completed_session_grace_seconds
         # (sender_id, session_id) -> (completed_at, final_message_text)
         self._completed_sessions: Dict[Tuple[Any, str], Tuple[float, str]] = {}
@@ -154,6 +165,8 @@ class TransactionReceiver:
             if self._on_transport_error:
                 self._on_transport_error(e)
             raise
+        if self._on_transport_success:
+            self._on_transport_success()
         if self._on_wire_sent:
             self._on_wire_sent(message)
 

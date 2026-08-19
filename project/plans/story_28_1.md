@@ -153,11 +153,22 @@ route through `result_queue` instead of direct `server_logger` calls
   `on_chunk_received`/`on_broadcast`/etc. already do.
 - `TransactionReceiver(...)`'s constructor call gains
   `on_transport_error=lambda e: watchdog.record_failure()`.
-- `on_chunk_received` gains one added line, `watchdog.record_success()`,
-  matching the CLI's `build_receiver()`.
 - The existing `while not self._stop_event.is_set(): ... time.sleep(1)`
   loop gains `watchdog.tick(now)` alongside the existing
   `check_timeouts()` cadence check and the new Story 28.2 liveness log.
+
+**Superseded by a fix found in review - see `project/plans/story_28_3.md`
+for the full design and reasoning:** the sketch above (and the initial
+implementation) wired `record_success()` into `on_chunk_received` - a
+real asymmetry with `on_transport_error`, which already fires for *any*
+failed reply send, not just chunk-acks. `TransactionReceiver` gains a
+new `on_transport_success` callback (`server/receiver.py`), fired inside
+`_send()` symmetric with `on_transport_error`, and both the CLI's
+already-merged Story 26.5 wiring and this story's GUI wiring move
+`record_success()` there instead of `on_chunk_received`. This keeps the
+watchdog's signal purely about local transport health - never
+chunk-protocol validity or remote-peer ACKs - consistently on both the
+success and failure side.
 
 ### Story 28.4 - client GUI, detection-only watchdog
 
@@ -195,10 +206,12 @@ elif result[0] == 'watchdog_failed':
 |------|--------|
 | `transport/meshtastic_serial.py` | Bound `send()` with a worker-thread timeout (28.1) |
 | `tests/test_meshtastic_serial_transport.py` | Test for the timeout path (28.1) |
-| `btcmesh_server_cli.py` | Periodic liveness log (28.2) |
-| `btcmesh_server_gui.py` | Periodic liveness log (28.2); `build_device_watchdog()` wiring, `on_transport_error`/`record_success()`, `watchdog.tick()` in the loop (28.3) |
-| `tests/test_btcmesh_server_cli.py` | Test for the liveness log (28.2) |
+| `btcmesh_server_cli.py` | Periodic liveness log (28.2); fix `record_success()` wiring to use `on_transport_success` instead of `on_chunk_received` (28.3 review fix) |
+| `btcmesh_server_gui.py` | Periodic liveness log (28.2); `build_device_watchdog()` wiring, `on_transport_error`/`on_transport_success`, `watchdog.tick()` in the loop (28.3) |
+| `server/receiver.py` | Add `on_transport_success` callback, fired in `_send()` symmetric with `on_transport_error` (28.3 review fix - see `project/plans/story_28_3.md`) |
+| `tests/test_btcmesh_server_cli.py` | Test for the liveness log (28.2); updated tests for the `on_transport_success` wiring (28.3 review fix) |
 | `tests/test_btcmesh_server_gui.py` | Tests for the liveness log (28.2) and watchdog wiring (28.3) |
+| `tests/test_server_receiver.py` | Test for `on_transport_success` (28.3 review fix) |
 | `btcmesh_client_gui.py` | Detection-only watchdog thread, result handling incl. the no-power-control message distinction (28.4) |
 | `tests/test_btcmesh_client_gui.py` | Tests for 28.4, reusing the plan already written in `project/plans/story_26_6.md` |
 | `project/plans/story_26_6.md` | Update decision - reopened, see below |
@@ -253,7 +266,29 @@ elif result[0] == 'watchdog_failed':
   port with `write_timeout=0`, which refines the root-cause theory -
   weakens "blocked in a raw write() syscall" in favor of "stuck holding
   a Python-level lock inside the Meshtastic library").
-- Stories 28.2-28.4 not yet implemented.
+- **Story 28.2 - Done.** Both server entry points log
+  `"Server heartbeat: alive, listening. N active session(s)."` every 5
+  minutes. Unit-tested in `tests/test_btcmesh_server_cli.py::TestRunServerLivenessLog`
+  and `tests/test_btcmesh_server_gui.py::TestServerLivenessLogStory282`.
+- **Story 28.3 - Done, including the review fix.**
+  `btcmesh_server_gui.py` builds and ticks a `DeviceWatchdog` the same
+  way the CLI does - `build_device_watchdog()` called right after
+  `transport.connect()` succeeds, `watchdog.tick(now)` added to the
+  existing maintenance loop, all callback output routed through
+  `result_queue` rather than calling `server_logger` directly.
+  **Review fix applied**: the initial wiring had `record_success()` in
+  `on_chunk_received` (matching the CLI's existing Story 26.5 pattern) -
+  an asymmetry with `on_transport_error`, which already fires for any
+  failed reply send, not just chunk-acks. Fixed via a new
+  `on_transport_success` callback on `TransactionReceiver`
+  (`server/receiver.py`), fired in `_send()` symmetric with
+  `on_transport_error` - applied to both the GUI and the already-merged
+  CLI. See `project/plans/story_28_3.md` for the full design. Unit-tested
+  across `tests/test_server_receiver.py::TestTransactionReceiverTransportSuccess`,
+  `tests/test_btcmesh_server_cli.py::TestBuildReceiver`, and
+  `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`.
+  Full suite: 724 tests passing.
+- Story 28.4 not yet implemented.
 
 ---
 

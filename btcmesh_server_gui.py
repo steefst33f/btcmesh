@@ -61,6 +61,7 @@ from core.gui_common import (
 )
 
 from core.config_loader import load_app_config
+from core.device_watchdog import build_device_watchdog
 from core.meshtastic_utils import get_own_node_name
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
@@ -763,6 +764,32 @@ class BTCMeshServerGUI(BoxLayout):
                 },
             ))
 
+            watchdog, power_control = build_device_watchdog(
+                transport,
+                on_recovery_attempt=lambda: self.result_queue.put((
+                    'log', "Device appears wedged - attempting automatic recovery...",
+                    logging.WARNING,
+                )),
+                on_recovered=lambda outcome: self.result_queue.put((
+                    'log', f"Device recovered. Reconnected at {outcome.new_device_path}.",
+                    logging.INFO,
+                )),
+                on_recovery_failed=lambda outcome: self.result_queue.put((
+                    'log', f"Automatic device recovery failed: {outcome.error}",
+                    logging.ERROR,
+                )),
+            )
+            if power_control:
+                self.result_queue.put(('log', "Automatic device-recovery enabled via relay.", logging.INFO))
+            else:
+                self.result_queue.put((
+                    'log',
+                    "RELAY_SERIAL_PORT not configured - automatic device-wedge "
+                    "recovery is disabled (wedge detection still logs, but won't "
+                    "recover on its own).",
+                    logging.INFO,
+                ))
+
             # Match old behavior: a failed RPC connection does not stop the
             # server. Meshtastic keeps running (chunks are still received,
             # reassembled, and ACKed) - only the final broadcast step fails
@@ -858,6 +885,8 @@ class BTCMeshServerGUI(BoxLayout):
                     on_error=on_error,
                     on_wire_sent=on_wire_sent,
                     on_wire_received=on_wire_received,
+                    on_transport_error=lambda e: watchdog.record_failure(),
+                    on_transport_success=lambda: watchdog.record_success(),
                 )
             except Exception as e:
                 self.result_queue.put(('init_error', str(e)))
@@ -900,6 +929,7 @@ class BTCMeshServerGUI(BoxLayout):
                             logging.INFO,
                         ))
                         last_liveness_log = now
+                    watchdog.tick(now)
                     time.sleep(1)
             finally:
                 transport.disconnect()

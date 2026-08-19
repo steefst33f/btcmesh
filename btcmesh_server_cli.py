@@ -50,7 +50,10 @@ def build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog)
     """Wire TransactionReceiver's callbacks to server_logger + history - the
     same callback set and log wording btcmesh_server_gui.py's Activity Log
     uses, just logged instead of pushed to a GUI queue. Also wires
-    record_success()/record_failure() into watchdog (Story 26.5)."""
+    record_success()/record_failure() into watchdog (Story 26.5) via
+    on_transport_success/on_transport_error, symmetric with each other -
+    every successful/failed reply send counts, not just chunk-acks
+    (Story 28.3 review fix; see project/plans/story_28_3.md)."""
 
     def on_chunk_received(evt: ChunkReceived):
         server_logger.info(f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}")
@@ -58,9 +61,6 @@ def build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog)
             server_logger.info(f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...")
         else:
             server_logger.info(f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.")
-        # Only reached once the ack for this chunk has already been sent
-        # successfully - a correct "this device is genuinely working" signal.
-        watchdog.record_success()
 
     def on_broadcast_started(session_id, sender_id):
         server_logger.info(f"[{session_id}] Broadcasting transaction to Bitcoin network...")
@@ -95,6 +95,7 @@ def build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog)
         on_wire_sent=on_wire_sent,
         on_wire_received=on_wire_received,
         on_transport_error=lambda e: watchdog.record_failure(),
+        on_transport_success=lambda: watchdog.record_success(),
     )
 
 

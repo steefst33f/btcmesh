@@ -1354,6 +1354,128 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                         mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
 
 
+class TestServerDeviceWatchdogStory283(unittest.TestCase):
+    """Tests for run_server()'s DeviceWatchdog wiring (Story 28.3 - the
+    server GUI counterpart to btcmesh_server_cli.py's Story 26.5 wiring)."""
+
+    def _run_server(self, mock_watchdog=None, power_control=None, stop_after_iterations=0):
+        """Runs run_server()'s real closure body once, with build_device_watchdog
+        mocked to return (mock_watchdog, power_control). Returns
+        (mock_watchdog, captured_kwargs, gui, mock_receiver_cls).
+
+        stop_after_iterations controls how many times the maintenance loop
+        body executes before _stop_event.is_set() reports True.
+        """
+        import btcmesh_server_gui
+
+        if mock_watchdog is None:
+            mock_watchdog = unittest.mock.MagicMock()
+        captured = {}
+
+        def fake_build_device_watchdog(transport, **kwargs):
+            captured.update(kwargs)
+            return mock_watchdog, power_control
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver') as mock_receiver_cls, \
+                     unittest.mock.patch.object(
+                         btcmesh_server_gui, 'build_device_watchdog',
+                         side_effect=fake_build_device_watchdog,
+                     ), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'time') as mock_time:
+                    mock_receiver_cls.return_value.get_active_sessions.return_value = []
+                    mock_time.time.return_value = 100.0
+                    mock_time.sleep = lambda *_: None
+
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    is_set_results = [False] * stop_after_iterations + [True]
+                    gui._stop_event.is_set.side_effect = is_set_results
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.device_spinner.text = btcmesh_server_gui.DEVICE_AUTO_DETECT
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+                    target_fn()
+
+        return mock_watchdog, captured, gui, mock_receiver_cls
+
+    def _logged_messages(self, gui):
+        messages = []
+        while True:
+            try:
+                result = gui.result_queue.get_nowait()
+            except Exception:
+                break
+            if result[0] == 'log':
+                messages.append(result[1])
+        return messages
+
+    def test_tick_called_each_loop_iteration(self):
+        mock_watchdog, _, _, _ = self._run_server(stop_after_iterations=3)
+        self.assertEqual(mock_watchdog.tick.call_count, 3)
+
+    def test_logs_enabled_when_power_control_configured(self):
+        _, _, gui, _ = self._run_server(power_control=unittest.mock.MagicMock())
+        self.assertIn(
+            "Automatic device-recovery enabled via relay.", self._logged_messages(gui)
+        )
+
+    def test_logs_disabled_when_power_control_not_configured(self):
+        _, _, gui, _ = self._run_server(power_control=None)
+        self.assertIn(
+            "RELAY_SERIAL_PORT not configured - automatic device-wedge "
+            "recovery is disabled (wedge detection still logs, but won't "
+            "recover on its own).",
+            self._logged_messages(gui),
+        )
+
+    def test_on_recovery_attempt_logs_warning(self):
+        _, captured, gui, _ = self._run_server()
+        captured["on_recovery_attempt"]()
+        self.assertIn(
+            "Device appears wedged - attempting automatic recovery...",
+            self._logged_messages(gui),
+        )
+
+    def test_on_recovered_logs_new_path(self):
+        from core.device_watchdog import RecoveryOutcome
+        _, captured, gui, _ = self._run_server()
+        captured["on_recovered"](RecoveryOutcome(success=True, new_device_path="/dev/ttyNEW"))
+        self.assertIn(
+            "Device recovered. Reconnected at /dev/ttyNEW.", self._logged_messages(gui)
+        )
+
+    def test_on_recovery_failed_logs_error(self):
+        from core.device_watchdog import RecoveryOutcome
+        _, captured, gui, _ = self._run_server()
+        captured["on_recovery_failed"](
+            RecoveryOutcome(success=False, error="Power cycle failed: no relay")
+        )
+        self.assertIn(
+            "Automatic device recovery failed: Power cycle failed: no relay",
+            self._logged_messages(gui),
+        )
+
+    def test_transaction_receiver_wired_to_record_failure(self):
+        mock_watchdog, _, _, mock_receiver_cls = self._run_server()
+        on_transport_error = mock_receiver_cls.call_args.kwargs["on_transport_error"]
+        on_transport_error(RuntimeError("send failed"))
+        mock_watchdog.record_failure.assert_called_once()
+
+    def test_transaction_receiver_wired_to_record_success(self):
+        mock_watchdog, _, _, mock_receiver_cls = self._run_server()
+        on_transport_success = mock_receiver_cls.call_args.kwargs["on_transport_success"]
+        on_transport_success()
+        mock_watchdog.record_success.assert_called_once()
+
+
 class TestServerLivenessLogStory282(unittest.TestCase):
     """Tests for run_server()'s periodic liveness log (Story 28.2 / Issue 21)."""
 
