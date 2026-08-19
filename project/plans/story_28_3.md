@@ -63,44 +63,65 @@ UI-specific callback bodies.
 
 ### Wiring the receiver callbacks
 
-The constructor for `TransactionReceiver` gets the watchdog callback:
+**Revised after review** - the first draft below wired `record_failure()`
+at the low transport level (`on_transport_error`, inside `_send()`) but
+`record_success()` at a high, protocol-specific level (`on_chunk_received`,
+only one of several things that call `_send()`). That's an asymmetry, not
+just a style choice: `on_transport_error` already fires for *any* failed
+reply send regardless of what was being sent (chunk-ack, NACK, final
+ACK), so `record_success()` needs the same breadth - otherwise a
+successful NACK or final-ACK send (equally strong proof the device is
+alive) doesn't reset the failure counter, and an unlucky mix of a few
+real-but-unrelated failures interleaved with successful non-chunk sends
+could trip recovery even though the device just demonstrably worked.
+
+**Fix**: add `on_transport_success` to `TransactionReceiver`
+(`server/receiver.py`), firing at the exact same point `on_wire_sent`
+already does - right after `self.transport.send(...)` succeeds inside
+`_send()` - so every successful reply of any kind counts, symmetric with
+`on_transport_error`. This also fixes the identical gap in the
+already-merged CLI wiring (Story 26.5), which has the same asymmetry,
+not just the GUI:
+
+```python
+# server/receiver.py - _send()
+def _send(self, message: str, sender_id: str) -> None:
+    try:
+        self.transport.send(message, sender_id)
+    except Exception as e:
+        if self._on_transport_error:
+            self._on_transport_error(e)
+        raise
+    if self._on_transport_success:
+        self._on_transport_success()
+    if self._on_wire_sent:
+        self._on_wire_sent(message)
+```
 
 ```python
 receiver = TransactionReceiver(
     transport,
     rpc_client,
     reassembler=TransactionReassembler(timeout_seconds=reassembly_timeout),
-    on_chunk_received=on_chunk_received,
+    on_chunk_received=on_chunk_received,       # no longer touches the watchdog
     on_broadcast_started=on_broadcast_started,
     on_broadcast=on_broadcast,
     on_error=on_error,
     on_wire_sent=on_wire_sent,
     on_wire_received=on_wire_received,
     on_transport_error=lambda e: watchdog.record_failure(),
+    on_transport_success=lambda: watchdog.record_success(),
 )
 ```
 
-The chunk-received callback adds one extra signal after a chunk is successfully
-processed by the local transport path. That is a transport-health signal, but it
-must not be mistaken for a remote peer ACK check:
+`on_chunk_received` goes back to being purely a display/logging callback -
+`record_success()` is removed from it entirely, since `on_transport_success`
+now covers that case (and every other successful reply) at the source.
 
-```python
-def on_chunk_received(evt: ChunkReceived):
-    self.result_queue.put((
-        'log',
-        f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
-        logging.INFO,
-        COLOR_PRIMARY,
-    ))
-    # ... existing log lines ...
-    watchdog.record_success()
-```
-
-This is intentionally narrower than "ACK received from a peer." A missing ACK can
-mean no other node is reachable, but it does not prove that the local Meshtastic
-radio/device is wedged or powered off. The watchdog should therefore reset on
-successful local transport health evidence (for example: a successful send/receive
-operation or explicit liveness check), not on the absence of a remote ACK.
+This keeps the watchdog's signal purely about local transport health -
+never about chunk-protocol validity or remote-peer ACKs - exactly the
+principle raised in review, just enforced consistently on both the
+success and failure side instead of only the failure side.
 
 ### Main loop updates
 
@@ -140,10 +161,13 @@ recovery checks.
 
 | File | Change |
 |------|--------|
-| `btcmesh_server_gui.py` | Add `build_device_watchdog()` wiring, `on_transport_error`, `record_success()`, and `watchdog.tick()` in the loop |
-| `core/device_watchdog.py` | Reuse shared factory and callback behavior already implemented for CLI/server recovery |
-| `server/receiver.py` | Ensure the callback hook is reached when a transport send fails, so the watchdog can react |
-| `tests/test_btcmesh_server_gui.py` | GUI watchdog tests for recovery attempt, recovered, and failed paths |
+| `server/receiver.py` | Add `on_transport_success` callback, fired in `_send()` symmetric with `on_transport_error` |
+| `btcmesh_server_cli.py` | Fix the same asymmetry in the already-merged Story 26.5 wiring: move `record_success()` from `on_chunk_received` to `on_transport_success` |
+| `btcmesh_server_gui.py` | `build_device_watchdog()` wiring, `on_transport_error`/`on_transport_success`, `watchdog.tick()` in the loop |
+| `core/device_watchdog.py` | Reuse shared factory and callback behavior already implemented for CLI/server recovery (no changes needed) |
+| `tests/test_server_receiver.py` | Test `on_transport_success` fires on a successful send, not on a failed one |
+| `tests/test_btcmesh_server_cli.py` | Update existing Story 26.5 tests for the moved `record_success()` wiring |
+| `tests/test_btcmesh_server_gui.py` | GUI watchdog tests for recovery attempt, recovered, failed, and the corrected success/failure wiring |
 | `project/tasks.txt` | Mark Story 28.3 complete after verification |
 
 ---
@@ -155,10 +179,14 @@ recovery checks.
    thread directly.
 2. **Use the same watchdog factory already built for the CLI** - no duplicated
    recovery logic or config parsing in the GUI.
-3. **Reset on local transport health evidence, not on remote peer ACK absence** - a
-   missing ACK is not the same thing as a wedged Meshtastic device. The watchdog
-   should treat current device responsiveness as the signal, using successful local
-   transport operations or explicit liveness checks as the health indicator.
+3. **`record_success()`/`record_failure()` reflect local transport health only,
+   symmetrically, at the same low level** - never chunk-protocol validity, never
+   remote-peer ACK receipt. `on_transport_error` already worked this way; `on_transport_success`
+   (new) brings `record_success()` in line with it, firing on *every* successful
+   reply send (chunk-ack, NACK, or final ACK alike) rather than only one narrow
+   protocol path. This fixes a real asymmetry found in review - see "Wiring the
+   receiver callbacks" above - present in both the CLI (already merged) and the
+   original draft of this story.
 4. **No separate watchdog background thread for the GUI** - the GUI already runs a
    loop; `watchdog.tick(now)` belongs in that same loop, keeping the behavior simple
    and consistent with the rest of the server runtime.
@@ -167,26 +195,36 @@ recovery checks.
 
 ## Implementation Progress
 
-- **Planned**: wire the shared `build_device_watchdog()` factory into the GUI server
-  startup path.
-- **Planned**: add the watchdog callback to `TransactionReceiver` in the GUI's
-  `run_server()` closure.
-- **Planned**: add `watchdog.record_success()` to the chunk-received flow.
-- **Planned**: add `watchdog.tick(now)` in the GUI loop alongside the existing
-  timeout and heartbeat checks.
+The base GUI wiring (everything except the `on_transport_success` fix
+below) was already implemented and committed before this review caught
+the success/failure asymmetry - that fix, and its propagation back to
+the already-merged CLI, is what still needs approval and implementing.
+
+- [x] Wire the shared `build_device_watchdog()` factory into the GUI server
+      startup path
+- [x] Wire `on_transport_error` into the GUI's `TransactionReceiver` construction
+- [x] Add `watchdog.tick(now)` in the GUI loop alongside the existing
+      timeout and heartbeat checks
+- [ ] Add `on_transport_success` to `TransactionReceiver`/`_send()` (`server/receiver.py`)
+- [ ] Fix the CLI's Story 26.5 wiring to use `on_transport_success` instead of
+      calling `record_success()` from `on_chunk_received`
+- [ ] Fix the GUI wiring the same way (remove `record_success()` from
+      `on_chunk_received`, wire `on_transport_success` instead)
+- [ ] Update/add tests across all three affected files
 
 ---
 
 ## Verification
 
-The implementation should be validated with the existing GUI/server regression tests,
-plus a targeted watchdog check in:
-
-- `tests/test_btcmesh_server_gui.py`
-
-The expected checks are:
-- watchdog callback fires on transport failure;
-- successful chunk processing resets the failure count;
-- the GUI loop still emits the liveness log at the longer interval;
-- recovery-event logs are routed through the GUI result queue rather than direct
-  UI mutation from the background thread.
+- **Unit tests**:
+  - `on_transport_success` fires exactly when `_send()` succeeds, never when it
+    raises (and `on_transport_error` fires exactly the reverse).
+  - CLI: `record_success()` is called via `on_transport_success`, not
+    `on_chunk_received`, for all three reply-send call sites (chunk-ack, NACK,
+    final ACK).
+  - GUI: same coverage as the CLI, plus the existing recovery-attempt/recovered/failed
+    and `watchdog.tick()`-per-iteration checks.
+  - GUI loop still emits the liveness log (Story 28.2) at the configured interval.
+  - Recovery-event logs are routed through the GUI's `result_queue` rather than
+    touching widgets directly from the background thread.
+- **Regression check**: full suite still passes.
