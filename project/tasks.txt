@@ -1479,26 +1479,26 @@ lora/
 
 ### 28. Send Timeout, Liveness Logging, and Watchdog Coverage
 
-- [ ] **Story 28.1: Bound `MeshtasticSerialTransport.send()` with a hard timeout**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** `transport.send()` to give up after a bounded time instead of blocking forever,
-- [ ] *   **So that** a wedged device can't freeze the client GUI or crash the server's send path (Issue 21).
-    - [ ] *   **Scenario:** Send completes normally
-        - [ ] *   **Given** a healthy, connected device.
-        - [ ] *   **When** `send()` is called.
-        - [ ] *   **Then** it behaves exactly as today - no observable change for the normal case.
-    - [ ] *   **Scenario:** Underlying send call never returns
-        - [ ] *   **Given** a device in a state where `iface.sendText()` blocks indefinitely.
-        - [ ] *   **When** `send()` is called.
-        - [ ] *   **Then** it raises `TransportSendError` after a bounded timeout rather than blocking forever.
+- [x] **Story 28.1: Bound `MeshtasticSerialTransport.send()` with a hard timeout**
+- [x] *   **As a** developer,
+- [x] *   **I want** `transport.send()` to give up after a bounded time instead of blocking forever,
+- [x] *   **So that** a wedged device can't freeze the client GUI or crash the server's send path (Issue 21).
+    - [x] *   **Scenario:** Send completes normally
+        - [x] *   **Given** a healthy, connected device.
+        - [x] *   **When** `send()` is called.
+        - [x] *   **Then** it behaves exactly as today - no observable change for the normal case.
+    - [x] *   **Scenario:** Underlying send call never returns
+        - [x] *   **Given** a device in a state where `iface.sendText()` blocks indefinitely.
+        - [x] *   **When** `send()` is called.
+        - [x] *   **Then** it raises `TransportSendError` after a bounded timeout rather than blocking forever.
 
-- [ ] **Story 28.2: Periodic "still alive" logging for both server entry points**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** the server to periodically log that it's still running,
-- [ ] *   **So that** I can confirm from the log alone that it didn't silently die or hang overnight.
-    - [ ] *   **Scenario:** Server runs for an extended period
-        - [ ] *   **Given** the server (CLI or GUI) has been running for a while with no other activity.
-        - [ ] *   **Then** a periodic INFO log line confirms it's still alive and listening, without needing any incoming traffic to produce log activity.
+- [x] **Story 28.2: Periodic "still alive" logging for both server entry points**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** the server to periodically log that it's still running,
+- [x] *   **So that** I can confirm from the log alone that it didn't silently die or hang overnight.
+    - [x] *   **Scenario:** Server runs for an extended period
+        - [x] *   **Given** the server (CLI or GUI) has been running for a while with no other activity.
+        - [x] *   **Then** a periodic INFO log line confirms it's still alive and listening, without needing any incoming traffic to produce log activity.
 
 - [ ] **Story 28.3: Wire DeviceWatchdog into btcmesh_server_gui.py**
 - [ ] *   **As a** relay operator using the server GUI,

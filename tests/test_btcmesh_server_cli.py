@@ -254,6 +254,57 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
         )
 
 
+class TestRunServerLivenessLog(unittest.TestCase):
+    """Tests for run_server()'s periodic liveness log (Story 28.2 / Issue 21)."""
+
+    def _patch_successful_startup(self):
+        patches = [
+            patch("btcmesh_server_cli.load_app_config"),
+            patch("btcmesh_server_cli.load_bitcoin_rpc_config", return_value={}),
+            patch("btcmesh_server_cli.BitcoinRPCClient"),
+            patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")),
+            patch("btcmesh_server_cli.TransactionHistory"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_liveness_log_fires_after_interval_elapses(self):
+        self._patch_successful_startup()
+        mock_receiver = MagicMock()
+        mock_receiver.get_active_sessions.return_value = ["s1", "s2"]
+
+        with patch("btcmesh_server_cli.build_receiver", return_value=mock_receiver), \
+                patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
+                patch("btcmesh_server_cli.time.time", side_effect=[100.0, 100.0, 100.0, 401.0]), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=[None, KeyboardInterrupt]), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+
+        mock_logger.info.assert_any_call(
+            "Server heartbeat: alive, listening. 2 active session(s)."
+        )
+
+    def test_liveness_log_does_not_fire_before_interval_elapses(self):
+        self._patch_successful_startup()
+        mock_receiver = MagicMock()
+        mock_receiver.get_active_sessions.return_value = []
+
+        with patch("btcmesh_server_cli.build_receiver", return_value=mock_receiver), \
+                patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
+                patch("btcmesh_server_cli.time.time", side_effect=[100.0, 100.0, 100.0, 150.0]), \
+                patch("btcmesh_server_cli.time.sleep", side_effect=[None, KeyboardInterrupt]), \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            cli.run_server()
+
+        for call in mock_logger.info.call_args_list:
+            self.assertNotIn("heartbeat", call.args[0])
+
+
 class TestRunServerRpcFailure(unittest.TestCase):
     """Regression test for the exact bug fixed in Story 23.2's GUI equivalent:
     a failed RPC connection must not stop the server - Meshtastic keeps
