@@ -1230,5 +1230,144 @@ class TestDisableControlsStory95(unittest.TestCase):
             self.assertFalse(action.stop_sending, f"stop_sending should be False for {result}")
 
 
+# =============================================================================
+# Story 28.4: Detection-Only DeviceWatchdog for the Client GUI
+# =============================================================================
+
+class TestDeviceWatchdogStory284(unittest.TestCase):
+    """Tests for the client GUI's DeviceWatchdog wiring (Story 28.4)."""
+
+    def test_transport_ready_builds_watchdog_and_starts_thread(self):
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        mock_transport = unittest.mock.MagicMock()
+        mock_watchdog = unittest.mock.MagicMock()
+
+        with unittest.mock.patch(
+            'btcmesh_client_gui.build_device_watchdog',
+            return_value=(mock_watchdog, None),
+        ) as mock_build:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('transport_ready', mock_transport))
+
+        mock_build.assert_called_once_with(
+            mock_transport,
+            on_recovery_attempt=unittest.mock.ANY,
+            on_recovered=unittest.mock.ANY,
+            on_recovery_failed=unittest.mock.ANY,
+        )
+        self.assertEqual(gui.transport, mock_transport)
+        self.assertEqual(gui.watchdog, mock_watchdog)
+        self.assertIsNone(gui.power_control)
+        gui._start_watchdog_thread.assert_called_once()
+
+    def test_watchdog_thread_ticks_when_not_sending(self):
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._watchdog_running = True
+        gui._active_sender = None
+        gui.watchdog = unittest.mock.MagicMock()
+
+        def fake_sleep(_):
+            gui._watchdog_running = False  # stop after one iteration
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', TestDeviceConnectionRetryAndSelectionFix._ImmediateThread), \
+                unittest.mock.patch('btcmesh_client_gui.time.sleep', side_effect=fake_sleep), \
+                unittest.mock.patch('btcmesh_client_gui.time.time', return_value=100.0):
+            btcmesh_client_gui.BTCMeshGUI._start_watchdog_thread(gui)
+
+        gui.watchdog.tick.assert_called_once_with(100.0)
+
+    def test_watchdog_thread_skips_tick_during_active_send(self):
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._watchdog_running = True
+        gui._active_sender = unittest.mock.MagicMock()  # a send is active
+        gui.watchdog = unittest.mock.MagicMock()
+
+        def fake_sleep(_):
+            gui._watchdog_running = False  # stop after one iteration
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', TestDeviceConnectionRetryAndSelectionFix._ImmediateThread), \
+                unittest.mock.patch('btcmesh_client_gui.time.sleep', side_effect=fake_sleep):
+            btcmesh_client_gui.BTCMeshGUI._start_watchdog_thread(gui)
+
+        gui.watchdog.tick.assert_not_called()
+
+    def test_watchdog_attempt_logs_warning_message(self):
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_attempt',))
+
+        gui.status_log.add_message.assert_called_once_with(
+            "Device appears wedged - attempting automatic recovery...", COLOR_WARNING
+        )
+
+    def test_watchdog_recovered_logs_and_refreshes_iface(self):
+        import btcmesh_client_gui
+        from core.device_watchdog import RecoveryOutcome
+
+        gui = unittest.mock.MagicMock()
+        mock_iface = unittest.mock.MagicMock()
+        gui.transport._iface = mock_iface
+
+        outcome = RecoveryOutcome(success=True, new_device_path="/dev/ttyNEW")
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_recovered', outcome))
+
+        gui.status_log.add_message.assert_called_once_with(
+            "Device recovered. Reconnected at /dev/ttyNEW.", COLOR_SUCCESS
+        )
+        self.assertEqual(gui.iface, mock_iface)
+        gui._update_known_nodes.assert_called_once()
+
+    def test_watchdog_failed_with_no_power_control_shows_reconnect_message(self):
+        import btcmesh_client_gui
+        from core.device_watchdog import RecoveryOutcome
+
+        gui = unittest.mock.MagicMock()
+        gui.power_control = None
+
+        outcome = RecoveryOutcome(success=False, error="No power control configured")
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_failed', outcome))
+
+        gui.status_log.add_message.assert_called_once_with(
+            "Device appears unresponsive. Please reconnect it manually.", COLOR_WARNING
+        )
+
+    def test_watchdog_failed_with_power_control_shows_error_message(self):
+        import btcmesh_client_gui
+        from core.device_watchdog import RecoveryOutcome
+
+        gui = unittest.mock.MagicMock()
+        gui.power_control = unittest.mock.MagicMock()  # a relay is configured
+
+        outcome = RecoveryOutcome(success=False, error="Device did not reappear within the wait window")
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_failed', outcome))
+
+        gui.status_log.add_message.assert_called_once_with(
+            "Automatic device recovery failed: Device did not reappear within the wait window",
+            COLOR_ERROR,
+        )
+
+    def test_disconnect_device_stops_watchdog(self):
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.transport = None
+        gui.iface = None
+        gui._watchdog_running = True
+        gui.watchdog = unittest.mock.MagicMock()
+        gui.power_control = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._disconnect_device(gui)
+
+        self.assertFalse(gui._watchdog_running)
+        self.assertIsNone(gui.watchdog)
+        self.assertIsNone(gui.power_control)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1508,17 +1508,17 @@ lora/
         - [ ] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
         - [ ] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
 
-- [ ] **Story 28.4: Detection-only DeviceWatchdog for the client GUI**
-- [ ] *   **As a** client GUI user,
-- [ ] *   **I want** the app to notice when its device has gone unresponsive during idle time,
-- [ ] *   **So that** a wedge is caught and shown before I try to send, not discovered by a frozen send.
-    - [ ] *   **Scenario:** Idle heartbeat detects a wedge
-        - [ ] *   **Given** the client GUI is connected but not actively sending.
-        - [ ] *   **Then** a periodic heartbeat notices if the device stops responding and reports it in the activity log - without needing relay hardware, since most client machines won't have any.
-    - [ ] *   **Scenario:** No relay configured - detection only, no silent auto-recovery claim
-        - [ ] *   **Given** no `RELAY_SERIAL_PORT` is configured (the common client case).
-        - [ ] *   **Then** the reported message clearly reflects "device unresponsive, please reconnect" rather than implying an automatic recovery was attempted and failed.
-    *   _Note: Revives Story 26.6 (previously decided against - see `project/plans/story_26_6.md`) in a smaller, detection-only form. `build_device_watchdog()` already degrades gracefully with `power_control=None` when no relay is configured, so this reuses the same infrastructure rather than needing something new._
+- [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI**
+- [x] *   **As a** client GUI user,
+- [x] *   **I want** the app to notice when its device has gone unresponsive during idle time,
+- [x] *   **So that** a wedge is caught and shown before I try to send, not discovered by a frozen send.
+    - [x] *   **Scenario:** Idle heartbeat detects a wedge
+        - [x] *   **Given** the client GUI is connected but not actively sending.
+        - [x] *   **Then** a periodic heartbeat notices if the device stops responding and reports it in the activity log - without needing relay hardware, since most client machines won't have any.
+    - [x] *   **Scenario:** No relay configured - detection only, no silent auto-recovery claim
+        - [x] *   **Given** no `RELAY_SERIAL_PORT` is configured (the common client case).
+        - [x] *   **Then** the reported message clearly reflects "device unresponsive, please reconnect" rather than implying an automatic recovery was attempted and failed.
+    *   _Note: Revives Story 26.6 (previously decided against - see `project/plans/story_26_6.md`) in a smaller, detection-only form. `build_device_watchdog()` already degrades gracefully with `power_control=None` when no relay is configured, so this reuses the same infrastructure rather than needing something new. Dedicated background thread (not `Clock.schedule_interval`, which would freeze the GUI's main thread during a blocking `tick()` call), gated on `self._active_sender` so it never races an in-progress send. See `project/plans/story_28_4.md`._
 
 ---
 
