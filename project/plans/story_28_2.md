@@ -150,3 +150,25 @@ These tests confirm:
 - the liveness log is emitted after the interval expires;
 - the log does not fire before the interval expires;
 - the server remains in its quiet-idle state without requiring any incoming traffic.
+
+### Real-hardware verification (CLI)
+
+Ran `btcmesh_server_cli.py` against a real connected Meshtastic device
+(no mocking) and let it idle with no incoming traffic:
+
+```
+2026-08-20 02:09:58,100 - btcmesh_server - INFO - Server started. Listening for incoming transactions... (Ctrl+C to stop)
+2026-08-20 02:14:58,702 - btcmesh_server - INFO - Server heartbeat: alive, listening. 0 active session(s).
+```
+
+The heartbeat fired at exactly the 5-minute (300s) mark from server
+start, with no other activity needed to produce it - confirming the fix
+against real hardware, not just mocked `time.time()`.
+
+### Real-hardware verification (GUI)
+
+Confirmed as a side effect of Story 28.3's real-hardware test (see
+`project/plans/story_28_3.md`): running `btcmesh_server_gui.py` for
+real, the Activity Log showed `"Server heartbeat: alive, listening. 0
+active session(s)."` during the idle period, same message and format as
+the CLI. Both entry points now confirmed working against real hardware.
