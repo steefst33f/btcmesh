@@ -985,7 +985,7 @@ actually valid hex** ✅ RESOLVED
   whitespace, underscore separators, leading `+`/`-`). Branch
   `code-review-cleanup`, full suite green (741 tests).
 
-**Issue 26: No upper bound on reassembly session size or count** 🔍 OPEN
+**Issue 26: No upper bound on reassembly session size or count** ✅ RESOLVED
 - `core/reassembler.py:129`'s `_parse_chunk()` only checks `total_chunks >
   0` - no upper bound, and no cap on concurrent open sessions per sender. A
   sender declaring `total_chunks=999999`, or opening many distinct
@@ -995,6 +995,15 @@ actually valid hex** ✅ RESOLVED
 - Proposed fix: add a sane max `total_chunks` (derived from a reasonable
   max tx size / `DEFAULT_CHUNK_SIZE`) and/or a max concurrent-sessions-per-
   sender cap, rejecting/NACKing chunks that exceed it.
+- **Resolved 2026-08-20**: added `MAX_TOTAL_CHUNKS` (5000 - comfortably
+  above Bitcoin Core's default 400,000-weight-unit standardness cap in
+  raw hex chars) and `MAX_CONCURRENT_SESSIONS_PER_SENDER` (10) to
+  `core/constants.py`. `_parse_chunk()` rejects a `total_chunks` beyond
+  the first limit with `InvalidChunkFormatError`; `add_chunk()` rejects
+  a new session beyond the second with a new `TooManySessionsError`
+  (falls into `server/receiver.py`'s existing generic `ReassemblyError`
+  NACK handler, no receiver.py changes needed). Branch
+  `code-review-cleanup`, full suite green (748 tests).
 
 **Issue 27: Shared abort event breaks per-session isolation in
 `TransactionSender`** 🔍 OPEN
@@ -1170,7 +1179,7 @@ between CLI and GUI** 🔍 OPEN
 | 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | **FIXED** |
 | 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | **FIXED** |
 | 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | **FIXED** |
-| 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | Open |
+| 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | **FIXED** |
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | Open |
 | 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | Open |
 | 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | Open |

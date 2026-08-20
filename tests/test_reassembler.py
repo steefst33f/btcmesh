@@ -125,5 +125,95 @@ class TestHexValidationStory22(unittest.TestCase):
         # In the real server, this would trigger a NACK and log an error
 
 
+class TestReassemblyLimits(unittest.TestCase):
+    """Issue 26: caps on total_chunks and concurrent sessions per sender,
+    to bound worst-case memory growth from a misbehaving/malicious sender."""
+
+    def setUp(self):
+        from core.reassembler import (
+            InvalidChunkFormatError,
+            TooManySessionsError,
+            TransactionReassembler,
+        )
+        from core.constants import (
+            MAX_TOTAL_CHUNKS,
+            MAX_CONCURRENT_SESSIONS_PER_SENDER,
+        )
+
+        self.InvalidChunkFormatError = InvalidChunkFormatError
+        self.TooManySessionsError = TooManySessionsError
+        self.MAX_TOTAL_CHUNKS = MAX_TOTAL_CHUNKS
+        self.MAX_CONCURRENT_SESSIONS_PER_SENDER = MAX_CONCURRENT_SESSIONS_PER_SENDER
+        self.reassembler = TransactionReassembler(timeout_seconds=300)
+        self.sender_id = "!sender1"
+
+    def test_total_chunks_within_limit_accepted(self):
+        chunk = f"BTC_TX|sess1|1/{self.MAX_TOTAL_CHUNKS}|AAA"
+        # Should not raise
+        self.reassembler.add_chunk(self.sender_id, chunk)
+
+    def test_total_chunks_exceeding_limit_rejected(self):
+        too_many = self.MAX_TOTAL_CHUNKS + 1
+        chunk = f"BTC_TX|sess1|1/{too_many}|AAA"
+        with self.assertRaises(self.InvalidChunkFormatError):
+            self.reassembler.add_chunk(self.sender_id, chunk)
+
+    def test_total_chunks_exceeding_limit_does_not_create_session(self):
+        too_many = self.MAX_TOTAL_CHUNKS + 1
+        chunk = f"BTC_TX|sess1|1/{too_many}|AAA"
+        with self.assertRaises(self.InvalidChunkFormatError):
+            self.reassembler.add_chunk(self.sender_id, chunk)
+        self.assertEqual(self.reassembler.get_active_sessions_info(), [])
+
+    def test_sessions_up_to_limit_accepted(self):
+        for i in range(self.MAX_CONCURRENT_SESSIONS_PER_SENDER):
+            chunk = f"BTC_TX|sess{i}|1/2|AAA"
+            # Should not raise - only 1 of 2 chunks, session stays open
+            self.reassembler.add_chunk(self.sender_id, chunk)
+        self.assertEqual(
+            len(self.reassembler.get_active_sessions_info()),
+            self.MAX_CONCURRENT_SESSIONS_PER_SENDER,
+        )
+
+    def test_session_beyond_limit_rejected(self):
+        for i in range(self.MAX_CONCURRENT_SESSIONS_PER_SENDER):
+            chunk = f"BTC_TX|sess{i}|1/2|AAA"
+            self.reassembler.add_chunk(self.sender_id, chunk)
+
+        one_too_many = f"BTC_TX|sessOverflow|1/2|AAA"
+        with self.assertRaises(self.TooManySessionsError):
+            self.reassembler.add_chunk(self.sender_id, one_too_many)
+        # The rejected session must not have been created
+        self.assertEqual(
+            len(self.reassembler.get_active_sessions_info()),
+            self.MAX_CONCURRENT_SESSIONS_PER_SENDER,
+        )
+
+    def test_completing_a_session_frees_up_room_for_a_new_one(self):
+        for i in range(self.MAX_CONCURRENT_SESSIONS_PER_SENDER):
+            chunk = f"BTC_TX|sess{i}|1/2|AAA"
+            self.reassembler.add_chunk(self.sender_id, chunk)
+
+        # Complete one of the open sessions
+        self.reassembler.add_chunk(self.sender_id, "BTC_TX|sess0|2/2|BBB")
+
+        # Now there's room for a new one
+        new_chunk = "BTC_TX|sessNew|1/2|AAA"
+        self.reassembler.add_chunk(self.sender_id, new_chunk)  # Should not raise
+        self.assertEqual(
+            len(self.reassembler.get_active_sessions_info()),
+            self.MAX_CONCURRENT_SESSIONS_PER_SENDER,
+        )
+
+    def test_different_senders_have_independent_limits(self):
+        for i in range(self.MAX_CONCURRENT_SESSIONS_PER_SENDER):
+            chunk = f"BTC_TX|sess{i}|1/2|AAA"
+            self.reassembler.add_chunk(self.sender_id, chunk)
+
+        # A different sender is unaffected by !sender1 being at its cap
+        other_chunk = "BTC_TX|sessOther|1/2|AAA"
+        self.reassembler.add_chunk("!sender2", other_chunk)  # Should not raise
+
+
 if __name__ == "__main__":
     unittest.main()
