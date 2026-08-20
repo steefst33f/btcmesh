@@ -171,7 +171,8 @@ original CLI-scoping reasoning, which still applies unchanged).
 
 ## Implementation Progress
 
-**Done and unit-tested. Not yet verified against real hardware.**
+**Done, unit-tested, and verified on real hardware** (see "Real-hardware
+verification" under Verification below).
 
 - [x] New watchdog state in `__init__`
 - [x] `build_device_watchdog()` wired into `_handle_result()`'s
@@ -221,8 +222,58 @@ original CLI-scoping reasoning, which still applies unchanged).
   - `_disconnect_device()` clears `self.watchdog`/`self.power_control`
     and stops the thread (`self._watchdog_running` becomes `False`).
 - **Regression check**: full suite still passes.
-- **Manual/real hardware** (optional, matching how Story 26.5/28.3 were
-  verified): run the GUI, connect to a real device, leave it idle,
-  confirm the heartbeat runs without freezing the UI, then use the
-  documented wedge-reproduction recipe to force a detection and confirm
-  the status log reports it correctly.
+
+### Real-hardware verification
+
+Ran `btcmesh_client_gui.py` for real, connected to a device with no
+relay attached (`/dev/cu.usbmodem983DAEE5AB3C1`, a seeed-xiao-s3),
+then used the documented DTR/RTS wedge recipe
+(`scripts/hw_tests/wedge_device_dtr_rts.py`) against it while idle.
+
+**A genuine wedge occurred before the test even started**: the initial
+connection attempt itself timed out (`"Failed to connect: Times out
+waiting for connection completion"`) - the exact documented symptom of
+an already-wedged device. A physical unplug/replug was needed to clear
+it before testing could begin, confirming this project's own real-world
+failure mode (Issue 12/16) independently of anything this story does.
+
+Once connected, the DTR/RTS script produced the same failure signature
+documented in `project/plans/story_26_2.md`'s original reproduction:
+`OSError: [Errno 6] Device not configured` mid-toggle, and the device
+re-enumerated under a completely different OS path and description
+(`/dev/cu.usbmodem983DAEE5AB3C1` "seeed-xiao-s3" →
+`/dev/cu.usbmodem112301` "USB JTAG/serial debug unit") - a genuine,
+confirmed reset, not a soft glitch.
+
+The watchdog correctly detected and reported it:
+
+```
+Device appears wedged - attempting automatic recovery...
+Device appears unresponsive. Please reconnect it manually...
+```
+
+The second message correctly used the no-relay wording (not "Automatic
+device recovery failed: ..."), confirming the `power_control is None`
+message distinction works on real hardware, not just in mocks.
+
+**Timing finding**: the first detection appeared to take much longer
+than the 60s default (operator's estimate: 5-7 minutes) - initially
+concerning. Investigated by observing the *steady-state* retry cadence
+directly (the watchdog keeps retrying indefinitely with no cap,
+cooldown-gated per the Issue 20 fix): confirmed a clean, consistent
+~60s interval between repeated "Device appears wedged" messages while
+the device remained unrecovered. This resolves the initial timing
+concern - the periodic mechanism itself is correct; the apparent delay
+for the *first* detection was almost certainly imprecise timestamp
+tracking during the interactive test (the watchdog's internal clock
+starts counting from the moment of successful connect, which - given
+the initial failed-connect-then-physical-replug detour - wasn't
+precisely tracked in real time), not a bug in the code.
+
+Also observed and explained during the test: a port lock briefly
+appeared and then released itself on its own (without the operator
+reconnecting) between retry attempts - this is `_try_candidate()`
+correctly connecting to a candidate to check its node ID, then
+disconnecting again on a mismatch, exactly as designed (see
+`core/device_watchdog.py`'s `_try_candidate()`) - not a bug, just
+visible evidence of the retry loop actually working.

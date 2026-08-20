@@ -299,12 +299,11 @@ elif result[0] == 'watchdog_failed':
   `tests/test_btcmesh_client_gui.py::TestDeviceWatchdogStory284`
   (8 tests). Full suite: 732 tests passing.
 
-**All 4 stories are implemented and unit-tested (732 tests passing).**
-Only Story 28.1 (the send timeout itself - the actual freeze Issue 21
-is about) has been verified against real hardware so far; Stories
-28.2-28.4 still need real-hardware verification before this epic can be
-considered fully done. See Issue 21 in `project/issues.txt` for the
-field-incident writeup this epic responds to.
+**All 4 stories are implemented, unit-tested (732 tests passing), and
+verified on real hardware.** See Issue 21 in `project/issues.txt` for
+the field-incident writeup this epic responds to, and each story's own
+plan doc (`story_28_2.md`/`story_28_3.md`/`story_28_4.md`) for its
+individual real-hardware verification writeup.
 
 ---
 

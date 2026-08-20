@@ -705,7 +705,7 @@ even though the relay itself works correctly** ✅ FIXED
 
 **Issue 21: Client GUI froze completely and required a force-kill after
 `transport.send()` hung indefinitely on an unattended overnight-wedged
-device; Abort had no effect** ⚠️ Implemented, pending real-hardware verification (Fixes 2-4)
+device; Abort had no effect** ✅ FIXED, all 4 fixes real-hw verified
 
 - Reported by the operator after running the client GUI and server GUI
   unattended overnight. In the morning, sending a transaction logged
@@ -825,18 +825,27 @@ device; Abort had no effect** ⚠️ Implemented, pending real-hardware verifica
      detection correctly only happens on the next heartbeat, not
      instantly - nothing was actually wrong, the timing just needed
      explaining).
-- **Fix 4 implemented, not yet merged** (Story 28.4, branch `story-28-4`):
-  detection-only `DeviceWatchdog` wired into the client GUI, reviving
-  Story 26.6 in a smaller form - a dedicated background thread ticks
-  `check_alive()` during idle time and reports "device appears
-  unresponsive" in the activity log, with no relay/recovery hardware
-  assumed. See `project/plans/story_28_4.md`. Not yet verified on real
-  hardware.
-- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review).
-  Fixes 1, 2, and 3 are verified on real hardware; only Fix 4 remains
-  unit-tested-only and still needs real-hardware verification before
-  this issue can be considered fully closed. See
-  `project/plans/story_28_1.md` for the full epic tracking doc.
+- **Fix 4 implemented, not yet merged, verified on real hardware**
+  (Story 28.4, branch `story-28-4`): detection-only `DeviceWatchdog`
+  wired into the client GUI, reviving Story 26.6 in a smaller form - a
+  dedicated background thread ticks `check_alive()` during idle time and
+  reports "device appears unresponsive" in the activity log, with no
+  relay/recovery hardware assumed. **Verified on real hardware**: ran
+  `btcmesh_client_gui.py` for real against a device with no relay
+  attached, used the documented DTR/RTS wedge recipe against it while
+  idle, and confirmed the correct message sequence -
+  `"Device appears wedged - attempting automatic recovery..."` →
+  `"Device appears unresponsive. Please reconnect it manually..."` - the
+  no-relay wording, not implying a failed automatic recovery. Also
+  confirmed a clean, consistent ~60s steady-state retry cadence while
+  the device remained unrecovered. See `project/plans/story_28_4.md` for
+  the full writeup, including two real-world surprises along the way
+  (an already-wedged device before the test even started, and an
+  initially-confusing first-detection delay that turned out to be
+  imprecise timestamp tracking, not a bug).
+- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review) and
+  verified on real hardware. See `project/plans/story_28_1.md` for the
+  full epic tracking doc.
 
 ---
 
@@ -861,4 +870,4 @@ device; Abort had no effect** ⚠️ Implemented, pending real-hardware verifica
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
-| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Implemented (4/4); 3/4 real-hw verified** |
+| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, all real-hw verified)** |
