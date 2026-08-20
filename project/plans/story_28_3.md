@@ -195,7 +195,8 @@ recovery checks.
 
 ## Implementation Progress
 
-**Done.** All items implemented and tested.
+**Done, unit-tested, and verified on real hardware** (see "Real-hardware
+verification" under Verification below).
 
 - [x] Wire the shared `build_device_watchdog()` factory into the GUI server
       startup path
@@ -230,3 +231,37 @@ recovery checks.
   - Recovery-event logs are routed through the GUI's `result_queue` rather than
     touching widgets directly from the background thread.
 - **Regression check**: full suite still passes.
+
+### Real-hardware verification
+
+Ran `btcmesh_server_gui.py` for real (`RELAY_SERIAL_PORT` set, connected
+to the relay-equipped device at `/dev/cu.usbserial-0001`), confirmed
+"Automatic device-recovery enabled via relay." in the Activity Log, then
+cut the device's power for 15s via the relay
+(`scripts/hw_tests/power_cycle_device.py`) while the GUI was idle.
+
+Initial finding worth recording: cutting power for only 15s did *not*
+immediately show anything in the Activity Log, and briefly looked like
+nothing had happened - `lsof` on the device path showed no process
+holding it even though the GUI process was still running, before any
+"wedged" message had appeared. This wasn't a bug: the original file
+descriptor had gone stale/orphaned at the OS level (the device
+re-enumerated as a new instance after the power cycle), invisible to
+`lsof <path>` since that resolves to whatever *currently* occupies the
+path - but the GUI's own watchdog hadn't ticked yet, since detection
+only happens on the next heartbeat (up to 60s later), not the moment
+the device flickers. Once that heartbeat elapsed, detection and
+recovery both worked correctly:
+
+```
+Device appears wedged - attempting automatic recovery...
+Device recovered. Reconnected at /dev/cu.SLAB_USBtoUART.
+```
+
+Confirmed independently at the OS level too - `lsof` showed the GUI
+process's PID now holding `/dev/cu.SLAB_USBtoUART` (the CP2102's OS
+alias) after the reconnect, not just a claimed success in the log.
+
+This confirms the full detect-and-recover path works end-to-end on real
+hardware, through the actual GUI process (not a side script) - the same
+level of verification Story 26.5's CLI wiring already had.

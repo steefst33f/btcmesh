@@ -163,6 +163,12 @@ Ran `btcmesh_server_cli.py` against a real connected Meshtastic device
 
 The heartbeat fired at exactly the 5-minute (300s) mark from server
 start, with no other activity needed to produce it - confirming the fix
-against real hardware, not just mocked `time.time()`. GUI side not yet
-verified against real hardware (same underlying loop logic, covered by
-unit tests only so far).
+against real hardware, not just mocked `time.time()`.
+
+### Real-hardware verification (GUI)
+
+Confirmed as a side effect of Story 28.3's real-hardware test (see
+`project/plans/story_28_3.md`): running `btcmesh_server_gui.py` for
+real, the Activity Log showed `"Server heartbeat: alive, listening. 0
+active session(s)."` during the idle period, same message and format as
+the CLI. Both entry points now confirmed working against real hardware.

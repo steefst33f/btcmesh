@@ -795,23 +795,36 @@ device; Abort had no effect**
   above doesn't depend on knowing the exact mechanism - a worker thread
   + join-timeout is agnostic to *why* the wrapped call doesn't return -
   but this is worth recording for anyone investigating further.
-- **Fixes 2 and 3 implemented and merged** (Stories 28.2/28.3):
+- **Fixes 2 and 3 implemented, merged, and verified on real hardware**
+  (Stories 28.2/28.3):
   2. Periodic "still alive" logging added to both `btcmesh_server_cli.py`
      and `btcmesh_server_gui.py` - an INFO
      `"Server heartbeat: alive, listening. N active session(s)."` line
-     every 5 minutes, regardless of other activity. **CLI side verified
-     on real hardware**: ran `btcmesh_server_cli.py` against a real
-     connected device with no incoming traffic; the heartbeat fired at
-     exactly the 5-minute mark (`02:09:58` server start →
-     `02:14:58,702` heartbeat). See `project/plans/story_28_2.md`. GUI
-     side not yet real-hw verified (unit tests only so far).
+     every 5 minutes, regardless of other activity. **Verified on real
+     hardware, both entry points**: CLI - ran against a real connected
+     device with no incoming traffic, heartbeat fired at exactly the
+     5-minute mark (`02:09:58` server start → `02:14:58,702` heartbeat).
+     GUI - the same message appeared in the Activity Log during the Fix
+     3 real-hardware test below. See `project/plans/story_28_2.md`.
   3. `DeviceWatchdog` wired into `btcmesh_server_gui.py` (Story 26.5's
      originally scoped-out follow-up) - including a
      `record_success()`/`record_failure()` asymmetry found and fixed in
      review (added `on_transport_success` to `TransactionReceiver`,
      symmetric with `on_transport_error`, fixing the already-merged CLI
-     wiring too). See `project/plans/story_28_3.md`. Not yet verified on
-     real hardware.
+     wiring too). **Verified on real hardware**: ran `btcmesh_server_gui.py`
+     for real with a relay configured, cut the connected device's power
+     via the relay while idle, and watched the actual GUI process (not a
+     side script) detect it, recover, and reconnect:
+     `"Device appears wedged - attempting automatic recovery..."` →
+     `"Device recovered. Reconnected at /dev/cu.SLAB_USBtoUART."` -
+     confirmed independently at the OS level too (`lsof` showed the GUI
+     process's PID now holding that device path). See
+     `project/plans/story_28_3.md` for the full writeup, including a
+     real-time false alarm during the test (the device's OS-level file
+     descriptor went stale/orphaned within seconds of the power cut, but
+     detection correctly only happens on the next heartbeat, not
+     instantly - nothing was actually wrong, the timing just needed
+     explaining).
 - **Fix 4 implemented, not yet merged** (Story 28.4, branch `story-28-4`):
   detection-only `DeviceWatchdog` wired into the client GUI, reviving
   Story 26.6 in a smaller form - a dedicated background thread ticks
@@ -820,11 +833,10 @@ device; Abort had no effect**
   assumed. See `project/plans/story_28_4.md`. Not yet verified on real
   hardware.
 - **Status**: All 4 fixes implemented (3 merged, 1 pending PR review).
-  Fix 1 (the send timeout itself) and Fix 2's CLI side are verified on
-  real hardware; Fix 2's GUI side, Fix 3, and Fix 4 are unit-tested only
-  and still need real-hardware verification before this issue can be
-  considered fully closed. See `project/plans/story_28_1.md` for the
-  full epic tracking doc.
+  Fixes 1, 2, and 3 are verified on real hardware; only Fix 4 remains
+  unit-tested-only and still needs real-hardware verification before
+  this issue can be considered fully closed. See
+  `project/plans/story_28_1.md` for the full epic tracking doc.
 
 ---
 
@@ -849,4 +861,4 @@ device; Abort had no effect**
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
-| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Partially FIXED (1/4, real-hw verified)** |
+| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Implemented (4/4); 3/4 real-hw verified** |
