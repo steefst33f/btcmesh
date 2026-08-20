@@ -1196,7 +1196,7 @@ format, with a confirmed behavioral divergence** ✅ RESOLVED
   regression directly. Branch `issue-31`, full suite green (766 tests).
 
 **Issue 32: Node-ID formatting bug in client GUI's `_init_meshtastic`**
-🔍 OPEN
+✅ RESOLVED
 - `transport/meshtastic_serial.py:397` and `core/meshtastic_utils.py:107`
   both correctly zero-pad (`f"!{node_num:08x}"`).
   `btcmesh_client_gui.py:556` does it inline without zero-padding
@@ -1208,6 +1208,19 @@ format, with a confirmed behavioral divergence** ✅ RESOLVED
   8-hex-digit node number.
 - Proposed fix: replace the inline f-string with the already-computed
   `transport.local_node_id`.
+- **Resolved 2026-08-21**: `_init_meshtastic()` now reads
+  `transport.local_node_id` directly instead of reformatting
+  `iface.myInfo.my_node_num` inline - `transport.connect()` already
+  performs the same "do we have valid device info" check internally and
+  raises `TransportConnectionError` otherwise, so `local_node_id` is
+  guaranteed set (and correctly zero-padded) by the time this code
+  runs. The one existing test exercising this path mocked `transport`
+  as a bare `MagicMock`, so it needed `local_node_id` set explicitly to
+  stay realistic once the code started reading it instead of
+  `myInfo.my_node_num` directly. Added a dedicated regression test with
+  a genuinely small node number, confirmed to fail against the pre-fix
+  code (`!abcd12` vs the correct `!00abcd12`). Branch `issue-32`, full
+  suite green (767 tests).
 
 **Issue 33: Non-atomic JSON writes in transaction history can silently
 reset history to empty** 🔍 OPEN
@@ -1365,7 +1378,7 @@ process** 🔍 OPEN
 | 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | **FIXED** |
 | 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | **FIXED** |
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | **FIXED** |
-| 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | Open |
+| 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | **FIXED** |
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |

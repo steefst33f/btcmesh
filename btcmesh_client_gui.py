@@ -553,10 +553,16 @@ class BTCMeshGUI(BoxLayout):
                 # Get the raw interface for node listing (Stories 11.2, 11.3)
                 iface = transport._iface
 
-                # Validate we got valid device info
-                node_id = None
-                if hasattr(iface, 'myInfo') and iface.myInfo and hasattr(iface.myInfo, 'my_node_num'):
-                    node_id = f"!{iface.myInfo.my_node_num:x}"
+                # Validate we got valid device info. Issue 32: use the
+                # already-computed, correctly zero-padded
+                # transport.local_node_id instead of reformatting
+                # iface.myInfo.my_node_num inline here (which produced a
+                # shorter, inconsistent ID for small node numbers, e.g.
+                # "!abcd12" instead of "!00abcd12"). transport.connect()
+                # already guarantees local_node_id is set by the time it
+                # returns without raising - it performs this exact check
+                # itself and raises TransportConnectionError otherwise.
+                node_id = transport.local_node_id
 
                 if not node_id or not node_id.startswith('!'):
                     # Interface created but device info invalid - likely no device connected
