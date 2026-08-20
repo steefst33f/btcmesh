@@ -969,7 +969,7 @@ broadcast path** ✅ RESOLVED
   (736 tests).
 
 **Issue 25: Client-side hex validation accepts strings that aren't
-actually valid hex** 🔍 OPEN
+actually valid hex** ✅ RESOLVED
 - `core/protocol.py:38-49`'s `is_valid_hex()` validates via `int(s, 16)`,
   which accepts underscore digit separators, leading/trailing whitespace,
   and a leading `0x`/`+`/`-` - none of which `bytes.fromhex()` or Bitcoin
@@ -979,6 +979,11 @@ actually valid hex** 🔍 OPEN
   full multi-chunk LoRa transfer that only fails at the very end.
 - Proposed fix: validate with a strict character-class check
   (`re.fullmatch(r'[0-9a-fA-F]+', s)`) instead of `int(s, 16)`.
+- **Resolved 2026-08-20**: `is_valid_hex()` now matches against
+  `^[0-9a-fA-F]+$` instead of relying on `int(s, 16)`. Added tests for
+  the previously-permissive cases (`0x` prefix, leading/trailing
+  whitespace, underscore separators, leading `+`/`-`). Branch
+  `code-review-cleanup`, full suite green (741 tests).
 
 **Issue 26: No upper bound on reassembly session size or count** 🔍 OPEN
 - `core/reassembler.py:129`'s `_parse_chunk()` only checks `total_chunks >
@@ -1164,7 +1169,7 @@ between CLI and GUI** 🔍 OPEN
 | -     | Server device wedges frequently overnight, root-caused to macOS system sleep disrupting USB (not a code bug) | Informational (environmental) | **EXPLAINED (no code fix)** |
 | 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | **FIXED** |
 | 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | **FIXED** |
-| 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | Open |
+| 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | **FIXED** |
 | 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | Open |
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | Open |
 | 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | Open |
