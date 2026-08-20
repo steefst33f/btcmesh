@@ -917,7 +917,7 @@ directly and, for Issue 23, running a live interpreter check of the exception
 hierarchy in question. All are logged here as open issues to be worked
 through one at a time, same as the testing-derived issues above.
 
-**Issue 23: RPC retry logic never actually retries** 🔍 OPEN
+**Issue 23: RPC retry logic never actually retries** ✅ RESOLVED
 - `core/rpc_client.py:74`'s `rpc_request()` catches builtin `ConnectionError`/
   `TimeoutError` to drive its retry-with-backoff loop, but `requests.post()`
   (line 68) raises `requests.exceptions.ConnectionError`/`Timeout`, which do
@@ -929,9 +929,17 @@ through one at a time, same as the testing-derived issues above.
   never fires for the failure mode it was written for.
 - Proposed fix: catch `(requests.exceptions.ConnectionError,
   requests.exceptions.Timeout)` instead of the builtins.
+- **Resolved 2026-08-20**: `rpc_request()` now catches
+  `(requests.exceptions.ConnectionError, requests.exceptions.Timeout)`.
+  The three existing retry tests were themselves asserting against the
+  builtin exception type (exactly what let this ship unnoticed) - fixed
+  to use `requests.exceptions.ConnectionError`, and `time.sleep` is now
+  mocked in all four retry-path tests since the fix makes them genuinely
+  sleep between attempts. Branch `code-review-cleanup`, full suite green
+  (736 tests).
 
 **Issue 24: Transaction sanity-check module is never wired into the
-broadcast path** 🔍 OPEN
+broadcast path** ✅ RESOLVED
 - `core/transaction_parser.py`'s `decode_raw_transaction_hex()` and
   `basic_sanity_check()` are referenced only from `tests/` (confirmed via
   repo-wide grep). The path from reassembled hex to broadcast
@@ -944,6 +952,21 @@ broadcast path** 🔍 OPEN
 - Proposed fix: call `decode_raw_transaction_hex` + `basic_sanity_check` on
   the reassembled hex in `server/receiver.py` before `broadcast_transaction`,
   NACKing locally on failure.
+- **Resolved 2026-08-20**: `TransactionReceiver._broadcast()` now runs
+  both checks first and NACKs locally (without touching the RPC client at
+  all, and without firing `on_broadcast_started`) on decode failure
+  ("Invalid transaction structure") or an empty inputs/outputs list ("No
+  inputs"/"No outputs"). The existing test suite used `"deadbeef"` as a
+  stand-in reassembled payload throughout `test_server_receiver.py` -
+  too short to be a well-formed transaction, so it would now be rejected
+  by the new check - replaced with a minimal but structurally valid
+  transaction hex (1 input, 1 output) across ~40 call sites so the
+  existing broadcast-success/failure paths still exercise what they
+  intended to. Added 4 new tests for the rejection paths, including one
+  confirming a rejected transaction still populates the completed-session
+  cache (Issue 17) so a retransmit gets the same cached NACK instead of
+  restarting reassembly. Branch `code-review-cleanup`, full suite green
+  (736 tests).
 
 **Issue 25: Client-side hex validation accepts strings that aren't
 actually valid hex** 🔍 OPEN
@@ -1139,8 +1162,8 @@ between CLI and GUI** 🔍 OPEN
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
 | 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, all real-hw verified)** |
 | -     | Server device wedges frequently overnight, root-caused to macOS system sleep disrupting USB (not a code bug) | Informational (environmental) | **EXPLAINED (no code fix)** |
-| 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | Open |
-| 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | Open |
+| 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | **FIXED** |
+| 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | **FIXED** |
 | 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | Open |
 | 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | Open |
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | Open |
