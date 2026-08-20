@@ -1052,19 +1052,54 @@ actually valid hex** ✅ RESOLVED
   prior send's abort state doesn't leak into the next send on the same
   instance). Branch `code-review-cleanup`, full suite green (751 tests).
 
-**Issue 28: RPC credentials unescaped in URL; diagnostic logging
-unreachable at the default log level** 🔍 OPEN
-- `core/rpc_client.py:31` builds `http://{user}:{password}@{host}:{port}`
-  with no URL-encoding - special characters in the password (`@`, `:`,
-  `/`, `#`) corrupt the URI. Separately, nearly every log call in this
-  file is `.debug()`, but `server_logger` is fixed at `INFO`
-  (`core/logger_setup.py:15`) with no env/config override, so this
-  diagnostic detail (including the Issue 23 retry attempts) is never
-  visible in normal operation - and if DEBUG is ever turned on for
-  troubleshooting, `str(e)` from `requests` exceptions can put the
-  credential-bearing URL directly into the log file.
+**Issue 28: RPC credentials aren't URL-escaped; diagnostic/error logging
+invisible at the default log level** ✅ RESOLVED
+- **Credential escaping.** `core/rpc_client.py:31` builds the RPC
+  connection URI as `http://{user}:{password}@{host}:{port}` by directly
+  interpolating the raw password into the URL string, with no escaping.
+  Bitcoin Core places no restriction on which characters an RPC password
+  can contain, so a real generated/random password can easily include
+  `@`, `:`, `/`, or `#` - characters that are structurally meaningful
+  inside a URL's `user:password@host` segment (`@` marks where the
+  userinfo ends and the host begins; `:` separates user from password).
+  If the password contains one of these unescaped, the URL parser used
+  internally by `requests` can misread where those boundaries actually
+  are - e.g. a password containing `@` could cause part of the password
+  to be parsed as the hostname instead, silently pointing the client at
+  the wrong host, instead of connecting to the real Bitcoin Core node.
+  The code simply never accounted for this - it's not a hypothetical
+  edge case, it's a real character set Bitcoin Core RPC passwords are
+  allowed to use.
+- **Logging visibility.** Separately (and unrelated to the escaping bug
+  above): nearly every log call in this file is `.debug()`, but
+  `server_logger` is fixed at `INFO` (`core/logger_setup.py:15`) with no
+  env/config override - so this diagnostic detail (including the
+  Issue 23 retry attempts, and any RPC/connection error) is invisible in
+  normal operation. An operator trying to debug "why isn't my server
+  broadcasting transactions" has no way to see what's actually failing
+  without editing source to change the log level.
 - Proposed fix: `urllib.parse.quote()` the user/password when building the
   URI; promote key RPC error logs to `.warning()`/`.error()`.
+- **Resolved 2026-08-20**: `core/rpc_client.py`'s URI is now built with
+  `quote(user, safe='')`/`quote(password, safe='')`, so any character in
+  either field is safely percent-encoded and can never be misread as a
+  URL structural character. Promoted the operationally-relevant log
+  calls from `.debug()` to `.info()`/`.warning()`/`.error()` (connection
+  success, retry-in-progress, retries-exhausted, RPC-level rejection,
+  broadcast failures) while leaving genuinely per-call trace noise (e.g.
+  "Executing RPC method... attempt N") at `.debug()`.
+  **Correction to the original finding**: the "if DEBUG is ever turned
+  on, `str(e)` can put the credential-bearing URL directly into the log
+  file" claim was checked empirically and doesn't hold up -
+  `requests`/urllib3 connection-error messages only ever include
+  `host`/`port` (verified via a live `ConnectionError` against a URI
+  with embedded credentials; the credentials never appeared in `str(e)`,
+  even when the password itself was malformed enough to break URL
+  parsing). No log-scrubbing was needed for that reason; the promoted
+  log levels above are purely an operability improvement. Added a test
+  confirming the URI is correctly percent-encoded and still parses to
+  the intended host with special characters in the password. Branch
+  `issue-28`, full suite green (752 tests).
 
 **Issue 29: Server GUI cannot start with cookie-based Bitcoin RPC auth**
 🔍 OPEN
@@ -1216,7 +1251,7 @@ between CLI and GUI** 🔍 OPEN
 | 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | **FIXED** |
 | 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | **FIXED** |
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | **FIXED** |
-| 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | Open |
+| 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | **FIXED** |
 | 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | Open |
 | 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | Open |
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | Open |

@@ -42,6 +42,37 @@ class TestBitcoinRpcConnectionStory42(unittest.TestCase):
             )
 
 
+    def test_uri_url_encodes_special_characters_in_credentials(self):
+        """Issue 28: user/password can legitimately contain characters
+        (@, :, /, #) that would corrupt the URI's authority component if
+        not percent-encoded."""
+        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+            from core.rpc_client import BitcoinRPCClient
+
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"result": {"chain": "main"}, "error": None}
+            mock_post.return_value = mock_response
+
+            config = {
+                "host": "127.0.0.1",
+                "port": 8332,
+                "user": "user@name",
+                "password": "p@ss:word/with#chars",
+            }
+            rpc = BitcoinRPCClient(config)
+
+            self.assertEqual(
+                rpc.uri,
+                "http://user%40name:p%40ss%3Aword%2Fwith%23chars@127.0.0.1:8332",
+            )
+            # The URI must still parse to the intended host - not "name"
+            # or something else derived from an unescaped '@' in the password.
+            from urllib.parse import urlparse
+            parsed = urlparse(rpc.uri)
+            self.assertEqual(parsed.hostname, "127.0.0.1")
+            self.assertEqual(parsed.port, 8332)
+            self.assertEqual(parsed.username, "user%40name")
+
     def test_non_int_port_invalid_config_raises(self):
         """Given invalid config, When connecting, Then error is raised."""
         from core.rpc_client import BitcoinRPCClient
