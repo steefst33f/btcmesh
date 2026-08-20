@@ -1028,21 +1028,29 @@ actually valid hex** ✅ RESOLVED
 - Proposed fix: key `_abort_event` per-session (e.g. store it on
   `SendSession`, or a `Dict[str, threading.Event]`) and check the
   session's own event in `_send_all_chunks`.
-- **Resolved 2026-08-20**: moved the abort flag onto `SendSession`
-  (`request_abort()`/`is_aborted()`), so each session owns its own
-  `threading.Event` and starting a new session can never touch another
-  in-flight session's abort state. `TransactionSender.abort()` gained an
-  optional `session_id` parameter - omitted, it aborts every session
-  currently active on the instance (preserves the one real call site,
-  `btcmesh_client_gui.py:1059`, which has no session_id handy); given,
-  it targets just that session. Removed the now-unneeded
-  `self._abort_event.clear()` that used to run at the top of every
-  `send_transaction()` call. This code path had zero test coverage
-  before - added tests for basic abort mechanics plus the actual
-  regression scenario (two concurrent sessions on one
-  `TransactionSender`; aborting one must not affect the other), which
-  fails against the pre-fix code. Branch `code-review-cleanup`, full
-  suite green (753 tests).
+- **First pass, 2026-08-20**: moved the abort flag onto `SendSession`
+  (`request_abort()`/`is_aborted()`) so each session owned its own
+  `threading.Event`, and gave `TransactionSender.abort()` an optional
+  `session_id` parameter to target one session.
+- **Reconsidered 2026-08-20**: checked whether concurrent sends on one
+  `TransactionSender` instance are actually reachable by either real
+  caller. They aren't: `btcmesh_client_cli.py` is a one-shot script (one
+  send per process, then exit) and `btcmesh_client_gui.py`'s
+  `on_send_pressed()` disables every input control (including Send)
+  before a send starts and only re-enables them once it fully finishes -
+  there's no UI path to trigger a second send while one is in flight,
+  and it creates a fresh `TransactionSender` per send anyway. The
+  docstring's "concurrent sends via session isolation" claim was
+  describing a capability nothing exercises. Reverted the per-session
+  abort-state change and kept the original single shared
+  `threading.Event`/no-arg `abort()` design; corrected the class
+  docstring instead to state the actual contract (one send in flight
+  per instance - create a new `TransactionSender` per send if more are
+  ever needed concurrently, same as both current callers already do).
+  Replaced the per-session isolation tests with simpler ones covering
+  the single-shared-event behavior (abort stops an in-progress send; a
+  prior send's abort state doesn't leak into the next send on the same
+  instance). Branch `code-review-cleanup`, full suite green (751 tests).
 
 **Issue 28: RPC credentials unescaped in URL; diagnostic logging
 unreachable at the default log level** 🔍 OPEN

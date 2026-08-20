@@ -134,18 +134,6 @@ class SendSession:
         # Threading: event set when we get a response, cleared at start of wait
         self._response_events = {}  # type: Dict[int, threading.Event]
         self._final_ack_event = threading.Event()
-        # Issue 27: per-session, not shared across sessions on the same
-        # TransactionSender - a shared abort flag let one session's abort()
-        # be silently undone by another session starting concurrently.
-        self._abort_event = threading.Event()
-
-    def request_abort(self) -> None:
-        """Mark this session as abort-requested."""
-        self._abort_event.set()
-
-    def is_aborted(self) -> bool:
-        """Check if this session has been abort-requested."""
-        return self._abort_event.is_set()
 
     def mark_chunk_sent(self, chunk_num: int) -> None:
         """Record that a chunk was sent."""
@@ -208,8 +196,14 @@ class TransactionSender:
     """Orchestrates stop-and-wait ARQ sending of chunked transactions.
 
     Uses BaseTransport to send chunks and receive ACKs. Implements retry logic,
-    timeout handling, and message routing. Supports concurrent sends via
-    session isolation.
+    timeout handling, and message routing.
+
+    Designed for one send in flight per instance - abort() and the internal
+    abort state are instance-wide, not per-session. Both CLI and GUI already
+    create a fresh TransactionSender per send and never call send_transaction()
+    concurrently on one instance; if a future caller needs multiple sends in
+    flight at once, use a separate TransactionSender per send rather than
+    reusing one instance.
 
     Pure code: no print, no logging, no file I/O (except via transport).
     """
@@ -240,6 +234,7 @@ class TransactionSender:
         self.max_retries = max_retries
         self.sessions = {}  # type: Dict[str, SendSession]
         self._on_response_received = None  # type: Optional[Callable[[str], None]]
+        self._abort_event = threading.Event()
         self._setup_message_handler()
 
     def _setup_message_handler(self) -> None:
@@ -247,25 +242,14 @@ class TransactionSender:
         handler = lambda msg, sender_id: self._on_message(msg, sender_id)
         self.transport.set_message_handler(handler)
 
-    def abort(self, session_id: Optional[str] = None) -> None:
-        """Request abort of an in-progress send operation.
+    def abort(self) -> None:
+        """Request abort of the in-progress send operation.
 
         Safe to call at any time. The abort will be checked between
         chunk sends and the operation will return early with error.
-
-        Args:
-            session_id: If given, abort only that session. If omitted,
-                abort every session currently active on this instance
-                (Issue 27: each session tracks its own abort state, so
-                this can never affect a session started after this call).
+        Instance-wide, not per-session - see the class docstring.
         """
-        if session_id is not None:
-            session = self.sessions.get(session_id)
-            if session:
-                session.request_abort()
-            return
-        for session in self.sessions.values():
-            session.request_abort()
+        self._abort_event.set()
 
     def send_transaction(
         self,
@@ -320,6 +304,7 @@ class TransactionSender:
         send_session = SendSession(session_id, protocol_session.total_chunks)
         self.sessions[session_id] = send_session
 
+        self._abort_event.clear()
         self._on_response_received = on_response_received
         try:
             # Do the sending (blocking)
@@ -384,7 +369,7 @@ class TransactionSender:
                         if send_session.failed:
                             return
                         # Check for abort request
-                        if send_session.is_aborted():
+                        if self._abort_event.is_set():
                             send_session.error = "Aborted by user"
                             send_session.failed = True
                             return
