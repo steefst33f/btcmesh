@@ -795,10 +795,36 @@ device; Abort had no effect**
   above doesn't depend on knowing the exact mechanism - a worker thread
   + join-timeout is agnostic to *why* the wrapped call doesn't return -
   but this is worth recording for anyone investigating further.
-- **Status**: Fix 1 of 4 done and real-hardware verified. Fixes 2-4
-  (server liveness logging, server GUI watchdog wiring, client
-  detection-only watchdog) not yet implemented - see
-  `project/plans/story_28_1.md`.
+- **Fixes 2 and 3 implemented and merged** (Stories 28.2/28.3):
+  2. Periodic "still alive" logging added to both `btcmesh_server_cli.py`
+     and `btcmesh_server_gui.py` - an INFO
+     `"Server heartbeat: alive, listening. N active session(s)."` line
+     every 5 minutes, regardless of other activity. **CLI side verified
+     on real hardware**: ran `btcmesh_server_cli.py` against a real
+     connected device with no incoming traffic; the heartbeat fired at
+     exactly the 5-minute mark (`02:09:58` server start →
+     `02:14:58,702` heartbeat). See `project/plans/story_28_2.md`. GUI
+     side not yet real-hw verified (unit tests only so far).
+  3. `DeviceWatchdog` wired into `btcmesh_server_gui.py` (Story 26.5's
+     originally scoped-out follow-up) - including a
+     `record_success()`/`record_failure()` asymmetry found and fixed in
+     review (added `on_transport_success` to `TransactionReceiver`,
+     symmetric with `on_transport_error`, fixing the already-merged CLI
+     wiring too). See `project/plans/story_28_3.md`. Not yet verified on
+     real hardware.
+- **Fix 4 implemented, not yet merged** (Story 28.4, branch `story-28-4`):
+  detection-only `DeviceWatchdog` wired into the client GUI, reviving
+  Story 26.6 in a smaller form - a dedicated background thread ticks
+  `check_alive()` during idle time and reports "device appears
+  unresponsive" in the activity log, with no relay/recovery hardware
+  assumed. See `project/plans/story_28_4.md`. Not yet verified on real
+  hardware.
+- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review).
+  Fix 1 (the send timeout itself) and Fix 2's CLI side are verified on
+  real hardware; Fix 2's GUI side, Fix 3, and Fix 4 are unit-tested only
+  and still need real-hardware verification before this issue can be
+  considered fully closed. See `project/plans/story_28_1.md` for the
+  full epic tracking doc.
 
 ---
 
