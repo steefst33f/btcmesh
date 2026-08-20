@@ -52,7 +52,7 @@ class TestTransactionReceiverConstruction(unittest.TestCase):
         """All callbacks are optional."""
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = ("txid123", None)
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
         # Should not raise despite no callbacks registered
 
 
@@ -79,7 +79,7 @@ class TestTransactionReceiverChunkHandling(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = ("mytxid", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         # ACK for the single chunk
         ack_call = transport.send.call_args_list[0]
@@ -104,10 +104,10 @@ class TestTransactionReceiverChunkHandling(unittest.TestCase):
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = ("finaltxid", None)
 
-        handler("BTC_TX|sess3|1/2|dead", "!sender1")
-        handler("BTC_TX|sess3|2/2|beef", "!sender1")
+        handler("BTC_TX|sess3|1/2|01000000010000000000000000000000000000000000000000", "!sender1")
+        handler("BTC_TX|sess3|2/2|0000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
-        rpc_client.broadcast_transaction.assert_called_once_with("deadbeef")
+        rpc_client.broadcast_transaction.assert_called_once_with("010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000")
 
 
 class TestTransactionReceiverTransportError(unittest.TestCase):
@@ -128,7 +128,7 @@ class TestTransactionReceiverTransportError(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_transport_error.assert_called_once_with(send_error)
 
@@ -145,7 +145,7 @@ class TestTransactionReceiverTransportError(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         self.assertEqual(on_transport_error.call_count, 2)
 
@@ -162,7 +162,7 @@ class TestTransactionReceiverTransportError(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_chunk_received.assert_not_called()
 
@@ -181,7 +181,7 @@ class TestTransactionReceiverTransportError(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_transport_error.assert_called_once()
         on_error.assert_called_once()
@@ -200,7 +200,7 @@ class TestTransactionReceiverTransportSuccess(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = ("mytxid", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         # Two successful sends for a single-chunk transaction that
         # completes: the chunk-ack, then the final BTC_ACK reply - both are
@@ -218,7 +218,7 @@ class TestTransactionReceiverTransportSuccess(unittest.TestCase):
             on_chunk_received=on_chunk_received,
         )
 
-        handler("BTC_TX|sessBad|notanumber/2|deadbeef", "!sender1")
+        handler("BTC_TX|sessBad|notanumber/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_chunk_received.assert_not_called()
         on_transport_success.assert_called_once_with()
@@ -233,7 +233,7 @@ class TestTransactionReceiverTransportSuccess(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_transport_success.assert_not_called()
 
@@ -246,7 +246,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         receiver, transport, rpc_client, handler = make_receiver(on_broadcast=on_broadcast)
         rpc_client.broadcast_transaction.return_value = ("txid789", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         final_ack_call = transport.send.call_args_list[-1]
         self.assertEqual(final_ack_call.args[0], "BTC_ACK|sess1|TXID:txid789")
@@ -255,7 +255,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         on_broadcast.assert_called_once_with(
             BroadcastResult(
                 session_id="sess1", sender_id="!sender1", success=True,
-                txid="txid789", raw_tx="deadbeef",
+                txid="txid789", raw_tx="010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000",
             )
         )
 
@@ -264,7 +264,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         receiver, transport, rpc_client, handler = make_receiver(on_broadcast=on_broadcast)
         rpc_client.broadcast_transaction.return_value = (None, "insufficient fee for this tx")
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         final_nack_call = transport.send.call_args_list[-1]
         self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|Insufficient fee")
@@ -273,7 +273,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         on_broadcast.assert_called_once_with(
             BroadcastResult(
                 session_id="sess1", sender_id="!sender1", success=False,
-                error="insufficient fee for this tx", raw_tx="deadbeef",
+                error="insufficient fee for this tx", raw_tx="010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000",
             )
         )
 
@@ -291,7 +291,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         )
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         final_nack_call = transport.send.call_args_list[-1]
         self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|Bitcoin RPC not connected")
@@ -299,7 +299,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         on_broadcast.assert_called_once_with(
             BroadcastResult(
                 session_id="sess1", sender_id="!sender1", success=False,
-                error="Bitcoin RPC not connected", raw_tx="deadbeef",
+                error="Bitcoin RPC not connected", raw_tx="010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000",
             )
         )
         # Must not be silently swallowed as a generic error - confirms this
@@ -313,7 +313,7 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = ("txid789", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         on_broadcast_started.assert_called_once_with("sess1", "!sender1")
 
@@ -326,6 +326,77 @@ class TestTransactionReceiverBroadcast(unittest.TestCase):
         handler("BTC_TX|sess2|1/2|aabb", "!sender1")
 
         on_broadcast_started.assert_not_called()
+        rpc_client.broadcast_transaction.assert_not_called()
+
+    def test_undecodable_hex_rejected_locally_without_rpc_call(self):
+        """Issue 24: a reassembled hex that isn't even a well-formed
+        transaction structure should be rejected locally with a fast, clear
+        NACK - not sent to Bitcoin Core RPC at all."""
+        on_broadcast = Mock()
+        on_broadcast_started = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(
+            on_broadcast=on_broadcast, on_broadcast_started=on_broadcast_started
+        )
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        rpc_client.broadcast_transaction.assert_not_called()
+        on_broadcast_started.assert_not_called()
+        final_nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|Invalid transaction structure")
+        self.assertEqual(final_nack_call.args[1], "!sender1")
+        on_broadcast.assert_called_once_with(
+            BroadcastResult(
+                session_id="sess1", sender_id="!sender1", success=False,
+                error="Invalid transaction structure", raw_tx="deadbeef",
+            )
+        )
+
+    def test_decoded_transaction_with_no_inputs_rejected_locally(self):
+        """Issue 24: a structurally well-formed but empty-inputs transaction
+        fails basic_sanity_check() and is NACKed without an RPC call."""
+        on_broadcast = Mock()
+        receiver, transport, rpc_client, handler = make_receiver(on_broadcast=on_broadcast)
+        no_inputs_hex = "01000000000200000000"
+
+        handler(f"BTC_TX|sess1|1/1|{no_inputs_hex}", "!sender1")
+
+        rpc_client.broadcast_transaction.assert_not_called()
+        final_nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|No inputs")
+        on_broadcast.assert_called_once_with(
+            BroadcastResult(
+                session_id="sess1", sender_id="!sender1", success=False,
+                error="No inputs", raw_tx=no_inputs_hex,
+            )
+        )
+
+    def test_decoded_transaction_with_no_outputs_rejected_locally(self):
+        """Issue 24: same as above, for the output_count == 0 case."""
+        receiver, transport, rpc_client, handler = make_receiver()
+        no_outputs_hex = (
+            "01000000" "01" + "00" * 32 + "00000000" "00" "ffffffff" "00" "00000000"
+        )
+
+        handler(f"BTC_TX|sess1|1/1|{no_outputs_hex}", "!sender1")
+
+        rpc_client.broadcast_transaction.assert_not_called()
+        final_nack_call = transport.send.call_args_list[-1]
+        self.assertEqual(final_nack_call.args[0], "BTC_NACK|sess1|No outputs")
+
+    def test_invalid_transaction_reply_is_cached_like_a_normal_completion(self):
+        """A locally-rejected transaction still completes the session (see
+        Issue 17's completed-session cache) - a retransmitted last chunk
+        should get the same cached NACK, not restart reassembly."""
+        receiver, transport, rpc_client, handler = make_receiver()
+
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        transport.send.reset_mock()
+        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+
+        transport.send.assert_called_once_with(
+            "BTC_NACK|sess1|Invalid transaction structure", "!sender1"
+        )
         rpc_client.broadcast_transaction.assert_not_called()
 
 
@@ -401,7 +472,7 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         on_error = Mock()
         receiver, transport, rpc_client, handler = make_receiver(on_error=on_error)
 
-        handler("BTC_TX|sessBad|notanumber/2|deadbeef", "!sender1")
+        handler("BTC_TX|sessBad|notanumber/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         nack_call = transport.send.call_args_list[-1]
         self.assertTrue(nack_call.args[0].startswith("BTC_NACK|sessBad|"))
@@ -428,7 +499,7 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         nack_call = transport.send.call_args_list[-1]
         self.assertEqual(nack_call.args[0], "BTC_NACK|sess1|some other reassembly problem")
@@ -449,7 +520,7 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         nack_call = transport.send.call_args_list[-1]
         self.assertEqual(nack_call.args[0], "BTC_NACK|sess1|Internal server error")
@@ -469,7 +540,7 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         receiver = TransactionReceiver(transport, rpc_client, reassembler=reassembler, on_error=on_error)
         handler = transport.set_message_handler.call_args[0][0]
 
-        handler("BTC_TX|sess1|1/2|deadbeef", "!sender1")  # must not raise
+        handler("BTC_TX|sess1|1/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")  # must not raise
 
         on_error.assert_called_once_with("sess1", "!sender1", "totally unexpected")
 
@@ -477,7 +548,7 @@ class TestTransactionReceiverErrorHandling(unittest.TestCase):
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = (None, "x" * 500)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         nack_call = transport.send.call_args_list[-1]
         self.assertLessEqual(len(nack_call.args[0]), 200)
@@ -581,9 +652,9 @@ class TestTransactionReceiverWireCallbacks(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = ("txid123", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
-        on_wire_received.assert_called_once_with("BTC_TX|sess1|1/1|deadbeef")
+        on_wire_received.assert_called_once_with("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000")
 
     def test_wire_received_not_fired_for_non_chunk_messages(self):
         on_wire_received = Mock()
@@ -612,7 +683,7 @@ class TestTransactionReceiverWireCallbacks(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = ("mytxid", None)
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         # Two sends happen for a single-chunk transaction: the CHUNK_ACK, then
         # the final broadcast-success BTC_ACK - both should be reported.
@@ -632,7 +703,7 @@ class TestTransactionReceiverWireCallbacks(unittest.TestCase):
         )
         rpc_client.broadcast_transaction.return_value = (None, "insufficient fee")
 
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         self.assertEqual(
             on_wire_sent.call_args_list[-1].args[0], "BTC_NACK|sess1|Insufficient fee"
@@ -644,7 +715,7 @@ class TestTransactionReceiverWireCallbacks(unittest.TestCase):
             on_wire_sent=on_wire_sent
         )
 
-        handler("BTC_TX|sessBad|notanumber/2|deadbeef", "!sender1")
+        handler("BTC_TX|sessBad|notanumber/2|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         self.assertTrue(on_wire_sent.call_args_list[-1].args[0].startswith("BTC_NACK|sessBad|"))
 
@@ -680,11 +751,11 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
     def test_retransmitted_last_chunk_after_success_resends_cached_ack(self):
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = ("mytxid", None)
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.reset_mock()
         rpc_client.broadcast_transaction.reset_mock()
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")  # client retransmits, never saw the ACK
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")  # client retransmits, never saw the ACK
 
         transport.send.assert_called_once_with("BTC_ACK|sess1|TXID:mytxid", "!sender1")
         rpc_client.broadcast_transaction.assert_not_called()
@@ -693,11 +764,11 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
     def test_retransmitted_last_chunk_after_broadcast_failure_resends_cached_nack(self):
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = (None, "insufficient fee for this tx")
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.reset_mock()
         rpc_client.broadcast_transaction.reset_mock()
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.assert_called_once_with("BTC_NACK|sess1|Insufficient fee", "!sender1")
         rpc_client.broadcast_transaction.assert_not_called()
@@ -706,10 +777,10 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
         transport = Mock(spec=BaseTransport)
         receiver = TransactionReceiver(transport, None)
         handler = transport.set_message_handler.call_args[0][0]
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.reset_mock()
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.assert_called_once_with("BTC_NACK|sess1|Bitcoin RPC not connected", "!sender1")
 
@@ -719,14 +790,14 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
         an unrelated sender who happens to reuse the same random id."""
         receiver, transport, rpc_client, handler = make_receiver()
         rpc_client.broadcast_transaction.return_value = ("firsttxid", None)
-        handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+        handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
         transport.send.reset_mock()
         rpc_client.broadcast_transaction.reset_mock()
         rpc_client.broadcast_transaction.return_value = ("secondtxid", None)
-        handler("BTC_TX|sess1|1/1|beefdead", "!sender2")
+        handler("BTC_TX|sess1|1/1|010000000101000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender2")
 
-        rpc_client.broadcast_transaction.assert_called_once_with("beefdead")
+        rpc_client.broadcast_transaction.assert_called_once_with("010000000101000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000")
         final_call = transport.send.call_args_list[-1]
         self.assertEqual(final_call.args[0], "BTC_ACK|sess1|TXID:secondtxid")
         self.assertEqual(final_call.args[1], "!sender2")
@@ -738,12 +809,12 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
                 completed_session_grace_seconds=100
             )
             rpc_client.broadcast_transaction.return_value = ("mytxid", None)
-            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+            handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
             rpc_client.broadcast_transaction.assert_called_once()
 
             mock_time.return_value = 1000.0 + 101  # past the grace period
             rpc_client.broadcast_transaction.reset_mock()
-            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+            handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
 
             # Cache entry expired - treated as a genuinely new session, broadcasts again
             rpc_client.broadcast_transaction.assert_called_once()
@@ -755,7 +826,7 @@ class TestTransactionReceiverCompletedSessionCache(unittest.TestCase):
                 completed_session_grace_seconds=100
             )
             rpc_client.broadcast_transaction.return_value = ("mytxid", None)
-            handler("BTC_TX|sess1|1/1|deadbeef", "!sender1")
+            handler("BTC_TX|sess1|1/1|010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100000000", "!sender1")
             self.assertEqual(len(receiver._completed_sessions), 1)
 
             mock_time.return_value = 1000.0 + 101

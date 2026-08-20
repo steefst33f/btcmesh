@@ -21,6 +21,7 @@ from core.reassembler import (
     TransactionReassembler,
 )
 from core.rpc_client import BitcoinRPCClient
+from core.transaction_parser import basic_sanity_check, decode_raw_transaction_hex
 from transport.base import BaseTransport
 
 _MAX_NACK_LEN = 200
@@ -254,6 +255,26 @@ class TransactionReceiver:
                 self._on_error(session_id, sender_id, str(e))
 
     def _broadcast(self, session_id: str, sender_id: str, raw_tx: str) -> None:
+        # Issue 24: reject structurally invalid transactions locally before
+        # ever touching the RPC connection - decode_raw_transaction_hex/
+        # basic_sanity_check existed but were never wired in, so a garbage
+        # reassembled hex only failed after a full RPC round-trip, via
+        # Bitcoin Core's raw error text instead of a fast, concise NACK.
+        try:
+            decoded = decode_raw_transaction_hex(raw_tx)
+        except ValueError:
+            error = "Invalid transaction structure"
+        else:
+            _, error = basic_sanity_check(decoded)
+        if error:
+            msg = self._send_nack(session_id, sender_id, error)
+            self._remember_completed(session_id, sender_id, msg)
+            if self._on_broadcast:
+                self._on_broadcast(
+                    BroadcastResult(session_id, sender_id, False, error=error, raw_tx=raw_tx)
+                )
+            return
+
         if self._on_broadcast_started:
             self._on_broadcast_started(session_id, sender_id)
 
