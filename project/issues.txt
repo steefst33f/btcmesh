@@ -1134,7 +1134,7 @@ invisible at the default log level** ✅ RESOLVED
   that don't reproduce under `discover` and aren't touched by this fix;
   confirmed present on the unmodified branch tip too).
 
-**Issue 30: Client CLI has no validation on `--destination`** 🔍 OPEN
+**Issue 30: Client CLI has no validation on `--destination`** ✅ RESOLVED
 - `btcmesh_client_cli.py:108-120` validates only `--tx`. The GUI's
   `validate_send_inputs` (`btcmesh_client_gui.py:297-335`) separately
   checks that the destination is non-empty, starts with `!`, and isn't the
@@ -1146,6 +1146,21 @@ invisible at the default log level** ✅ RESOLVED
   `client/sender.py::send_transaction()` (or a shared
   `validate_destination()` in `core/protocol.py`) so both UIs get it for
   free.
+- **Resolved 2026-08-21**: added `validate_destination()` to
+  `core/protocol.py` (checks non-empty and `!`-prefix - the structural
+  checks shared by every caller; the self-send check stays GUI-specific
+  since it needs connection state the shared layer doesn't have). Wired
+  it into `client/sender.py::send_transaction()`, so any caller through
+  the shared layer is now protected, and into
+  `btcmesh_client_cli.py::cli_main()` upfront (alongside the existing
+  `validate_transaction_hex()` call) so a bad destination fails fast
+  without attempting a device connection first - the same two-layer
+  pattern already used for tx hex validation. Also refactored
+  `btcmesh_client_gui.py::validate_send_inputs()` to delegate to the
+  shared function instead of duplicating the same two checks inline
+  (kept its existing "Enter destination node ID" wording for the empty
+  case via a small message translation, so no GUI-facing text changed).
+  Branch `issue-30`, full suite green (765 tests).
 
 **Issue 31: Three independent parsers of the same `BTC_TX|...` wire
 format, with a confirmed behavioral divergence** 🔍 OPEN
@@ -1328,7 +1343,7 @@ process** 🔍 OPEN
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | **FIXED** |
 | 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | **FIXED** |
 | 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | **FIXED** |
-| 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | Open |
+| 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | **FIXED** |
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | Open |
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | Open |
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |

@@ -11,7 +11,7 @@ import os
 
 from core.config_loader import get_meshtastic_serial_port
 from core.logger_setup import setup_logger
-from core.protocol import validate_transaction_hex
+from core.protocol import validate_destination, validate_transaction_hex
 from client.sender import TransactionSender, create_preview
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
@@ -108,6 +108,12 @@ def run_send(destination: str, tx_hex: str, port: str = None) -> int:
 def cli_main(argv=None) -> int:
     """Thin CLI orchestration. Returns process exit code."""
     args = parse_args(argv)
+
+    try:
+        validate_destination(args.destination)
+    except ValueError as e:
+        print(f"Invalid destination: {e}", file=sys.stderr)
+        return 1
 
     try:
         validate_transaction_hex(args.tx)

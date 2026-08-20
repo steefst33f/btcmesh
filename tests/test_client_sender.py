@@ -233,6 +233,26 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIsNotNone(result.error)
 
+    def test_empty_destination_returns_error(self):
+        """Issue 30: empty/malformed destination is rejected before ever
+        touching the transport, same as invalid tx hex already was."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport)
+
+        result = sender.send_transaction("deadbeef" * 20, "")
+        self.assertFalse(result.success)
+        self.assertIn("Destination", result.error)
+        transport.send.assert_not_called()
+
+    def test_destination_missing_bang_prefix_returns_error(self):
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport)
+
+        result = sender.send_transaction("deadbeef" * 20, "notanodeid")
+        self.assertFalse(result.success)
+        self.assertIn("Destination", result.error)
+        transport.send.assert_not_called()
+
 
 class TestTransactionSenderMultiChunk(unittest.TestCase):
     """Tests for multi-chunk transaction sending."""

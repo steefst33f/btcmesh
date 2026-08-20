@@ -11,7 +11,13 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Dict, Set, Callable
 
-from core.protocol import create_session, get_chunk_message, parse_message, validate_transaction_hex
+from core.protocol import (
+    create_session,
+    get_chunk_message,
+    parse_message,
+    validate_destination,
+    validate_transaction_hex,
+)
 from core.message_types import ChunkAckMessage, AckMessage, NackMessage
 from transport.base import BaseTransport
 
@@ -282,6 +288,7 @@ class TransactionSender:
         """
         # Validate input
         try:
+            validate_destination(destination)
             validate_transaction_hex(tx_hex)
         except ValueError as e:
             return SendResult(

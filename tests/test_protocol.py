@@ -37,6 +37,7 @@ from core.message_types import (
 )
 from core.protocol import (
     is_valid_hex,
+    validate_destination,
     validate_transaction_hex,
     chunk_transaction,
     generate_session_id,
@@ -212,6 +213,26 @@ class TestHexValidation(unittest.TestCase):
     def test_validate_tx_hex_invalid_chars(self):
         with self.assertRaises(ValueError):
             validate_transaction_hex("zzzz")
+
+
+class TestValidateDestination(unittest.TestCase):
+    """Issue 30: shared destination validation, used by both CLI and
+    client/sender.py (and mirrored by the GUI's own connection-aware checks)."""
+
+    def test_valid_destination(self):
+        validate_destination("!abcdef12")  # Should not raise
+
+    def test_empty_destination_raises(self):
+        with self.assertRaises(ValueError):
+            validate_destination("")
+
+    def test_missing_bang_prefix_raises(self):
+        with self.assertRaises(ValueError):
+            validate_destination("abcdef12")
+
+    def test_none_destination_raises(self):
+        with self.assertRaises(ValueError):
+            validate_destination(None)
 
 
 # ---------------------------------------------------------------------------

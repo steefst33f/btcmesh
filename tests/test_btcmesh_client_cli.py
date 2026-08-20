@@ -62,6 +62,27 @@ class TestCliMainValidation(unittest.TestCase):
             cli.cli_main(["-d", "!abcdef12", "-tx", "zz"])
         mock_transport_cls.assert_not_called()
 
+    def test_missing_bang_prefix_prints_error_and_returns_1(self):
+        """Issue 30: destination is now validated same as tx hex."""
+        with patch("builtins.print") as mock_print:
+            code = cli.cli_main(["-d", "notanodeid", "-tx", "deadbeef"])
+        self.assertEqual(code, 1)
+        printed = "\n".join(str(c.args[0]) for c in mock_print.call_args_list)
+        self.assertIn("Invalid destination", printed)
+
+    def test_empty_destination_prints_error_and_returns_1(self):
+        with patch("builtins.print") as mock_print:
+            code = cli.cli_main(["-d", "", "-tx", "deadbeef"])
+        self.assertEqual(code, 1)
+        printed = "\n".join(str(c.args[0]) for c in mock_print.call_args_list)
+        self.assertIn("Invalid destination", printed)
+
+    def test_invalid_destination_does_not_attempt_connection(self):
+        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+             patch("builtins.print"):
+            cli.cli_main(["-d", "notanodeid", "-tx", "deadbeef"])
+        mock_transport_cls.assert_not_called()
+
 
 class TestCliMainDryRun(unittest.TestCase):
     """Tests for cli_main() --dry-run path (run_preview)."""
