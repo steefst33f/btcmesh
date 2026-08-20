@@ -1,6 +1,7 @@
 import requests
 import json
 import time
+from urllib.parse import quote
 
 from core.logger_setup import server_logger  # Assuming a logger is available
 class BitcoinRPCClient:
@@ -28,7 +29,10 @@ class BitcoinRPCClient:
         if port is None:
             raise ValueError("'port' cannot be None")
         
-        self.uri = f"http://{user}:{password}@{host}:{port}"
+        # Issue 28: user/password can legitimately contain characters
+        # (@, :, /, #) that would otherwise corrupt the URI's authority
+        # component or misparse into the wrong host/path.
+        self.uri = f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
         self.use_tor = host.endswith(".onion")
         self.connect()  # Establish connection on initialization
 
@@ -39,7 +43,7 @@ class BitcoinRPCClient:
         # Test connection and get chain info
         info = self.getblockchaininfo()
         self.chain = info['chain']  # Store chain for later access (main, test, testnet4, signet)
-        server_logger.debug(f"Connected to Bitcoin Core chain: {self.chain}")
+        server_logger.info(f"Connected to Bitcoin Core chain: {self.chain}")
 
     def rpc_request(self, method, params=None, retries: int = 3, delay: int = 5):
         """Performs a JSON-RPC requests with automatic connection retry logic."""
@@ -72,17 +76,23 @@ class BitcoinRPCClient:
                     raise self.BitcoinRPCException(result["error"])
                 return result["result"]
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                server_logger.debug(f"Connection error detected: {e}")
+                # Issue 28: promoted from .debug() - server_logger runs at
+                # INFO by default, so a connectivity problem an operator
+                # actually needs to know about was previously invisible
+                # without manually enabling DEBUG logging.
                 if i < retries - 1:
-                    server_logger.debug(f"Retrying connection in {delay} seconds...")
+                    server_logger.warning(
+                        f"Connection error on {method}, retrying in {delay}s "
+                        f"(attempt {i + 1}/{retries}): {e}"
+                    )
                     time.sleep(delay)
                 else:
-                    server_logger.debug("Max retries reached. Failing...")
+                    server_logger.error(f"{method} failed after {retries} attempts: {e}")
                     raise  # Re-raise the exception after exhausting retries
             except Exception as e:
                 # Log any other exceptions and re-raise
-                server_logger.debug(f"Other error detected: {e}")
-                raise  # Re-raise any unexpected exception        
+                server_logger.warning(f"Unexpected error during {method}: {e}")
+                raise  # Re-raise any unexpected exception
 
     def getblockchaininfo(self):
         return self.rpc_request("getblockchaininfo")
@@ -101,15 +111,15 @@ class BitcoinRPCClient:
         
         try:
             txid = self.sendrawtransaction(raw_tx_hex, 0.0)  # Pass 0.0 for no fee rate limit
-            server_logger.debug(f"Transaction ID received: {txid}")
+            server_logger.info(f"Transaction ID received: {txid}")
             return txid, None
         except self.BitcoinRPCException as e:
             message = e.message
-            server_logger.debug(f"Caught an RPC error with code {e.code}: {e.message}")
+            server_logger.warning(f"RPC rejected transaction (code {e.code}): {e.message}")
             return None, message
         except requests.exceptions.RequestException as e:
-            server_logger.debug(f"RequestException: {str(e)}")
+            server_logger.warning(f"RequestException during broadcast: {e}")
             return None, str(e)
         except Exception as e:
-            server_logger.debug(f"General Exception: {str(e)}")
+            server_logger.warning(f"Unexpected error during broadcast: {e}")
             return None, str(e)
