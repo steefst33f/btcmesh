@@ -134,6 +134,18 @@ class SendSession:
         # Threading: event set when we get a response, cleared at start of wait
         self._response_events = {}  # type: Dict[int, threading.Event]
         self._final_ack_event = threading.Event()
+        # Issue 27: per-session, not shared across sessions on the same
+        # TransactionSender - a shared abort flag let one session's abort()
+        # be silently undone by another session starting concurrently.
+        self._abort_event = threading.Event()
+
+    def request_abort(self) -> None:
+        """Mark this session as abort-requested."""
+        self._abort_event.set()
+
+    def is_aborted(self) -> bool:
+        """Check if this session has been abort-requested."""
+        return self._abort_event.is_set()
 
     def mark_chunk_sent(self, chunk_num: int) -> None:
         """Record that a chunk was sent."""
@@ -228,7 +240,6 @@ class TransactionSender:
         self.max_retries = max_retries
         self.sessions = {}  # type: Dict[str, SendSession]
         self._on_response_received = None  # type: Optional[Callable[[str], None]]
-        self._abort_event = threading.Event()
         self._setup_message_handler()
 
     def _setup_message_handler(self) -> None:
@@ -236,13 +247,25 @@ class TransactionSender:
         handler = lambda msg, sender_id: self._on_message(msg, sender_id)
         self.transport.set_message_handler(handler)
 
-    def abort(self) -> None:
-        """Request abort of any in-progress send operation.
+    def abort(self, session_id: Optional[str] = None) -> None:
+        """Request abort of an in-progress send operation.
 
         Safe to call at any time. The abort will be checked between
         chunk sends and the operation will return early with error.
+
+        Args:
+            session_id: If given, abort only that session. If omitted,
+                abort every session currently active on this instance
+                (Issue 27: each session tracks its own abort state, so
+                this can never affect a session started after this call).
         """
-        self._abort_event.set()
+        if session_id is not None:
+            session = self.sessions.get(session_id)
+            if session:
+                session.request_abort()
+            return
+        for session in self.sessions.values():
+            session.request_abort()
 
     def send_transaction(
         self,
@@ -297,7 +320,6 @@ class TransactionSender:
         send_session = SendSession(session_id, protocol_session.total_chunks)
         self.sessions[session_id] = send_session
 
-        self._abort_event.clear()
         self._on_response_received = on_response_received
         try:
             # Do the sending (blocking)
@@ -362,7 +384,7 @@ class TransactionSender:
                         if send_session.failed:
                             return
                         # Check for abort request
-                        if self._abort_event.is_set():
+                        if send_session.is_aborted():
                             send_session.error = "Aborted by user"
                             send_session.failed = True
                             return

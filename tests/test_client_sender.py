@@ -598,5 +598,114 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
         self.assertTrue(result.success)
 
 
+class TestTransactionSenderAbort(unittest.TestCase):
+    """Issue 27: abort state is per-session (on SendSession), not a single
+    threading.Event shared across every session on a TransactionSender."""
+
+    def test_send_session_starts_not_aborted(self):
+        session = SendSession("abc123", 1)
+        self.assertFalse(session.is_aborted())
+
+    def test_request_abort_marks_session_aborted(self):
+        session = SendSession("abc123", 1)
+        session.request_abort()
+        self.assertTrue(session.is_aborted())
+
+    def test_abort_no_args_aborts_the_active_session(self):
+        """Backward-compatible zero-arg call (the one real caller,
+        btcmesh_client_gui.py, has no session_id handy - it just wants to
+        cancel whatever this sender instance is currently sending)."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=5)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "deadbeef" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result_holder.append(sender.send_transaction(tx_hex, "!dest1234"))
+
+        thread = threading.Thread(target=send_in_thread, daemon=False)
+        thread.start()
+        time.sleep(0.2)
+
+        sender.abort()  # No session_id - aborts the one active session
+
+        sent_msg = transport.send.call_args[0][0]
+        session_id = sent_msg.split("|")[1]
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+        thread.join(timeout=5)
+
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "Aborted by user")
+
+    def test_abort_unknown_session_id_does_not_raise(self):
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport)
+        sender.abort("no-such-session")  # Should not raise
+
+    def test_aborting_one_session_does_not_affect_a_concurrent_session(self):
+        """The actual regression: two sessions in flight on the same
+        TransactionSender instance. Aborting session 1 must not touch
+        session 2, and starting session 2 afterwards must not silently
+        clear session 1's already-requested abort (the old bug: a single
+        shared _abort_event got .clear()'d at the top of every
+        send_transaction() call)."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=5)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex_1 = "aaaa" * 20  # 1 chunk, distinct payload -> distinct session id
+        tx_hex_2 = "bbbb" * 20
+        results = {}
+
+        def send1():
+            results["s1"] = sender.send_transaction(tx_hex_1, "!dest1")
+
+        def send2():
+            results["s2"] = sender.send_transaction(tx_hex_2, "!dest2")
+
+        thread1 = threading.Thread(target=send1, daemon=False)
+        thread1.start()
+        time.sleep(0.2)
+
+        # Identify session 1 and abort it specifically, BEFORE session 2
+        # ever starts - this is exactly the ordering that triggered the
+        # old bug (a later send_transaction() call clearing the shared
+        # abort event out from under an already-in-flight session).
+        session_id_1 = transport.send.call_args[0][0].split("|")[1]
+        sender.abort(session_id_1)
+
+        thread2 = threading.Thread(target=send2, daemon=False)
+        thread2.start()
+        time.sleep(0.2)
+
+        session_id_2 = None
+        for call_args in transport.send.call_args_list:
+            sid = call_args[0][0].split("|")[1]
+            if sid != session_id_1:
+                session_id_2 = sid
+                break
+        self.assertIsNotNone(session_id_2)
+
+        # Session 1: ACK its one chunk - it should still notice the abort
+        # requested earlier and fail, not be silently un-aborted.
+        handler(f"BTC_CHUNK_ACK|{session_id_1}|1|ALL_CHUNKS_RECEIVED", "!server")
+        thread1.join(timeout=5)
+
+        # Session 2: never aborted - runs to completion normally.
+        handler(f"BTC_CHUNK_ACK|{session_id_2}|1|ALL_CHUNKS_RECEIVED", "!server")
+        time.sleep(0.1)
+        handler(f"BTC_ACK|{session_id_2}|TXID:session2txid", "!server")
+        thread2.join(timeout=5)
+
+        self.assertFalse(results["s1"].success)
+        self.assertEqual(results["s1"].error, "Aborted by user")
+
+        self.assertTrue(results["s2"].success)
+        self.assertEqual(results["s2"].txid, "session2txid")
+
+
 if __name__ == "__main__":
     unittest.main()
