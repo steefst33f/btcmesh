@@ -671,6 +671,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         succeeding_transport = unittest.mock.MagicMock()
         succeeding_transport.connect.return_value = None
         succeeding_transport._iface = mock_iface
+        succeeding_transport.local_node_id = "!12345678"
 
         transports = [failing_transport, succeeding_transport]
 
@@ -684,6 +685,36 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         self.assertEqual(result_types.count('connection_initializing'), 1)
         self.assertIn('connected', result_types)
         self.assertIn('transport_ready', result_types)
+
+    def test_init_meshtastic_uses_transport_local_node_id_zero_padded(self):
+        """Issue 32: the 'connected' result's node_id must come from
+        transport.local_node_id (always zero-padded to 8 hex digits), not
+        a reformatted iface.myInfo.my_node_num - which previously produced
+        a shorter, inconsistent ID for small node numbers, e.g. "!abcd12"
+        instead of "!00abcd12"."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.status_log = unittest.mock.MagicMock()
+
+        mock_iface = unittest.mock.MagicMock()
+        mock_iface.myInfo.my_node_num = 0x00ABCD12  # A small node number
+
+        transport = unittest.mock.MagicMock()
+        transport.connect.return_value = None
+        transport._iface = mock_iface
+        transport.local_node_id = "!00abcd12"  # Correctly zero-padded
+
+        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=transport), \
+             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch('btcmesh_client_gui.get_own_node_name', return_value='TestNode'):
+            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+
+        results = self._drain(gui.result_queue)
+        connected = next(r for r in results if r[0] == 'connected')
+        # connected = ('connected', iface, node_id, node_name)
+        self.assertEqual(connected[2], "!00abcd12")
 
     def test_init_meshtastic_gives_up_after_max_attempts(self):
         """Given a persistently transient error, Then after CONNECT_MAX_ATTEMPTS
