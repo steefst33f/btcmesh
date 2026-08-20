@@ -1163,7 +1163,7 @@ invisible at the default log level** ✅ RESOLVED
   Branch `issue-30`, full suite green (765 tests).
 
 **Issue 31: Three independent parsers of the same `BTC_TX|...` wire
-format, with a confirmed behavioral divergence** 🔍 OPEN
+format, with a confirmed behavioral divergence** ✅ RESOLVED
 - `core/protocol.py::parse_chunk`, `core/reassembler.py::_parse_chunk`,
   and `server/receiver.py::_on_message`'s ad-hoc pre-parse (built only to
   construct the ACK reply string) all parse the identical format
@@ -1174,6 +1174,26 @@ format, with a confirmed behavioral divergence** 🔍 OPEN
 - Proposed fix: consolidate on `core/protocol.py::parse_chunk` as the
   single source of truth; have `reassembler.py` and `receiver.py` call it
   instead of re-implementing.
+- **Resolved 2026-08-21**: `core/reassembler.py::_parse_chunk` now calls
+  `core.protocol.parse_chunk()` and layers only the `MAX_TOTAL_CHUNKS`
+  cap (Issue 26 - a reassembly-specific resource limit, not a
+  wire-format rule) on top; `server/receiver.py::_on_message`'s
+  best-effort pre-parse does the same instead of hand-rolling its own
+  split/int-conversion logic. The divergence is resolved in favor of the
+  stricter behavior: an empty payload is now rejected everywhere (real
+  chunking, per `chunk_transaction()`, never produces an empty chunk, so
+  there's no legitimate case this could reject). One real regression
+  surfaced and was fixed during this change: `parse_chunk()` is
+  all-or-nothing, so when only the chunk/total numbering is malformed
+  but the `session_id` field is fine, the old ad-hoc parser could still
+  recover `session_id` for the NACK (it parsed incrementally) while the
+  new call couldn't - added a narrow, clearly-scoped fallback in
+  `receiver.py` that recovers just that one field on a parse failure,
+  without re-deciding validity itself. Added tests for the
+  now-consolidated empty-payload rejection; the existing
+  `test_invalid_chunk_format_never_added_to_reassembler` test (which
+  asserts the NACK correctly references the session id) caught the
+  regression directly. Branch `issue-31`, full suite green (766 tests).
 
 **Issue 32: Node-ID formatting bug in client GUI's `_init_meshtastic`**
 🔍 OPEN
@@ -1344,7 +1364,7 @@ process** 🔍 OPEN
 | 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | **FIXED** |
 | 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | **FIXED** |
 | 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | **FIXED** |
-| 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | Open |
+| 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | **FIXED** |
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | Open |
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |

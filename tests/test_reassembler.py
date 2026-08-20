@@ -125,6 +125,30 @@ class TestHexValidationStory22(unittest.TestCase):
         # In the real server, this would trigger a NACK and log an error
 
 
+class TestParserConsolidation(unittest.TestCase):
+    """Issue 31: _parse_chunk() delegates to core.protocol.parse_chunk(),
+    the single source of truth for the BTC_TX wire format, instead of a
+    second independent implementation that could silently diverge from it."""
+
+    def setUp(self):
+        from core.reassembler import InvalidChunkFormatError
+
+        self.InvalidChunkFormatError = InvalidChunkFormatError
+        self.reassembler = TransactionReassembler(timeout_seconds=300)
+        self.sender_id = "!sender1"
+
+    def test_empty_payload_now_rejected(self):
+        """Previously the reassembler's own parser only warned and kept
+        the chunk on an empty payload - core.protocol.parse_chunk()
+        (the format both client-side chunking and this parser now agree
+        on) rejects it outright, since real chunking never produces an
+        empty chunk. Consolidating picks this stricter, correct behavior."""
+        chunk = "BTC_TX|sess1|1/1|"
+        with self.assertRaises(self.InvalidChunkFormatError):
+            self.reassembler.add_chunk(self.sender_id, chunk)
+        self.assertEqual(self.reassembler.get_active_sessions_info(), [])
+
+
 class TestReassemblyLimits(unittest.TestCase):
     """Issue 26: caps on total_chunks and concurrent sessions per sender,
     to bound worst-case memory growth from a misbehaving/malicious sender."""

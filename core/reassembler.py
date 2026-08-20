@@ -8,11 +8,11 @@ from core.logger_setup import server_logger  # Assuming a logger is available
 from core.constants import (
     MSG_BTC_TX,
     CHUNK_DELIMITER,
-    CHUNK_INDEX_DELIMITER,
     DEFAULT_REASSEMBLY_TIMEOUT,
     MAX_TOTAL_CHUNKS,
     MAX_CONCURRENT_SESSIONS_PER_SENDER,
 )
+from core.protocol import parse_chunk as _parse_chunk_wire
 
 # Backward-compatibility alias: prefer CHUNK_DELIMITER going forward.
 CHUNK_PARTS_DELIMITER = CHUNK_DELIMITER
@@ -91,6 +91,12 @@ class TransactionReassembler:
 
         Format: "BTC_TX|<tx_session_id>|<chunk_num>/<total_chunks>|<hex_payload_part>"
 
+        Delegates to core.protocol.parse_chunk() (Issue 31) - the single
+        source of truth for this wire format, also used by
+        server/receiver.py's own best-effort pre-parse. Only the
+        MAX_TOTAL_CHUNKS cap (Issue 26, a reassembly-specific resource
+        limit, not a wire-format rule) is checked here on top.
+
         Args:
             message_text: The raw text message received.
 
@@ -98,54 +104,20 @@ class TransactionReassembler:
             A tuple containing (tx_session_id, chunk_num, total_chunks, hex_payload_part).
 
         Raises:
-            InvalidChunkFormatError: If the message_text does not conform to the expected format.
+            InvalidChunkFormatError: If the message_text does not conform to
+                the expected format, or total_chunks exceeds MAX_TOTAL_CHUNKS.
         """
-        if not message_text.startswith(CHUNK_PREFIX):
-            raise InvalidChunkFormatError(f"Message does not start with {CHUNK_PREFIX}")
-
-        parts = message_text[len(CHUNK_PREFIX) :].split(CHUNK_PARTS_DELIMITER)
-        if len(parts) != 3:
-            raise InvalidChunkFormatError(
-                f"Message does not have 3 parts after prefix: {parts}"
-            )
-
-        tx_session_id = parts[0]
-        chunk_index_part = parts[1]
-        hex_payload_part = parts[2]
-
-        if not tx_session_id:
-            raise InvalidChunkFormatError("tx_session_id is empty.")
-        if (
-            not hex_payload_part
-        ):  # Allow empty payload for last chunk if needed by protocol?
-            # For now, assume payload must exist. Consider if it needs to be optional.
-            server_logger.warning(
-                f"[Session: {tx_session_id}] Received chunk with empty payload part."
-            )
-            # Depending on strictness, could raise InvalidChunkFormatError here.
-
         try:
-            chunk_num_str, total_chunks_str = chunk_index_part.split(
-                CHUNK_INDEX_DELIMITER
-            )
-            chunk_num = int(chunk_num_str)
-            total_chunks = int(total_chunks_str)
-        except ValueError:
+            parsed = _parse_chunk_wire(message_text)
+        except ValueError as e:
+            raise InvalidChunkFormatError(str(e))
+
+        if parsed.total_chunks > MAX_TOTAL_CHUNKS:
             raise InvalidChunkFormatError(
-                f"Invalid chunk_num/total_chunks format: {chunk_index_part}"
+                f"total_chunks {parsed.total_chunks} exceeds max allowed {MAX_TOTAL_CHUNKS}"
             )
 
-        if not (0 < chunk_num <= total_chunks and total_chunks > 0):
-            raise InvalidChunkFormatError(
-                f"Invalid chunk numbering: {chunk_num}/{total_chunks}"
-            )
-
-        if total_chunks > MAX_TOTAL_CHUNKS:
-            raise InvalidChunkFormatError(
-                f"total_chunks {total_chunks} exceeds max allowed {MAX_TOTAL_CHUNKS}"
-            )
-
-        return tx_session_id, chunk_num, total_chunks, hex_payload_part
+        return parsed.session_id, parsed.chunk_number, parsed.total_chunks, parsed.payload
 
     def add_chunk(self, sender_id: Any, message_text: str) -> Optional[str]:
         """
