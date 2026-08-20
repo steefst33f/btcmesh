@@ -705,7 +705,7 @@ even though the relay itself works correctly** ✅ FIXED
 
 **Issue 21: Client GUI froze completely and required a force-kill after
 `transport.send()` hung indefinitely on an unattended overnight-wedged
-device; Abort had no effect** ✅ FIXED
+device; Abort had no effect** ⚠️ Implemented, pending real-hardware verification (Fixes 2-4)
 
 - Reported by the operator after running the client GUI and server GUI
   unattended overnight. In the morning, sending a transaction logged
@@ -795,7 +795,8 @@ device; Abort had no effect** ✅ FIXED
   above doesn't depend on knowing the exact mechanism - a worker thread
   + join-timeout is agnostic to *why* the wrapped call doesn't return -
   but this is worth recording for anyone investigating further.
-- **Fixes 2-4 implemented**:
+- **Fixes 2-4 implemented, unit-tested only - not yet verified on real
+  hardware** (unlike Fix 1, which was; see above):
   2. Periodic "still alive" logging added to both `btcmesh_server_cli.py`
      and `btcmesh_server_gui.py` (Story 28.2) - an INFO
      `"Server heartbeat: alive, listening. N active session(s)."` line
@@ -811,7 +812,11 @@ device; Abort had no effect** ✅ FIXED
      background thread ticks `check_alive()` during idle time and
      reports "device appears unresponsive" in the activity log, with no
      relay/recovery hardware assumed - see `project/plans/story_28_4.md`.
-- **Status**: All 4 fixes done. See `project/plans/story_28_1.md` for the
+- **Status**: All 4 fixes implemented and unit-tested (732 tests
+  passing). Only Fix 1 (the send timeout itself, the actual freeze this
+  issue is about) has been verified against real hardware so far. Fixes
+  2-4 still need real-hardware verification before this issue can be
+  considered fully closed. See `project/plans/story_28_1.md` for the
   full epic tracking doc and `project/plans/story_28_2.md`/`story_28_3.md`/`story_28_4.md`
   for each story's individual design and verification.
 
@@ -838,4 +843,4 @@ device; Abort had no effect** ✅ FIXED
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
-| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, send timeout real-hw verified)** |
+| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Implemented (4/4); only Fix 1 real-hw verified** |

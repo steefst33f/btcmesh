@@ -171,7 +171,7 @@ original CLI-scoping reasoning, which still applies unchanged).
 
 ## Implementation Progress
 
-**Done.** All items implemented and tested.
+**Done and unit-tested. Not yet verified against real hardware.**
 
 - [x] New watchdog state in `__init__`
 - [x] `build_device_watchdog()` wired into `_handle_result()`'s

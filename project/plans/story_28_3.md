@@ -195,7 +195,7 @@ recovery checks.
 
 ## Implementation Progress
 
-**Done.** All items implemented and tested.
+**Done and unit-tested. Not yet verified against real hardware.**
 
 - [x] Wire the shared `build_device_watchdog()` factory into the GUI server
       startup path
