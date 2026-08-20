@@ -179,6 +179,25 @@ class TestHexValidation(unittest.TestCase):
     def test_invalid_hex_spaces(self):
         self.assertFalse(is_valid_hex("dead beef"))
 
+    def test_invalid_hex_0x_prefix(self):
+        """Issue 25: int(s, 16) accepted a leading 0x, but bytes.fromhex()
+        and Bitcoin Core's own decoder don't."""
+        self.assertFalse(is_valid_hex("0xdeadbeef"))
+
+    def test_invalid_hex_leading_whitespace(self):
+        self.assertFalse(is_valid_hex(" deadbeef"))
+
+    def test_invalid_hex_trailing_whitespace(self):
+        self.assertFalse(is_valid_hex("deadbeef "))
+
+    def test_invalid_hex_underscore_separator(self):
+        """Issue 25: int(s, 16) accepted PEP 515 underscore separators."""
+        self.assertFalse(is_valid_hex("de_ad_be_ef"))
+
+    def test_invalid_hex_leading_sign(self):
+        self.assertFalse(is_valid_hex("+deadbeef"))
+        self.assertFalse(is_valid_hex("-deadbeef"))
+
     def test_validate_tx_hex_valid(self):
         validate_transaction_hex("deadbeef")  # Should not raise
 

@@ -598,5 +598,78 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
         self.assertTrue(result.success)
 
 
+class TestTransactionSenderAbort(unittest.TestCase):
+    """TransactionSender is designed for one send in flight per instance
+    (see the class docstring) - abort() and its underlying event are
+    instance-wide, not per-session. CLI and GUI both already create a
+    fresh TransactionSender per send and never call send_transaction()
+    concurrently on one instance."""
+
+    def test_abort_stops_an_in_progress_send(self):
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=5)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "deadbeef" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result_holder.append(sender.send_transaction(tx_hex, "!dest1234"))
+
+        thread = threading.Thread(target=send_in_thread, daemon=False)
+        thread.start()
+        time.sleep(0.2)
+
+        sender.abort()
+
+        sent_msg = transport.send.call_args[0][0]
+        session_id = sent_msg.split("|")[1]
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+        thread.join(timeout=5)
+
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "Aborted by user")
+
+    def test_abort_before_any_send_does_not_raise(self):
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport)
+        sender.abort()  # Should not raise even with nothing in flight
+
+    def test_abort_event_is_cleared_at_the_start_of_each_send(self):
+        """A prior send's abort state must not leak into the next send on
+        the same instance - each send_transaction() call starts clean."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=5)
+        handler = transport.set_message_handler.call_args[0][0]
+
+        # First send: abort it.
+        result1 = sender.send_transaction("deadbeefZZ", "!dest1")  # invalid hex, fails fast
+        self.assertFalse(result1.success)
+        sender.abort()
+
+        # Second send on the same instance must not start pre-aborted.
+        tx_hex = "cafebabe" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result_holder.append(sender.send_transaction(tx_hex, "!dest2"))
+
+        thread = threading.Thread(target=send_in_thread, daemon=False)
+        thread.start()
+        time.sleep(0.2)
+
+        sent_msg = transport.send.call_args[0][0]
+        session_id = sent_msg.split("|")[1]
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+        time.sleep(0.1)
+        handler(f"BTC_ACK|{session_id}|TXID:secondsendtxid", "!server")
+        thread.join(timeout=5)
+
+        result = result_holder[0]
+        self.assertTrue(result.success)
+        self.assertEqual(result.txid, "secondsendtxid")
+
+
 if __name__ == "__main__":
     unittest.main()

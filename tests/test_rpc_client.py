@@ -80,13 +80,15 @@ class TestBitcoinRpcConnectionStory42(unittest.TestCase):
 
     def test_rpc_request_retries_on_connection_error_three_times_last_success(self):
         """Given valid config but node unreachable, When connecting, retries twice, succeeds on third try."""
-        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post, \
+                unittest.mock.patch("core.rpc_client.time.sleep"):
             from core.rpc_client import BitcoinRPCClient
+            import requests
 
             # Mock the response to raise ConnectionError for the first two calls and success on last
             mock_post.side_effect = [
-                ConnectionError("Connection error"),
-                ConnectionError("Connection error"),
+                requests.exceptions.ConnectionError("Connection error"),
+                requests.exceptions.ConnectionError("Connection error"),
                 MagicMock(json=MagicMock(return_value={"result": {"chain": "main"}, "error": None}))
             ]
 
@@ -99,12 +101,14 @@ class TestBitcoinRpcConnectionStory42(unittest.TestCase):
 
     def test_rpc_request_retries_on_connection_error_second_success(self):
         """Given valid config but node unreachable on first try, retries and suceeds on second try."""
-        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post, \
+                unittest.mock.patch("core.rpc_client.time.sleep"):
             from core.rpc_client import BitcoinRPCClient
+            import requests
 
             # Mock the response to raise ConnectionError for the first call and success on the second
             mock_post.side_effect = [
-                ConnectionError("Connection error"),
+                requests.exceptions.ConnectionError("Connection error"),
                 MagicMock(json=MagicMock(return_value={"result": {"chain": "main"}, "error": None}))
             ]
 
@@ -117,14 +121,16 @@ class TestBitcoinRpcConnectionStory42(unittest.TestCase):
 
     def test_rpc_request_retries_on_connection_error_three_times_failure(self):
         """Given valid config but node unreachable, When connecting, retries 3 times, fails."""
-        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+        with unittest.mock.patch("core.rpc_client.requests.post") as mock_post, \
+                unittest.mock.patch("core.rpc_client.time.sleep"):
             from core.rpc_client import BitcoinRPCClient
+            import requests
 
             # Mock the response to raise ConnectionError
-            mock_post.side_effect = ConnectionError("Connection error")
+            mock_post.side_effect = requests.exceptions.ConnectionError("Connection error")
 
             # Assert that the ConnectionError is raised after 3 attempts
-            with self.assertRaises(ConnectionError) as context:
+            with self.assertRaises(requests.exceptions.ConnectionError) as context:
                 # Call the method
                 rpc = BitcoinRPCClient(self.valid_config)
 
@@ -194,7 +200,8 @@ class TestBitcoinRpcBroadcastStory43(unittest.TestCase):
         import requests
 
         with unittest.mock.patch.object(BitcoinRPCClient, 'connect'), \
-            unittest.mock.patch('requests.post') as mock_post:
+            unittest.mock.patch('requests.post') as mock_post, \
+            unittest.mock.patch('core.rpc_client.time.sleep'):
             client = BitcoinRPCClient(self.config)
 
             # Simulate connection failure when trying to broadcast

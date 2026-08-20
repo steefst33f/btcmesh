@@ -10,6 +10,8 @@ from core.constants import (
     CHUNK_DELIMITER,
     CHUNK_INDEX_DELIMITER,
     DEFAULT_REASSEMBLY_TIMEOUT,
+    MAX_TOTAL_CHUNKS,
+    MAX_CONCURRENT_SESSIONS_PER_SENDER,
 )
 
 # Backward-compatibility alias: prefer CHUNK_DELIMITER going forward.
@@ -40,6 +42,13 @@ class DuplicateChunkError(ReassemblyError):
 
 class InvalidChunkFormatError(ReassemblyError):
     """Raised when a chunk format is invalid."""
+
+    pass
+
+
+class TooManySessionsError(ReassemblyError):
+    """Raised when a sender already has too many concurrent reassembly
+    sessions open (Issue 26)."""
 
     pass
 
@@ -131,6 +140,11 @@ class TransactionReassembler:
                 f"Invalid chunk numbering: {chunk_num}/{total_chunks}"
             )
 
+        if total_chunks > MAX_TOTAL_CHUNKS:
+            raise InvalidChunkFormatError(
+                f"total_chunks {total_chunks} exceeds max allowed {MAX_TOTAL_CHUNKS}"
+            )
+
         return tx_session_id, chunk_num, total_chunks, hex_payload_part
 
     def add_chunk(self, sender_id: Any, message_text: str) -> Optional[str]:
@@ -184,6 +198,15 @@ class TransactionReassembler:
         sender_sessions = self.active_sessions[session_key]
 
         if tx_session_id not in sender_sessions:
+            if len(sender_sessions) >= MAX_CONCURRENT_SESSIONS_PER_SENDER:
+                error_msg = (
+                    f"{log_ctx} Sender already has "
+                    f"{MAX_CONCURRENT_SESSIONS_PER_SENDER} concurrent reassembly "
+                    f"sessions open. Rejecting new session."
+                )
+                server_logger.error(error_msg)
+                raise TooManySessionsError(error_msg)
+
             server_logger.info(
                 f"{log_ctx} New reassembly session started. Expecting {total_chunks} chunks."
             )

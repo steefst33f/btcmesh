@@ -5,6 +5,7 @@ They raise ValueError for invalid inputs. See project/protocol_spec.md.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Union
 
@@ -35,18 +36,21 @@ from core.message_types import (
 # ---------------------------------------------------------------------------
 
 
+_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+
+
 def is_valid_hex(s: str) -> bool:
     """Check if a string is a valid hexadecimal string.
 
     Returns True if s is a non-empty string of hex characters, False otherwise.
+    Uses a strict character-class check rather than int(s, 16) - the latter
+    also accepts underscore digit separators, leading/trailing whitespace,
+    and a leading 0x/+/- prefix, none of which bytes.fromhex() or Bitcoin
+    Core's own hex decoder accept (Issue 25).
     """
     if not s:
         return False
-    try:
-        int(s, 16)
-        return True
-    except ValueError:
-        return False
+    return bool(_HEX_RE.match(s))
 
 
 def validate_transaction_hex(tx_hex: str) -> None:

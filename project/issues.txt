@@ -907,6 +907,287 @@ EXPLAINED, no code fix needed
 
 ---
 
+## Code Review Findings (2026-08-20)
+
+The following issues (23-35) were found via a full-codebase senior-engineer
+code review rather than live testing - see `project/code_review_2026-08-20.md`
+for the complete write-up with file:line citations and code snippets for each.
+The two HIGH-severity items were independently verified by reading the source
+directly and, for Issue 23, running a live interpreter check of the exception
+hierarchy in question. All are logged here as open issues to be worked
+through one at a time, same as the testing-derived issues above.
+
+**Issue 23: RPC retry logic never actually retries** ✅ RESOLVED
+- `core/rpc_client.py:74`'s `rpc_request()` catches builtin `ConnectionError`/
+  `TimeoutError` to drive its retry-with-backoff loop, but `requests.post()`
+  (line 68) raises `requests.exceptions.ConnectionError`/`Timeout`, which do
+  **not** inherit from those builtins - confirmed live:
+  `issubclass(requests.exceptions.ConnectionError, ConnectionError) == False`.
+- Every real network failure to Bitcoin Core falls into the generic
+  `except Exception: raise` at lines 82-85 and is re-raised on the first
+  attempt - the docstring's "automatic connection retry logic" (line 45)
+  never fires for the failure mode it was written for.
+- Proposed fix: catch `(requests.exceptions.ConnectionError,
+  requests.exceptions.Timeout)` instead of the builtins.
+- **Resolved 2026-08-20**: `rpc_request()` now catches
+  `(requests.exceptions.ConnectionError, requests.exceptions.Timeout)`.
+  The three existing retry tests were themselves asserting against the
+  builtin exception type (exactly what let this ship unnoticed) - fixed
+  to use `requests.exceptions.ConnectionError`, and `time.sleep` is now
+  mocked in all four retry-path tests since the fix makes them genuinely
+  sleep between attempts. Branch `code-review-cleanup`, full suite green
+  (736 tests).
+
+**Issue 24: Transaction sanity-check module is never wired into the
+broadcast path** ✅ RESOLVED
+- `core/transaction_parser.py`'s `decode_raw_transaction_hex()` and
+  `basic_sanity_check()` are referenced only from `tests/` (confirmed via
+  repo-wide grep). The path from reassembled hex to broadcast
+  (`core/reassembler.py` -> `server/receiver.py:276` ->
+  `rpc_client.broadcast_transaction`) never calls them, despite the module's
+  own docstring describing it as built for exactly this purpose (Story 3.1).
+- Effect: a malformed/garbage transaction is only rejected after the full
+  multi-chunk LoRa round-trip completes, via Bitcoin Core's raw RPC error
+  text, instead of a fast local check with a clean message.
+- Proposed fix: call `decode_raw_transaction_hex` + `basic_sanity_check` on
+  the reassembled hex in `server/receiver.py` before `broadcast_transaction`,
+  NACKing locally on failure.
+- **Resolved 2026-08-20**: `TransactionReceiver._broadcast()` now runs
+  both checks first and NACKs locally (without touching the RPC client at
+  all, and without firing `on_broadcast_started`) on decode failure
+  ("Invalid transaction structure") or an empty inputs/outputs list ("No
+  inputs"/"No outputs"). The existing test suite used `"deadbeef"` as a
+  stand-in reassembled payload throughout `test_server_receiver.py` -
+  too short to be a well-formed transaction, so it would now be rejected
+  by the new check - replaced with a minimal but structurally valid
+  transaction hex (1 input, 1 output) across ~40 call sites so the
+  existing broadcast-success/failure paths still exercise what they
+  intended to. Added 4 new tests for the rejection paths, including one
+  confirming a rejected transaction still populates the completed-session
+  cache (Issue 17) so a retransmit gets the same cached NACK instead of
+  restarting reassembly. Branch `code-review-cleanup`, full suite green
+  (736 tests).
+
+**Issue 25: Client-side hex validation accepts strings that aren't
+actually valid hex** ✅ RESOLVED
+- `core/protocol.py:38-49`'s `is_valid_hex()` validates via `int(s, 16)`,
+  which accepts underscore digit separators, leading/trailing whitespace,
+  and a leading `0x`/`+`/`-` - none of which `bytes.fromhex()` or Bitcoin
+  Core's own hex decoder accept. Since `validate_transaction_hex()` (lines
+  52-63) is the sole client-side gate before chunking and sending across the
+  mesh, a string like `"0xdeadbeef..."` passes validation and triggers a
+  full multi-chunk LoRa transfer that only fails at the very end.
+- Proposed fix: validate with a strict character-class check
+  (`re.fullmatch(r'[0-9a-fA-F]+', s)`) instead of `int(s, 16)`.
+- **Resolved 2026-08-20**: `is_valid_hex()` now matches against
+  `^[0-9a-fA-F]+$` instead of relying on `int(s, 16)`. Added tests for
+  the previously-permissive cases (`0x` prefix, leading/trailing
+  whitespace, underscore separators, leading `+`/`-`). Branch
+  `code-review-cleanup`, full suite green (741 tests).
+
+**Issue 26: No upper bound on reassembly session size or count** ✅ RESOLVED
+- `core/reassembler.py:129`'s `_parse_chunk()` only checks `total_chunks >
+  0` - no upper bound, and no cap on concurrent open sessions per sender. A
+  sender declaring `total_chunks=999999`, or opening many distinct
+  `tx_session_id`s, grows `active_sessions` unbounded until the 300s
+  timeout sweeps it. LoRa bandwidth limits practical severity, but it's a
+  real memory-growth vector against the server process with no cap today.
+- Proposed fix: add a sane max `total_chunks` (derived from a reasonable
+  max tx size / `DEFAULT_CHUNK_SIZE`) and/or a max concurrent-sessions-per-
+  sender cap, rejecting/NACKing chunks that exceed it.
+- **Resolved 2026-08-20**: added `MAX_TOTAL_CHUNKS` and
+  `MAX_CONCURRENT_SESSIONS_PER_SENDER` to `core/constants.py`.
+  `_parse_chunk()` rejects a `total_chunks` beyond the first limit with
+  `InvalidChunkFormatError`; `add_chunk()` rejects a new session beyond
+  the second with a new `TooManySessionsError` (falls into
+  `server/receiver.py`'s existing generic `ReassemblyError` NACK
+  handler, no receiver.py changes needed).
+- **Correction 2026-08-20**: the first pass set `MAX_TOTAL_CHUNKS = 5000`,
+  justified by "largest standard Bitcoin tx size / chunk size" - a much
+  weaker bound than what the transport itself allows. Recalculated from
+  real LoRa airtime instead: a chunk message at this project's own
+  real-hardware preset (LongFast, SF11/BW250 on EU_868 - see Issue 16)
+  takes ~2s of airtime. Even a sender that ignores the region's 10%
+  duty-cycle limit entirely and floods the channel back-to-back is still
+  bound by that per-packet airtime, giving `DEFAULT_REASSEMBLY_TIMEOUT`
+  (300s) / ~2s ~= 150 chunks as the physical ceiling for how many chunks
+  could ever arrive in one session's lifetime (a real duty-cycle-
+  compliant sender is far more constrained still, ~15 chunks in 300s).
+  Set deliberately below even that adversarial ceiling:
+  `MAX_TOTAL_CHUNKS = 50`, `MAX_CONCURRENT_SESSIONS_PER_SENDER = 5`.
+  Branch `code-review-cleanup`, full suite green (748 tests).
+
+**Issue 27: Shared abort event breaks per-session isolation in
+`TransactionSender`** ✅ RESOLVED
+- `client/sender.py`'s class docstring (line 199) claims "concurrent sends
+  via session isolation," but `self._abort_event` (line 231) is a single
+  `threading.Event` shared by the whole instance, unconditionally cleared
+  at the start of every `send_transaction()` call (line 300). Two sends
+  running concurrently on the same instance can silently un-abort each
+  other, or wrongly abort the wrong session.
+- Proposed fix: key `_abort_event` per-session (e.g. store it on
+  `SendSession`, or a `Dict[str, threading.Event]`) and check the
+  session's own event in `_send_all_chunks`.
+- **First pass, 2026-08-20**: moved the abort flag onto `SendSession`
+  (`request_abort()`/`is_aborted()`) so each session owned its own
+  `threading.Event`, and gave `TransactionSender.abort()` an optional
+  `session_id` parameter to target one session.
+- **Reconsidered 2026-08-20**: checked whether concurrent sends on one
+  `TransactionSender` instance are actually reachable by either real
+  caller. They aren't: `btcmesh_client_cli.py` is a one-shot script (one
+  send per process, then exit) and `btcmesh_client_gui.py`'s
+  `on_send_pressed()` disables every input control (including Send)
+  before a send starts and only re-enables them once it fully finishes -
+  there's no UI path to trigger a second send while one is in flight,
+  and it creates a fresh `TransactionSender` per send anyway. The
+  docstring's "concurrent sends via session isolation" claim was
+  describing a capability nothing exercises. Reverted the per-session
+  abort-state change and kept the original single shared
+  `threading.Event`/no-arg `abort()` design; corrected the class
+  docstring instead to state the actual contract (one send in flight
+  per instance - create a new `TransactionSender` per send if more are
+  ever needed concurrently, same as both current callers already do).
+  Replaced the per-session isolation tests with simpler ones covering
+  the single-shared-event behavior (abort stops an in-progress send; a
+  prior send's abort state doesn't leak into the next send on the same
+  instance). Branch `code-review-cleanup`, full suite green (751 tests).
+
+**Issue 28: RPC credentials unescaped in URL; diagnostic logging
+unreachable at the default log level** 🔍 OPEN
+- `core/rpc_client.py:31` builds `http://{user}:{password}@{host}:{port}`
+  with no URL-encoding - special characters in the password (`@`, `:`,
+  `/`, `#`) corrupt the URI. Separately, nearly every log call in this
+  file is `.debug()`, but `server_logger` is fixed at `INFO`
+  (`core/logger_setup.py:15`) with no env/config override, so this
+  diagnostic detail (including the Issue 23 retry attempts) is never
+  visible in normal operation - and if DEBUG is ever turned on for
+  troubleshooting, `str(e)` from `requests` exceptions can put the
+  credential-bearing URL directly into the log file.
+- Proposed fix: `urllib.parse.quote()` the user/password when building the
+  URI; promote key RPC error logs to `.warning()`/`.error()`.
+
+**Issue 29: Server GUI cannot start with cookie-based Bitcoin RPC auth**
+🔍 OPEN
+- The CLI path builds its RPC config via `core/config_loader.py`'s
+  `load_bitcoin_rpc_config()`, which supports `BITCOIN_RPC_COOKIE`-based
+  auth. `btcmesh_server_gui.py:706-739` instead builds its own dict
+  straight from four text fields and hard-requires `host`/`port`/`user`/
+  `password` all non-empty before allowing "Start Server" - an operator
+  using cookie auth (no static RPC password, the more secure setup) can
+  run the relay via CLI but cannot start it from the GUI at all.
+- Proposed fix: route the GUI's RPC config construction through
+  `load_bitcoin_rpc_config()`, and accept "cookie configured" as an
+  alternative to "user+password filled in" in the completeness check.
+
+**Issue 30: Client CLI has no validation on `--destination`** 🔍 OPEN
+- `btcmesh_client_cli.py:108-120` validates only `--tx`. The GUI's
+  `validate_send_inputs` (`btcmesh_client_gui.py:297-335`) separately
+  checks that the destination is non-empty, starts with `!`, and isn't the
+  sender's own node - but this logic lives only in the GUI, not in
+  `client/sender.py` (the shared layer both UIs delegate to). A CLI user
+  running with an empty or malformed `-d` gets no CLI-level or
+  shared-layer feedback at all.
+- Proposed fix: move destination validation into
+  `client/sender.py::send_transaction()` (or a shared
+  `validate_destination()` in `core/protocol.py`) so both UIs get it for
+  free.
+
+**Issue 31: Three independent parsers of the same `BTC_TX|...` wire
+format, with a confirmed behavioral divergence** 🔍 OPEN
+- `core/protocol.py::parse_chunk`, `core/reassembler.py::_parse_chunk`,
+  and `server/receiver.py::_on_message`'s ad-hoc pre-parse (built only to
+  construct the ACK reply string) all parse the identical format
+  independently. Confirmed divergence: `core/reassembler.py::_parse_chunk`
+  (lines 109-116) allows an empty payload with just a warning log, while
+  `core/protocol.py::parse_chunk` raises `ValueError` for the same input.
+  `reassembler.py`'s own comment already flags this as a known TODO.
+- Proposed fix: consolidate on `core/protocol.py::parse_chunk` as the
+  single source of truth; have `reassembler.py` and `receiver.py` call it
+  instead of re-implementing.
+
+**Issue 32: Node-ID formatting bug in client GUI's `_init_meshtastic`**
+🔍 OPEN
+- `transport/meshtastic_serial.py:397` and `core/meshtastic_utils.py:107`
+  both correctly zero-pad (`f"!{node_num:08x}"`).
+  `btcmesh_client_gui.py:556` does it inline without zero-padding
+  (`f"!{iface.myInfo.my_node_num:x}"`), producing e.g. `!abcd12` instead
+  of `!00abcd12` for a small node number - inconsistent with every other
+  call site. The correctly-formatted value is already available two lines
+  earlier via `transport.local_node_id` (lines 547-548) and just isn't
+  used. Untested today because the one existing test happens to use an
+  8-hex-digit node number.
+- Proposed fix: replace the inline f-string with the already-computed
+  `transport.local_node_id`.
+
+**Issue 33: Non-atomic JSON writes in transaction history can silently
+reset history to empty** 🔍 OPEN
+- `core/transaction_history.py`'s `_save_data()` does a plain
+  `open(...,'w')` + `json.dump()`; `_load_data()`'s
+  `except (json.JSONDecodeError, FileNotFoundError)` handler returns an
+  empty history on any read failure. A crash or concurrent writer (GUI +
+  CLI pointed at the same history file) mid-write corrupts the JSON file,
+  and the next read doesn't surface this - it silently resets history to
+  empty instead.
+- Proposed fix: write to a temp file in the same directory and
+  `os.replace()` into place for atomicity.
+
+**Issue 34: Server orchestration/wiring logic duplicated near-verbatim
+between CLI and GUI** 🔍 OPEN
+- `btcmesh_server_cli.py:27-32`/`49-99`/`152-171` and
+  `btcmesh_server_gui.py:96-101`/`811-890`/`915-936` define identical
+  constants (with an identical copy-pasted comment) and wire up the same
+  set of receiver callbacks and polling loop - only the output sink
+  differs (logger vs. GUI queue). Both files' docstrings claim "all
+  business logic lives in server/receiver.py," but this wiring exists
+  only in the two UI entrypoints, copy-pasted. Separately,
+  `btcmesh_server_gui.py:585-622`'s Tor-reachability pre-check (`socket`
+  connect to `127.0.0.1:9050`) exists nowhere else - real server startup
+  in both CLI and GUI skips it, so a misconfigured Tor host only surfaces
+  as a raw low-level exception at real startup.
+- Proposed fix: extract the callback-wiring + polling loop into a shared
+  `server/` helper that both entrypoints call with a sink-callback
+  parameter; move the Tor pre-check into `core/rpc_client.py` or a
+  `server/` helper so real startup benefits from it too.
+
+**Issue 35: Misc code-quality findings from code review (grouped)**
+🔍 OPEN
+- `core/rpc_client.py:13-14` - `BitcoinRPCException.__str__` does
+  `'%d: %s' % (self.code, self.message)`; if `error_info` lacks a `'code'`
+  key, `self.code` falls back to the string `'Unknown code'` (line 9), and
+  `%d` on a string raises `TypeError` - crashes while formatting the error
+  itself. Fix: use `'%s: %s'`.
+- `server/receiver.py:26` - `_MAX_NACK_LEN = 200` duplicates
+  `core/constants.py:38`'s `MAX_NACK_LENGTH = 200` as a separate literal
+  instead of importing it.
+- `core/config_loader.py:124-125, 138-139` - `load_bitcoin_rpc_config()`
+  reads the same `user`/`password` env vars twice - dead duplication, not
+  a bug, but confusing.
+- `core/gui_common.py` imports Kivy directly, conflicting with CLAUDE.md's
+  description of `core/` as "pure business logic, no I/O" - structural
+  placement smell (belongs under a `gui/` package).
+- `requirements.txt` pins no version numbers for any dependency; two
+  listed dependencies (`python-bitcoinrpc`, `stem`) are never imported
+  anywhere in the codebase (confirmed via grep) - unused supply-chain
+  surface.
+- `btcmesh_client_gui.py:13-15` imports `argparse`, `io`, `sys` - unused
+  anywhere in the file, leftover from an earlier design.
+- `btcmesh_client_gui.py`'s `process_result()` - the `'print'`,
+  `'cli_finished'`, `'tx_success'`, and `'aborted'` branches are
+  unreachable dead code, explicitly marked "kept for backwards
+  compatibility, will be removed in Step 7" - worth finishing that
+  cleanup.
+- `core/gui_common.py:35` - `COLOR_SECUNDARY` is a misspelling of
+  "SECONDARY," baked into the shared module's public API and used ~15+
+  times across both GUIs.
+- `btcmesh_client_cli.py:33-35` - `-tx`/`--tx` is a two-character short
+  option, unconventional next to `-d`/`--destination`.
+- Three stray `test_*.py` scripts sit at repo root outside `tests/`
+  (`test_bitcoin_connection.py`, `test_active_sessions_visual.py`,
+  `test_popup_visual.py`); the first still references a
+  `btcmesh_server.py` file that no longer exists under that name.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -930,3 +1211,16 @@ EXPLAINED, no code fix needed
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
 | 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, all real-hw verified)** |
 | -     | Server device wedges frequently overnight, root-caused to macOS system sleep disrupting USB (not a code bug) | Informational (environmental) | **EXPLAINED (no code fix)** |
+| 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | **FIXED** |
+| 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | **FIXED** |
+| 25    | Client-side hex validation accepts non-hex-valid strings | Medium (wasted round-trip) | **FIXED** |
+| 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | **FIXED** |
+| 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | **FIXED** |
+| 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | Open |
+| 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | Open |
+| 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | Open |
+| 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | Open |
+| 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | Open |
+| 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |
+| 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |
+| 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |

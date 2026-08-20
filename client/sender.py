@@ -196,8 +196,14 @@ class TransactionSender:
     """Orchestrates stop-and-wait ARQ sending of chunked transactions.
 
     Uses BaseTransport to send chunks and receive ACKs. Implements retry logic,
-    timeout handling, and message routing. Supports concurrent sends via
-    session isolation.
+    timeout handling, and message routing.
+
+    Designed for one send in flight per instance - abort() and the internal
+    abort state are instance-wide, not per-session. Both CLI and GUI already
+    create a fresh TransactionSender per send and never call send_transaction()
+    concurrently on one instance; if a future caller needs multiple sends in
+    flight at once, use a separate TransactionSender per send rather than
+    reusing one instance.
 
     Pure code: no print, no logging, no file I/O (except via transport).
     """
@@ -237,10 +243,11 @@ class TransactionSender:
         self.transport.set_message_handler(handler)
 
     def abort(self) -> None:
-        """Request abort of any in-progress send operation.
+        """Request abort of the in-progress send operation.
 
         Safe to call at any time. The abort will be checked between
         chunk sends and the operation will return early with error.
+        Instance-wide, not per-session - see the class docstring.
         """
         self._abort_event.set()
 
