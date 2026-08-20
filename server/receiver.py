@@ -12,14 +12,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.constants import CHUNK_DELIMITER
 from core.reassembler import (
-    CHUNK_PARTS_DELIMITER,
     CHUNK_PREFIX,
     InvalidChunkFormatError,
     MismatchedTotalChunksError,
     ReassemblyError,
     TransactionReassembler,
 )
+from core.protocol import parse_chunk
 from core.rpc_client import BitcoinRPCClient
 from core.transaction_parser import basic_sanity_check, decode_raw_transaction_hex
 from transport.base import BaseTransport
@@ -183,17 +184,28 @@ class TransactionReceiver:
         # below) is the actual authority on format validity - if this parse
         # fails, leave the defaults and let add_chunk() raise the properly
         # categorized error instead of masking it with a parse error here.
+        # Uses core.protocol.parse_chunk() (Issue 31) - the same single
+        # source of truth for this wire format that the reassembler uses,
+        # instead of a third independent hand-rolled parser.
         session_id = "UNKNOWN"
         chunk_num, total_chunks = 1, 1
         try:
-            parts = message_text[len(CHUNK_PREFIX):].split(CHUNK_PARTS_DELIMITER)
-            session_id = parts[0] if parts and parts[0] else "UNKNOWN"
-            chunk_info = parts[1] if len(parts) > 1 else ""
-            if "/" in chunk_info:
-                chunk_num_s, total_s = chunk_info.split("/")
-                chunk_num, total_chunks = int(chunk_num_s), int(total_s)
-        except Exception:
-            pass
+            parsed = parse_chunk(message_text)
+            session_id = parsed.session_id
+            chunk_num, total_chunks = parsed.chunk_number, parsed.total_chunks
+        except ValueError:
+            # parse_chunk() is all-or-nothing - if only the chunk/total
+            # numbering is malformed, the session_id field itself may
+            # still be recoverable, which makes the NACK below far more
+            # useful to the client than "UNKNOWN". This doesn't re-decide
+            # validity (add_chunk() alone does that) - just best-effort
+            # picks out one field for a better error message.
+            try:
+                parts = message_text.split(CHUNK_DELIMITER)
+                if len(parts) >= 2 and parts[1]:
+                    session_id = parts[1]
+            except Exception:
+                pass
 
         # Issue 17: if this sender+session already completed (we sent a
         # final ACK/NACK, but the client never got it and retransmitted the
