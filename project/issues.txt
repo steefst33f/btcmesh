@@ -1243,6 +1243,61 @@ between CLI and GUI** 🔍 OPEN
 
 ---
 
+**Issue 36: `test_btcmesh_server_gui.py`'s mocked Kivy `Button` is a
+single shared instance across every button and every test in the
+process** 🔍 OPEN
+
+- Found while verifying Issue 29's fix: running
+  `TestReassemblyTimeoutSettingsStory183`'s tests standalone (e.g.
+  `python -m unittest tests.test_btcmesh_server_gui.TestReassemblyTimeoutSettingsStory183`)
+  fails 4 tests with `AssertionError: <MagicMock name='mock.Button().disabled' ...> is not false`
+  - `gui.start_btn.disabled` is a raw `MagicMock`, not the real `False`
+  it should default to. The same tests pass cleanly under the project's
+  actual documented test command,
+  `python -m unittest discover -s tests -p 'test_*.py'` (confirmed: full
+  suite green, 756/756).
+- **Root cause**: the file's Kivy-mocking setup
+  (`tests/test_btcmesh_server_gui.py:191-209`) gives some widget types
+  their own dedicated mock class with a real `__init__` that captures
+  constructor kwargs into real attributes (`MockTextInput`,
+  `MockSpinner`) - but `Button`, `Popup`, and `ToggleButton` are instead
+  mapped straight to a bare `unittest.mock.MagicMock()`
+  (`sys.modules['kivy.uix.button'] = kivy_mock`, line 197). A bare
+  `MagicMock` used as a class stand-in returns the exact same memoized
+  `.return_value` object from *every* call, regardless of the
+  constructor arguments passed - confirmed directly:
+  ```python
+  b1 = Button(text='A', disabled=False)
+  b2 = Button(text='B', disabled=True)
+  b1 is b2  # True
+  b1.disabled = False
+  b2.disabled  # False - same object, so this "leaked" too
+  ```
+  So every `Button(...)` call anywhere in `_build_controls_section()`
+  (`start_btn`, `stop_btn`, `save_btn`, `history_btn`,
+  `test_connection_btn`, etc.) - across *every* `BTCMeshServerGUI()`
+  instance created in the whole test process - returns literally the
+  same object. Whichever test last assigned `.disabled` on any of these
+  "different" buttons leaves that value sitting there for every other
+  test's buttons too, until another test overwrites it again. Running
+  the full suite happens to leave it in a state that passes; running a
+  narrower slice doesn't hit whatever earlier test would have reset it.
+- **Why this matters**: these 4 tests aren't actually testing anything
+  false-positive today (the full suite passes, which is what CI/the
+  documented workflow runs), but the underlying shared-mock-instance
+  bug means any test in this file that asserts on a `Button`/`Popup`/
+  `ToggleButton` attribute is silently relying on execution order rather
+  than genuine per-test isolation - a latent source of flaky failures
+  whenever the file's test order changes (new tests added/removed/
+  reordered, or someone runs a subset while debugging).
+- Proposed fix: give `Button`, `Popup`, and `ToggleButton` the same
+  treatment as `TextInput`/`Spinner` - a small `MockButton`/`MockPopup`/
+  `MockToggleButton` class with a real `__init__(self, **kwargs)` that
+  stores `disabled`, `text`, etc. as real per-instance attributes, so
+  each constructed widget is a genuinely distinct object.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1279,3 +1334,4 @@ between CLI and GUI** 🔍 OPEN
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |
+| 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | Open |
