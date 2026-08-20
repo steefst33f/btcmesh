@@ -73,6 +73,9 @@ from transport.meshtastic_serial import MeshtasticSerialTransport
 from client.sender import TransactionSender, SendResult, create_preview
 from core.protocol import is_valid_hex
 
+# Import device watchdog (Story 28.4 - detection-only client-side wiring)
+from core.device_watchdog import build_device_watchdog
+
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
@@ -349,6 +352,10 @@ class BTCMeshGUI(BoxLayout):
         self.result_queue = queue.Queue()
         self._connection_monitor = None  # Track the connection state monitor
         self._active_sender = None  # Track the active TransactionSender instance
+        self.watchdog = None
+        self.power_control = None
+        self._watchdog_thread = None
+        self._watchdog_running = False
 
         self._build_ui()
 
@@ -605,8 +612,30 @@ class BTCMeshGUI(BoxLayout):
 
         threading.Thread(target=init_thread, daemon=True).start()
 
+    def _start_watchdog_thread(self):
+        """Drive DeviceWatchdog.tick() on a dedicated background thread -
+        deliberately not Clock.schedule_interval, since tick() can block
+        (up to check_alive()'s ~20s timeout, or a full multi-minute
+        recovery cycle if a relay is configured) and Clock callbacks run
+        on Kivy's main thread, which would freeze the whole window for
+        that long. Skips ticking while a send is active so it never races
+        the transport with an in-progress send (see project/plans/story_26_6.md)."""
+        self._watchdog_running = True
+
+        def watchdog_loop():
+            while self._watchdog_running:
+                if self.watchdog is not None and self._active_sender is None:
+                    self.watchdog.tick(time.time())
+                time.sleep(1)
+
+        self._watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True)
+        self._watchdog_thread.start()
+
     def _disconnect_device(self):
         """Disconnect current Meshtastic interface and reset connection status."""
+        self._watchdog_running = False
+        self.watchdog = None
+        self.power_control = None
         if self.transport:
             # Disconnect transport in background thread to avoid blocking main thread
             transport_to_close = self.transport
@@ -736,6 +765,50 @@ class BTCMeshGUI(BoxLayout):
         # Handle transport_ready specially (store transport, don't process as normal result)
         if result[0] == 'transport_ready':
             self.transport = result[1]
+            self.watchdog, self.power_control = build_device_watchdog(
+                self.transport,
+                on_recovery_attempt=lambda: self.result_queue.put(('watchdog_attempt',)),
+                on_recovered=lambda outcome: self.result_queue.put(('watchdog_recovered', outcome)),
+                on_recovery_failed=lambda outcome: self.result_queue.put(('watchdog_failed', outcome)),
+            )
+            self._start_watchdog_thread()
+            return
+
+        if result[0] == 'watchdog_attempt':
+            self.status_log.add_message(
+                "Device appears wedged - attempting automatic recovery...", COLOR_WARNING
+            )
+            return
+
+        if result[0] == 'watchdog_recovered':
+            outcome = result[1]
+            self.status_log.add_message(
+                f"Device recovered. Reconnected at {outcome.new_device_path}.", COLOR_SUCCESS
+            )
+            if self.transport:
+                # DeviceWatchdog reconnects the same transport object under
+                # us - self.iface is a separate raw-interface reference the
+                # GUI captured for node listing (Stories 11.2/11.3), which
+                # goes stale across a reconnect unless refreshed here.
+                self.iface = self.transport._iface
+                self._update_known_nodes()
+            return
+
+        if result[0] == 'watchdog_failed':
+            outcome = result[1]
+            if self.power_control is None:
+                # The common client case: no relay hardware configured, so
+                # the watchdog can only detect a wedge, never recover it -
+                # this isn't a failed recovery attempt, just an honest
+                # "you'll need to reconnect it yourself" report.
+                self.status_log.add_message(
+                    "Device appears unresponsive. Please reconnect it manually.",
+                    COLOR_WARNING,
+                )
+            else:
+                self.status_log.add_message(
+                    f"Automatic device recovery failed: {outcome.error}", COLOR_ERROR
+                )
             return
 
         action = process_result(result)
@@ -1003,6 +1076,8 @@ class BTCMeshApp(App):
 
     def on_stop(self):
         """Cleanup on app close."""
+        if hasattr(self.root, '_watchdog_running'):
+            self.root._watchdog_running = False
         if hasattr(self.root, 'iface') and self.root.iface:
             try:
                 self.root.iface.close()

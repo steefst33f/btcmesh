@@ -288,7 +288,22 @@ elif result[0] == 'watchdog_failed':
   `tests/test_btcmesh_server_cli.py::TestBuildReceiver`, and
   `tests/test_btcmesh_server_gui.py::TestServerDeviceWatchdogStory283`.
   Full suite: 724 tests passing.
-- Story 28.4 not yet implemented.
+- **Story 28.4 - Done.** Detection-only `DeviceWatchdog` wired into the
+  client GUI, reviving Story 26.6 in a smaller form (no relay/recovery
+  hardware assumed - detection only). Dedicated background thread
+  (not `Clock.schedule_interval`, which would freeze the GUI's main
+  thread during a blocking `tick()` call), gated on `self._active_sender`
+  so it never races an in-progress send; results routed through
+  `self.result_queue`; `self.iface` explicitly refreshed on recovery.
+  See `project/plans/story_28_4.md` for the full design. Unit-tested in
+  `tests/test_btcmesh_client_gui.py::TestDeviceWatchdogStory284`
+  (8 tests). Full suite: 732 tests passing.
+
+**All 4 stories are implemented, unit-tested (732 tests passing), and
+verified on real hardware.** See Issue 21 in `project/issues.txt` for
+the field-incident writeup this epic responds to, and each story's own
+plan doc (`story_28_2.md`/`story_28_3.md`/`story_28_4.md`) for its
+individual real-hardware verification writeup.
 
 ---
 

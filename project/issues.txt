@@ -382,7 +382,7 @@ transit, the client retries the last chunk - but the server has already
 deleted the (now-completed) session, so the retry starts a confusing new
 one** ✅ RESOLVED
 
-- Reported by the user while testing: "if all chunks do get properly
+- Found while testing: "if all chunks do get properly
   received, reassembled and broadcasted on server side, [and] the ACK or
   NACK after receiving all chunks is not received by the client, the client
   will retry sending the last chunk. While the server side already finished
@@ -463,7 +463,7 @@ nothing back to the client at all** ✅ RESOLVED
   `DEFAULT_ACK_TIMEOUT` (30s), gets nothing, retries the same chunk, up to
   `DEFAULT_MAX_RETRIES` (3) times - roughly 2 minutes total - before finally
   failing with a generic `"Chunk N: timeout after 3 retries"`. The actual
-  server-side error message is never seen by the client's operator at all,
+  server-side error message is never seen on the client side at all,
   only by whoever has access to the server's own logs/Activity Log - in this
   project's mesh-relay design, frequently a different person on a different
   device entirely.
@@ -559,7 +559,7 @@ not a genuine VBUS power cycle** ✅ RESOLVED (via Story 26.7)
   whatever hub happens to be upstream, or on its power-switching claims
   being accurate. This is being promoted from a conditional fallback to
   the epic's primary, recommended approach, since it's the only one that
-  provides a real guarantee regardless of what hub an operator has. See
+  provides a real guarantee regardless of what hub is upstream. See
   `project/plans/story_26_7.md`.
 - `transport/power_control.py`'s `UhubctlPowerControl`/`BasePowerControl`
   remain valid, tested, and available for anyone whose hub genuinely
@@ -632,7 +632,7 @@ even though the relay itself works correctly** ✅ FIXED
 - **Confirmed via a second, independent, controlled reproduction** (the
   first run's initial trigger was a spontaneous disappearance with an
   unclear cause, and the observation of "goes on and off" was made while
-  the operator was partly distracted - this run fixed both gaps): the
+  only partly watching - this run fixed both gaps): the
   server was restarted against a device confirmed healthy, then a
   *single* manual `SerialRelayPowerControl.power_cycle()` was fired
   directly (bypassing `DeviceWatchdog` entirely) to deterministically put
@@ -645,7 +645,7 @@ even though the relay itself works correctly** ✅ FIXED
   across both runs). Critically, a port scan taken *while the 4th cycle
   was still in progress* caught the device already back and present -
   moments before the next automatic retry cut its power again. The
-  operator confirmed watching the device reboot during the tracked
+  device was confirmed rebooting during the tracked
   cycle, then again just seconds later as an immediate follow-on reboot -
   consistent with the device being caught mid-boot by the next cut, not
   with the relay's own 15s off-timer. Stopping the server (halting the
@@ -705,10 +705,10 @@ even though the relay itself works correctly** ✅ FIXED
 
 **Issue 21: Client GUI froze completely and required a force-kill after
 `transport.send()` hung indefinitely on an unattended overnight-wedged
-device; Abort had no effect**
+device; Abort had no effect** ✅ FIXED, all 4 fixes real-hw verified
 
-- Reported by the operator after running the client GUI and server GUI
-  unattended overnight. In the morning, sending a transaction logged
+- The client GUI and server GUI were left running unattended overnight.
+  In the morning, sending a transaction logged
   "Sending chunk 1/N..." and then showed nothing further for
   approximately 5 minutes - no retry messages, meaning it never reached
   the (properly 30s-bounded) ACK-wait step at all. Clicking Abort logged
@@ -737,8 +737,8 @@ device; Abort had no effect**
   device's liveness during the idle overnight stretch; a wedge could
   happen at any point and sit there completely undetected until the
   first real send tried to use the stale connection. Checking whether
-  the *server* needed to recover overnight (asked by the operator)
-  turned up a related, separate gap: `btcmesh_server_gui.py` (which is
+  the *server* needed to recover overnight turned up a related,
+  separate gap: `btcmesh_server_gui.py` (which is
   what was actually run, not the CLI) has **no `DeviceWatchdog` wiring
   at all** either - Story 26.5 only covered `btcmesh_server_cli.py`; the
   GUI wiring was explicitly scoped out as a follow-up that was never
@@ -751,8 +751,8 @@ device; Abort had no effect**
      block the caller forever - fixed once at the shared transport
      layer, protecting both the client and the server.
   2. Add periodic "still alive" logging to both server entry points, so
-     an operator checking logs later has a positive signal the process
-     was actually running, not just silence.
+     checking the logs later gives a positive signal the process was
+     actually running, not just silence.
   3. Finish wiring `DeviceWatchdog` into `btcmesh_server_gui.py` (Story
      26.5's originally scoped-out follow-up).
   4. Revisit client-side watchdog wiring (previously decided against in
@@ -760,7 +760,7 @@ device; Abort had no effect**
      `build_device_watchdog()` already degrades gracefully to
      detect-only when no relay is configured, so this is a much smaller
      addition than originally scoped, and would have caught this exact
-     overnight wedge before the user ever tried to send.
+     overnight wedge before the first send attempt.
 - **Fix 1 implemented and verified on real hardware**: `MeshtasticSerialTransport.send()`
   now runs `sendText()` in a worker thread with a hard
   `join(timeout=_SEND_TIMEOUT_SECONDS)` (default 10s); a timeout raises
@@ -825,18 +825,85 @@ device; Abort had no effect**
      detection correctly only happens on the next heartbeat, not
      instantly - nothing was actually wrong, the timing just needed
      explaining).
-- **Fix 4 implemented, not yet merged** (Story 28.4, branch `story-28-4`):
-  detection-only `DeviceWatchdog` wired into the client GUI, reviving
-  Story 26.6 in a smaller form - a dedicated background thread ticks
-  `check_alive()` during idle time and reports "device appears
-  unresponsive" in the activity log, with no relay/recovery hardware
-  assumed. See `project/plans/story_28_4.md`. Not yet verified on real
-  hardware.
-- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review).
-  Fixes 1, 2, and 3 are verified on real hardware; only Fix 4 remains
-  unit-tested-only and still needs real-hardware verification before
-  this issue can be considered fully closed. See
-  `project/plans/story_28_1.md` for the full epic tracking doc.
+- **Fix 4 implemented, not yet merged, verified on real hardware**
+  (Story 28.4, branch `story-28-4`): detection-only `DeviceWatchdog`
+  wired into the client GUI, reviving Story 26.6 in a smaller form - a
+  dedicated background thread ticks `check_alive()` during idle time and
+  reports "device appears unresponsive" in the activity log, with no
+  relay/recovery hardware assumed. **Verified on real hardware**: ran
+  `btcmesh_client_gui.py` for real against a device with no relay
+  attached, used the documented DTR/RTS wedge recipe against it while
+  idle, and confirmed the correct message sequence -
+  `"Device appears wedged - attempting automatic recovery..."` →
+  `"Device appears unresponsive. Please reconnect it manually..."` - the
+  no-relay wording, not implying a failed automatic recovery. Also
+  confirmed a clean, consistent ~60s steady-state retry cadence while
+  the device remained unrecovered, and - once the device was physically
+  power-cycled back to healthy - the success path too: the watchdog's
+  own next retry found and reconnected it on its own
+  (`"Device recovered. Reconnected at ..."`), with `self.iface` correctly
+  refreshed and `_update_known_nodes()` successfully querying live data
+  through it ("Found 150 known node(s)"). All three watchdog result
+  paths confirmed on real hardware. See `project/plans/story_28_4.md`
+  for the full writeup, including two real-world surprises along the way
+  (an already-wedged device before the test even started, and an
+  initially-confusing first-detection delay that turned out to be
+  imprecise timestamp tracking, not a bug).
+- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review) and
+  verified on real hardware. See `project/plans/story_28_1.md` for the
+  full epic tracking doc.
+
+---
+
+**Issue 22: Server device wedges far more often overnight than during
+active use - root-caused to macOS system sleep, not a code bug** ✅
+EXPLAINED, no code fix needed
+
+- The server GUI and client GUI (`btcmesh_server_gui.py` and
+  `btcmesh_client_gui.py`, the same two processes used for the Story
+  28.3/28.4 real-hardware tests above) were left running unattended
+  overnight. The server device wedged repeatedly, often after only 2-3
+  "alive" heartbeats, but always recovered on its own (even across port
+  changes). It also stayed alive for more heartbeats while the laptop was
+  actively in use, and wedged sooner while the laptop sat idle -
+  suggesting a link to the laptop's own sleep behavior rather than a flaw
+  in the recovery logic itself.
+- **Investigated with `pmset -g log`** (macOS's own sleep/wake history),
+  correlated against the two process start times (server GUI 02:24,
+  client GUI 02:38): the Mac entered genuine 'Idle Sleep' at 03:19 -
+  about 45-55 minutes after both processes started, presumably once
+  active use stopped - then cycled through Sleep -> DarkWake -> Sleep
+  roughly every 10-20 minutes continuously until the laptop was used
+  again at 11:59 (`"Wake from Deep Idle ... UserActivity"` - the exact
+  moment activity resumed). That's dozens of real system-sleep cycles
+  overnight.
+- **Why this explains the whole pattern**: macOS suspends/resets USB bus
+  power around system sleep/wake, which would genuinely disrupt a
+  USB-attached Meshtastic device on every cycle - not a wedge caused by
+  the application, the transport layer, or the watchdog. This lines up
+  exactly with what was observed: frequent wedges only once real sleep
+  cycles start (i.e. once the laptop goes idle), no such disruption while
+  the laptop is actively in use (no full sleep happening), and successful
+  recovery every time - including across port changes - is precisely
+  what Story 28.3's `DeviceWatchdog` wiring is designed to do when the
+  device re-enumerates under a new OS path.
+- **Conclusion**: this is not a defect in Issue 21's fixes - if anything
+  it's a strong, unplanned overnight stress test of Story 28.3's recovery
+  path (dozens of real disrupt/recover cycles, all handled correctly with
+  no manual intervention). The high *frequency* is an artifact of running
+  an unattended relay server on a machine with default laptop power
+  settings, not a bug to fix in this codebase.
+- **Recommendation (operational, not code)**: a machine intended to host
+  the relay server unattended (overnight or otherwise) should have system
+  sleep disabled, or be run under `caffeinate -s` (prevents system sleep
+  while the process runs; display can still sleep independently). This
+  avoids the disrupt/recover churn entirely rather than just tolerating
+  it well. No project code change is implied by this - it's a deployment
+  note, not a story.
+- **Status**: Root-caused and explained; no story opened, since the
+  correct fix is a machine/deployment setting, not application code. The
+  watchdog behavior that made this survivable in the first place is
+  already covered by Story 28.3/28.4's real-hardware verification above.
 
 ---
 
@@ -861,4 +928,5 @@ device; Abort had no effect**
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
-| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **Implemented (4/4); 3/4 real-hw verified** |
+| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, all real-hw verified)** |
+| -     | Server device wedges frequently overnight, root-caused to macOS system sleep disrupting USB (not a code bug) | Informational (environmental) | **EXPLAINED (no code fix)** |
