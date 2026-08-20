@@ -71,7 +71,7 @@ class BitcoinRPCClient:
                 if result.get("error"):
                     raise self.BitcoinRPCException(result["error"])
                 return result["result"]
-            except (ConnectionError, TimeoutError) as e:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 server_logger.debug(f"Connection error detected: {e}")
                 if i < retries - 1:
                     server_logger.debug(f"Retrying connection in {delay} seconds...")
