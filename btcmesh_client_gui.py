@@ -71,7 +71,7 @@ from transport.meshtastic_serial import MeshtasticSerialTransport
 
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
-from core.protocol import is_valid_hex
+from core.protocol import is_valid_hex, validate_destination
 
 # Import device watchdog (Story 28.4 - detection-only client-side wiring)
 from core.device_watchdog import build_device_watchdog
@@ -310,11 +310,14 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
     Returns:
         An error message string if validation fails, or None if inputs are valid
     """
-    if not dest:
-        return "Enter destination node ID"
-
-    if not dest.startswith('!'):
-        return "Destination must start with '!'"
+    try:
+        validate_destination(dest)
+    except ValueError as e:
+        # Issue 30: the actual validation rule lives in core.protocol's
+        # shared validate_destination() (also used by the CLI and
+        # client/sender.py) - only the empty-destination message differs
+        # here, to keep this GUI's existing user-facing copy unchanged.
+        return "Enter destination node ID" if not dest else str(e)
 
     # Check for sending to own node
     if own_node_id and dest.lower() == own_node_id.lower():

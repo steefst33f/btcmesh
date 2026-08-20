@@ -67,6 +67,22 @@ def validate_transaction_hex(tx_hex: str) -> None:
         raise ValueError("Transaction hex contains invalid characters")
 
 
+def validate_destination(destination: str) -> None:
+    """Validate a Meshtastic destination node ID (Issue 30).
+
+    Only checks the structural format shared by every caller (CLI, GUI,
+    client/sender.py) - checks that need connection state (e.g. "not your
+    own node") stay in the caller that has that context.
+
+    Raises:
+        ValueError: If destination is empty or doesn't start with '!'.
+    """
+    if not destination:
+        raise ValueError("Destination cannot be empty")
+    if not destination.startswith("!"):
+        raise ValueError("Destination must start with '!'")
+
+
 # ---------------------------------------------------------------------------
 # Chunking
 # ---------------------------------------------------------------------------
