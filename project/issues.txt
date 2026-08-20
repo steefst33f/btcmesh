@@ -995,15 +995,27 @@ actually valid hex** ✅ RESOLVED
 - Proposed fix: add a sane max `total_chunks` (derived from a reasonable
   max tx size / `DEFAULT_CHUNK_SIZE`) and/or a max concurrent-sessions-per-
   sender cap, rejecting/NACKing chunks that exceed it.
-- **Resolved 2026-08-20**: added `MAX_TOTAL_CHUNKS` (5000 - comfortably
-  above Bitcoin Core's default 400,000-weight-unit standardness cap in
-  raw hex chars) and `MAX_CONCURRENT_SESSIONS_PER_SENDER` (10) to
-  `core/constants.py`. `_parse_chunk()` rejects a `total_chunks` beyond
-  the first limit with `InvalidChunkFormatError`; `add_chunk()` rejects
-  a new session beyond the second with a new `TooManySessionsError`
-  (falls into `server/receiver.py`'s existing generic `ReassemblyError`
-  NACK handler, no receiver.py changes needed). Branch
-  `code-review-cleanup`, full suite green (748 tests).
+- **Resolved 2026-08-20**: added `MAX_TOTAL_CHUNKS` and
+  `MAX_CONCURRENT_SESSIONS_PER_SENDER` to `core/constants.py`.
+  `_parse_chunk()` rejects a `total_chunks` beyond the first limit with
+  `InvalidChunkFormatError`; `add_chunk()` rejects a new session beyond
+  the second with a new `TooManySessionsError` (falls into
+  `server/receiver.py`'s existing generic `ReassemblyError` NACK
+  handler, no receiver.py changes needed).
+- **Correction 2026-08-20**: the first pass set `MAX_TOTAL_CHUNKS = 5000`,
+  justified by "largest standard Bitcoin tx size / chunk size" - a much
+  weaker bound than what the transport itself allows. Recalculated from
+  real LoRa airtime instead: a chunk message at this project's own
+  real-hardware preset (LongFast, SF11/BW250 on EU_868 - see Issue 16)
+  takes ~2s of airtime. Even a sender that ignores the region's 10%
+  duty-cycle limit entirely and floods the channel back-to-back is still
+  bound by that per-packet airtime, giving `DEFAULT_REASSEMBLY_TIMEOUT`
+  (300s) / ~2s ~= 150 chunks as the physical ceiling for how many chunks
+  could ever arrive in one session's lifetime (a real duty-cycle-
+  compliant sender is far more constrained still, ~15 chunks in 300s).
+  Set deliberately below even that adversarial ceiling:
+  `MAX_TOTAL_CHUNKS = 50`, `MAX_CONCURRENT_SESSIONS_PER_SENDER = 5`.
+  Branch `code-review-cleanup`, full suite green (748 tests).
 
 **Issue 27: Shared abort event breaks per-session isolation in
 `TransactionSender`** 🔍 OPEN
