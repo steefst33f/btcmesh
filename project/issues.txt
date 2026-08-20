@@ -838,8 +838,14 @@ device; Abort had no effect** ✅ FIXED, all 4 fixes real-hw verified
   `"Device appears unresponsive. Please reconnect it manually..."` - the
   no-relay wording, not implying a failed automatic recovery. Also
   confirmed a clean, consistent ~60s steady-state retry cadence while
-  the device remained unrecovered. See `project/plans/story_28_4.md` for
-  the full writeup, including two real-world surprises along the way
+  the device remained unrecovered, and - once the device was physically
+  power-cycled back to healthy - the success path too: the watchdog's
+  own next retry found and reconnected it on its own
+  (`"Device recovered. Reconnected at ..."`), with `self.iface` correctly
+  refreshed and `_update_known_nodes()` successfully querying live data
+  through it ("Found 150 known node(s)"). All three watchdog result
+  paths confirmed on real hardware. See `project/plans/story_28_4.md`
+  for the full writeup, including two real-world surprises along the way
   (an already-wedged device before the test even started, and an
   initially-confusing first-detection delay that turned out to be
   imprecise timestamp tracking, not a bug).

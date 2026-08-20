@@ -277,3 +277,23 @@ correctly connecting to a candidate to check its node ID, then
 disconnecting again on a mismatch, exactly as designed (see
 `core/device_watchdog.py`'s `_try_candidate()`) - not a bug, just
 visible evidence of the retry loop actually working.
+
+**The success path (`on_recovered`) was verified too**, not just the
+no-relay-failure path: after physically power-cycling the device back
+to a healthy state (letting it re-enumerate normally as
+`/dev/cu.usbmodem983DAEE5AB3C1` "seeed-xiao-s3" again, without manually
+reconnecting via the GUI), the watchdog's own next retry cycle found
+and matched it on its own:
+
+```
+Device recovered. Reconnected at /dev/cu.usbmodem983DAEE5AB3C1.
+Found 150 known node(s)
+```
+
+This confirms the full loop end-to-end on real hardware: `self.iface`
+was correctly refreshed from the reconnected transport, and
+`_update_known_nodes()` successfully queried live data through it (not
+stale state) - "Found 150 known node(s)" is only possible against a
+genuinely working, freshly-reconnected interface. All three watchdog
+result paths (`watchdog_attempt`, `watchdog_failed` with no relay, and
+`watchdog_recovered`) are now confirmed working on real hardware.
