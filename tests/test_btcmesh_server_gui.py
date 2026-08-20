@@ -473,6 +473,38 @@ class TestServerStartStopStory152(unittest.TestCase):
                 gui.on_start_pressed(mock_instance)
         self.assertTrue(gui.start_btn.disabled)
 
+    def test_on_start_pressed_accepts_cookie_path_with_no_user_password(self):
+        """Issue 29: Start Server must succeed past validation with a
+        cookie path and empty user/password - previously required all
+        four RPC fields non-empty, blocking cookie-based auth entirely."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui.rpc_host_input = unittest.mock.MagicMock()
+                gui.rpc_host_input.text = 'localhost'
+                gui.rpc_port_input = unittest.mock.MagicMock()
+                gui.rpc_port_input.text = '8332'
+                gui.rpc_user_input = unittest.mock.MagicMock()
+                gui.rpc_user_input.text = ''
+                gui.rpc_password_input = unittest.mock.MagicMock()
+                gui.rpc_password_input.text = ''
+                gui.rpc_cookie_input = unittest.mock.MagicMock()
+                gui.rpc_cookie_input.text = '/path/to/.cookie'
+                gui.status_log.add_message = unittest.mock.MagicMock()
+                with unittest.mock.patch(
+                    'core.config_loader.build_bitcoin_rpc_config',
+                    return_value={'host': 'localhost', 'port': 8332,
+                                  'user': 'cookieuser', 'password': 'cookiepass'},
+                ):
+                    gui.on_start_pressed(unittest.mock.MagicMock())
+        # No "Cannot start" validation error - it got past validation and
+        # into the normal start sequence (start button disabled).
+        for call in gui.status_log.add_message.call_args_list:
+            self.assertNotIn('Cannot start', call[0][0])
+        self.assertTrue(gui.start_btn.disabled)
+
     def test_on_stop_pressed_disables_stop_button(self):
         """Given operator clicks Stop Server, Then stop button should be disabled."""
         import btcmesh_server_gui
@@ -858,6 +890,14 @@ class TestRPCSettingsStory181(unittest.TestCase):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
         self.assertTrue(hasattr(gui, 'rpc_password_input'))
 
+    def test_gui_has_rpc_cookie_input(self):
+        """Issue 29: server GUI should have rpc_cookie_input attribute."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+        self.assertTrue(hasattr(gui, 'rpc_cookie_input'))
+
     def test_password_input_is_masked_by_default(self):
         """Given server GUI, Then password input should be masked (password=True)."""
         import btcmesh_server_gui
@@ -933,8 +973,10 @@ class TestRPCSettingsStory181(unittest.TestCase):
         call_args = gui.status_log.add_message.call_args[0]
         self.assertIn('Host is required', call_args[0])
 
-    def test_test_connection_validates_empty_password(self):
-        """Given empty password, When Test Connection clicked, Then error is logged."""
+    def test_test_connection_validates_empty_password_no_cookie(self):
+        """Given empty password and no cookie path, When Test Connection
+        clicked, Then error is logged (Issue 29: cookie is a valid
+        alternative to user+password, so the message now mentions both)."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
@@ -948,13 +990,43 @@ class TestRPCSettingsStory181(unittest.TestCase):
             gui.rpc_user_input.text = 'user'
             gui.rpc_password_input = unittest.mock.MagicMock()
             gui.rpc_password_input.text = ''
+            gui.rpc_cookie_input = unittest.mock.MagicMock()
+            gui.rpc_cookie_input.text = ''
             # Mock the add_message method
             gui.status_log.add_message = unittest.mock.MagicMock()
             gui._on_test_connection(None)
         # Verify error message was logged
         gui.status_log.add_message.assert_called()
         call_args = gui.status_log.add_message.call_args[0]
-        self.assertIn('Password is required', call_args[0])
+        self.assertIn('Cookie file path', call_args[0])
+        self.assertIn('User and Password', call_args[0])
+
+    def test_test_connection_cookie_path_substitutes_for_user_password(self):
+        """Issue 29: a cookie path with empty user/password must pass
+        validation and attempt a connection, not be rejected."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input = unittest.mock.MagicMock()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input = unittest.mock.MagicMock()
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input = unittest.mock.MagicMock()
+            gui.rpc_user_input.text = ''
+            gui.rpc_password_input = unittest.mock.MagicMock()
+            gui.rpc_password_input.text = ''
+            gui.rpc_cookie_input = unittest.mock.MagicMock()
+            gui.rpc_cookie_input.text = '/path/to/.cookie'
+            gui.status_log.add_message = unittest.mock.MagicMock()
+            gui._on_test_connection(None)
+        # Validation passed - no "Cannot start"/"Test failed" message, and
+        # the Test Connection button was disabled to start the background
+        # connection attempt (the actual cookie-file read happens in a
+        # background thread and isn't asserted here).
+        for call in gui.status_log.add_message.call_args_list:
+            self.assertNotIn('Test failed', call[0][0])
+        self.assertTrue(gui.test_connection_btn.disabled)
 
     def test_handle_result_test_connection_success(self):
         """Given test_connection_result with success, Then success message logged."""
@@ -1989,6 +2061,37 @@ class TestSaveLoadSettingsStory184(unittest.TestCase):
 
                 # Verify success message was shown
                 gui.status_log.add_message.assert_called()
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_writes_cookie_path_when_set(self):
+        """Issue 29: BITCOIN_RPC_COOKIE should be persisted alongside the
+        other RPC settings when the Cookie field is filled in."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'localhost'
+            gui.rpc_port_input.text = '8332'
+            gui.rpc_user_input.text = ''
+            gui.rpc_password_input.text = ''
+            gui.rpc_cookie_input.text = '/home/user/.bitcoin/.cookie'
+            gui.timeout_input.text = '300'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                self.assertIn('BITCOIN_RPC_COOKIE=/home/user/.bitcoin/.cookie', content)
             finally:
                 os.unlink(temp_path)
 

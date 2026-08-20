@@ -1102,7 +1102,7 @@ invisible at the default log level** ✅ RESOLVED
   `issue-28`, full suite green (752 tests).
 
 **Issue 29: Server GUI cannot start with cookie-based Bitcoin RPC auth**
-🔍 OPEN
+✅ RESOLVED
 - The CLI path builds its RPC config via `core/config_loader.py`'s
   `load_bitcoin_rpc_config()`, which supports `BITCOIN_RPC_COOKIE`-based
   auth. `btcmesh_server_gui.py:706-739` instead builds its own dict
@@ -1113,6 +1113,26 @@ invisible at the default log level** ✅ RESOLVED
 - Proposed fix: route the GUI's RPC config construction through
   `load_bitcoin_rpc_config()`, and accept "cookie configured" as an
   alternative to "user+password filled in" in the completeness check.
+- **Resolved 2026-08-21**: extracted `load_bitcoin_rpc_config()`'s
+  cookie-file logic into a new `build_bitcoin_rpc_config(host, port,
+  user, password, cookie_path)` in `core/config_loader.py`, callable
+  with explicit values (not just env vars) - `load_bitcoin_rpc_config()`
+  now just reads env vars and delegates to it. Added a `Cookie:` field
+  to the server GUI's RPC settings panel (`btcmesh_server_gui.py`,
+  defaulting from `BITCOIN_RPC_COOKIE`); "Start Server" and "Test
+  Connection" now require host+port always, plus *either* a cookie path
+  *or* both user and password (not all four unconditionally), and both
+  build their `rpc_config` via the new shared helper instead of a raw
+  dict literal. "Save Settings" now also persists `BITCOIN_RPC_COOKIE`.
+  Added tests for the new field, the relaxed validation (cookie
+  substituting for user/password in both Start and Test Connection), and
+  cookie persistence on save. Branch `issue-29`, full suite green (756
+  tests via `python -m unittest discover`, the project's documented test
+  command - one single-file/isolated invocation of
+  `test_btcmesh_server_gui.py` surfaces 4 pre-existing, unrelated
+  test-isolation failures in `TestReassemblyTimeoutSettingsStory183`
+  that don't reproduce under `discover` and aren't touched by this fix;
+  confirmed present on the unmodified branch tip too).
 
 **Issue 30: Client CLI has no validation on `--destination`** 🔍 OPEN
 - `btcmesh_client_cli.py:108-120` validates only `--tx`. The GUI's
@@ -1252,7 +1272,7 @@ between CLI and GUI** 🔍 OPEN
 | 26    | No upper bound on reassembly session size/count | Medium (memory-growth vector) | **FIXED** |
 | 27    | Shared abort event breaks per-session isolation in `TransactionSender` | Medium (concurrency bug) | **FIXED** |
 | 28    | RPC credentials unescaped in URL; diagnostic logs unreachable at default log level | Medium (security/operability) | **FIXED** |
-| 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | Open |
+| 29    | Server GUI cannot start with cookie-based Bitcoin RPC auth | Medium (functional gap) | **FIXED** |
 | 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | Open |
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | Open |
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | Open |

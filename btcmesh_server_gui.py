@@ -373,8 +373,9 @@ class BTCMeshServerGUI(BoxLayout):
         default_port = os.getenv("BITCOIN_RPC_PORT", "8332")
         default_user = os.getenv("BITCOIN_RPC_USER", "")
         default_password = os.getenv("BITCOIN_RPC_PASSWORD", "")
+        default_cookie = os.getenv("BITCOIN_RPC_COOKIE", "")
 
-        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=225, spacing=5)
+        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=265, spacing=5)
 
         # Row 1: Host input with Show/Hide toggle
         host_row, self.rpc_host_input = create_input_row(
@@ -411,6 +412,17 @@ class BTCMeshServerGUI(BoxLayout):
         self.show_password_btn.bind(on_press=self._toggle_password_visibility)
         pass_row.add_widget(self.show_password_btn)
         settings_container.add_widget(pass_row)
+
+        # Row 4b: Cookie file path input (Issue 29) - an alternative to
+        # User/Password. If set, it overrides User/Password at connect time,
+        # matching load_bitcoin_rpc_config()'s BITCOIN_RPC_COOKIE behavior.
+        cookie_row, self.rpc_cookie_input = create_input_row(
+            'Cookie:', default_cookie,
+            hint_text='/path/to/.cookie (optional, overrides User/Password)',
+        )
+        # Spacer to align with host row
+        cookie_row.add_widget(Widget(size_hint_x=None, width=60))
+        settings_container.add_widget(cookie_row)
 
         # add spacer
         settings_container.add_widget(Widget(size_hint_y=None, height=5))
@@ -545,6 +557,7 @@ class BTCMeshServerGUI(BoxLayout):
         self.rpc_port_input.disabled = not enabled
         self.rpc_user_input.disabled = not enabled
         self.rpc_password_input.disabled = not enabled
+        self.rpc_cookie_input.disabled = not enabled
         self.test_connection_btn.disabled = not enabled
 
     def _toggle_host_visibility(self, instance):
@@ -563,6 +576,7 @@ class BTCMeshServerGUI(BoxLayout):
         port = self.rpc_port_input.text.strip()
         user = self.rpc_user_input.text.strip()
         password = self.rpc_password_input.text
+        cookie_path = self.rpc_cookie_input.text.strip()
 
         # Basic validation
         if not host:
@@ -571,11 +585,11 @@ class BTCMeshServerGUI(BoxLayout):
         if not port:
             self.status_log.add_message("Test failed: Port is required", COLOR_ERROR)
             return
-        if not user:
-            self.status_log.add_message("Test failed: User is required", COLOR_ERROR)
-            return
-        if not password:
-            self.status_log.add_message("Test failed: Password is required", COLOR_ERROR)
+        if not cookie_path and (not user or not password):
+            self.status_log.add_message(
+                "Test failed: Provide a Cookie file path, or both User and Password",
+                COLOR_ERROR,
+            )
             return
 
         self.status_log.add_message("Testing RPC connection...", COLOR_WARNING)
@@ -605,12 +619,10 @@ class BTCMeshServerGUI(BoxLayout):
 
                 # Test RPC connection
                 from core.rpc_client import BitcoinRPCClient
-                config = {
-                    'host': host,
-                    'port': int(port),
-                    'user': user,
-                    'password': password,
-                }
+                from core.config_loader import build_bitcoin_rpc_config
+                config = build_bitcoin_rpc_config(
+                    host, port, user or None, password or None, cookie_path or None
+                )
                 client = BitcoinRPCClient(config)
                 chain = client.chain
                 tor_suffix = ' via Tor' if is_tor else ''
@@ -633,6 +645,7 @@ class BTCMeshServerGUI(BoxLayout):
             'BITCOIN_RPC_PORT': self.rpc_port_input.text.strip(),
             'BITCOIN_RPC_USER': self.rpc_user_input.text.strip(),
             'BITCOIN_RPC_PASSWORD': self.rpc_password_input.text,  # Don't strip password
+            'BITCOIN_RPC_COOKIE': self.rpc_cookie_input.text.strip() or None,
             'REASSEMBLY_TIMEOUT_SECONDS': self.timeout_input.text.strip(),
         }
 
@@ -702,10 +715,17 @@ class BTCMeshServerGUI(BoxLayout):
         port = self.rpc_port_input.text.strip()
         user = self.rpc_user_input.text.strip()
         password = self.rpc_password_input.text
+        cookie_path = self.rpc_cookie_input.text.strip()
 
-        if not host or not port or not user or not password:
+        if not host or not port:
             self.status_log.add_message(
-                "Cannot start: Please fill in all RPC settings fields", COLOR_ERROR)
+                "Cannot start: Host and Port are required", COLOR_ERROR)
+            return
+        if not cookie_path and (not user or not password):
+            self.status_log.add_message(
+                "Cannot start: Provide a Cookie file path, or both User and Password",
+                COLOR_ERROR,
+            )
             return
 
         # Validate timeout (must be positive integer)
@@ -723,20 +743,25 @@ class BTCMeshServerGUI(BoxLayout):
                 "Cannot start: Reassembly timeout must be a positive integer", COLOR_ERROR)
             return
 
+        # Build RPC config from GUI inputs (Issue 29: routes through the
+        # same cookie-file handling as the CLI's load_bitcoin_rpc_config(),
+        # instead of hard-requiring user/password). Done before disabling
+        # any controls, so a bad cookie path doesn't leave the UI stuck.
+        from core.config_loader import build_bitcoin_rpc_config
+        try:
+            rpc_config = build_bitcoin_rpc_config(
+                host, port, user or None, password or None, cookie_path or None
+            )
+        except ValueError as e:
+            self.status_log.add_message(f"Cannot start: {e}", COLOR_ERROR)
+            return
+
         self.status_log.add_message("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
         self.save_btn.disabled = True
         self._set_rpc_settings_enabled(False)
         self._set_meshtastic_settings_enabled(False)
         self._set_timeout_settings_enabled(False)
-
-        # Build RPC config from GUI inputs
-        rpc_config = {
-            'host': host,
-            'port': int(port),
-            'user': user,
-            'password': password,
-        }
 
         # Get selected device (None for auto-detect)
         selected_device = self.device_spinner.text
