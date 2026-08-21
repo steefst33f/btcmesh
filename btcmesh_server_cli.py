@@ -23,9 +23,9 @@ from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
 
 
-def _log(message: str, level: int, primary: bool = False) -> None:
+def _log(message: str, level: int, highlight: bool = False) -> None:
     """Sink for server/run_loop.py's shared callbacks (Issue 34) - plain
-    logging, `primary` has no meaning for a text logger (it only affects
+    logging, `highlight` has no meaning for a text logger (it only affects
     the GUI's color-coding) so it's accepted and ignored."""
     server_logger.log(level, message)
 

@@ -62,20 +62,20 @@ class TestBuildReceiver(unittest.TestCase):
         kwargs["on_chunk_received"](
             ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=1, total_chunks=3)
         )
-        log.assert_any_call("[sess1] Received chunk 1/3 from !abc", logging.INFO, primary=True)
-        log.assert_any_call("[sess1] Requesting chunk 2/3...", logging.INFO, primary=True)
+        log.assert_any_call("[sess1] Received chunk 1/3 from !abc", logging.INFO, highlight=True)
+        log.assert_any_call("[sess1] Requesting chunk 2/3...", logging.INFO, highlight=True)
 
     def test_on_chunk_received_logs_reassembly_success_on_last_chunk(self):
         kwargs, _, log = self._extract_callbacks()
         kwargs["on_chunk_received"](
             ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=3, total_chunks=3)
         )
-        log.assert_any_call("[sess1] All 3 chunks received. Reassembly successful.", logging.INFO, primary=True)
+        log.assert_any_call("[sess1] All 3 chunks received. Reassembly successful.", logging.INFO, highlight=True)
 
     def test_on_broadcast_started_logs_message(self):
         kwargs, _, log = self._extract_callbacks()
         kwargs["on_broadcast_started"]("sess1", "!abc")
-        log.assert_any_call("[sess1] Broadcasting transaction to Bitcoin network...", logging.INFO, primary=True)
+        log.assert_any_call("[sess1] Broadcasting transaction to Bitcoin network...", logging.INFO, highlight=True)
 
     def test_on_broadcast_success_logs_and_records_history(self):
         kwargs, history, log = self._extract_callbacks()

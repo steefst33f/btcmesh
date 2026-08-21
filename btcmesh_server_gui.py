@@ -813,13 +813,12 @@ class BTCMeshServerGUI(BoxLayout):
 
             history = TransactionHistory()
 
-            def gui_log(message, level, primary=False):
+            def gui_log(message, level, highlight=False):
                 # Shared sink for server/run_loop.py's callback wiring
-                # (Issue 34) - narrative protocol-status lines (chunk
-                # progress, broadcast-started) pass primary=True so they
-                # read distinctly in the Activity Log from raw wire
-                # traffic and other messages below them.
-                if primary:
+                # (Issue 34) - chunk-progress/broadcast-started lines pass
+                # highlight=True so they read distinctly in the Activity
+                # Log from raw wire traffic and other messages below them.
+                if highlight:
                     self.result_queue.put(('log', message, level, COLOR_PRIMARY))
                 else:
                     self.result_queue.put(('log', message, level))

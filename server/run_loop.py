@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Protocol
 
 from core.reassembler import TransactionReassembler
 from core.transaction_history import TransactionHistory
@@ -22,11 +22,17 @@ LIVENESS_LOG_INTERVAL_SECONDS = 300
 # other activity happened to log something. A periodic positive signal
 # closes that gap regardless of whether anything else is happening.
 
-# log(message, level, primary=False) - primary marks the narrative
-# protocol-status lines (chunk progress, broadcast-started) that the GUI
-# highlights in a distinct color from raw wire traffic; a plain logger
-# sink ignores the flag.
-LogFn = Callable[..., None]
+
+class LogFn(Protocol):
+    """Sink signature for build_receiver()/run_polling_loop(). A plain
+    Callable[..., None] can't express `highlight`'s default, so this is
+    a Protocol instead - the real, checkable contract, not just a comment.
+
+    highlight marks a message for visual emphasis (the GUI colors these
+    distinctly from plain wire traffic/status lines); a plain logger
+    sink ignores it.
+    """
+    def __call__(self, message: str, level: int, highlight: bool = False) -> None: ...
 
 
 def build_receiver(
@@ -47,16 +53,16 @@ def build_receiver(
 
     def on_chunk_received(evt: ChunkReceived):
         log(f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
-            logging.INFO, primary=True)
+            logging.INFO, highlight=True)
         if evt.chunk_num < evt.total_chunks:
             log(f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...",
-                logging.INFO, primary=True)
+                logging.INFO, highlight=True)
         else:
             log(f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.",
-                logging.INFO, primary=True)
+                logging.INFO, highlight=True)
 
     def on_broadcast_started(session_id, sender_id):
-        log(f"[{session_id}] Broadcasting transaction to Bitcoin network...", logging.INFO, primary=True)
+        log(f"[{session_id}] Broadcasting transaction to Bitcoin network...", logging.INFO, highlight=True)
 
     def on_broadcast(result: BroadcastResult):
         if result.success:
