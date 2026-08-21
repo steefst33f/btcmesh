@@ -1223,7 +1223,7 @@ format, with a confirmed behavioral divergence** ✅ RESOLVED
   suite green (767 tests).
 
 **Issue 33: Non-atomic JSON writes in transaction history can silently
-reset history to empty** 🔍 OPEN
+reset history to empty** ✅ RESOLVED
 - `core/transaction_history.py`'s `_save_data()` does a plain
   `open(...,'w')` + `json.dump()`; `_load_data()`'s
   `except (json.JSONDecodeError, FileNotFoundError)` handler returns an
@@ -1233,6 +1233,14 @@ reset history to empty** 🔍 OPEN
   empty instead.
 - Proposed fix: write to a temp file in the same directory and
   `os.replace()` into place for atomicity.
+- **Resolved 2026-08-21**: `_save_data()` now writes to
+  `<filepath>.tmp` and `os.replace()`s it into place - atomic on both
+  POSIX and Windows, so a crash or interrupted write can never leave a
+  truncated/corrupt file at the real path. Added a test that mocks
+  `json.dump` to raise mid-write and confirms the original file's bytes
+  are completely unchanged afterward - confirmed to fail against the
+  pre-fix code (the file was truncated to empty, exactly the bug
+  described). Branch `issue-33`, full suite green (769 tests).
 
 **Issue 34: Server orchestration/wiring logic duplicated near-verbatim
 between CLI and GUI** 🔍 OPEN
@@ -1379,7 +1387,7 @@ process** 🔍 OPEN
 | 30    | Client CLI has no validation on `--destination` | Medium (missing validation) | **FIXED** |
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | **FIXED** |
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | **FIXED** |
-| 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | Open |
+| 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | **FIXED** |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | Open |

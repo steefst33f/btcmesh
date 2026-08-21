@@ -76,13 +76,23 @@ class TransactionHistory:
             return {"version": 1, "transactions": []}
 
     def _save_data(self, data: Dict[str, Any]) -> None:
-        """Save history data to file.
+        """Save history data to file atomically (Issue 33).
+
+        Writes to a temp file in the same directory, then os.replace()s
+        it into place - os.replace() is atomic on both POSIX and
+        Windows, so a crash or concurrent reader mid-write can never see
+        a partially-written file. Previously a plain open(...,'w') +
+        json.dump() could leave a truncated/corrupt file on interruption,
+        which _load_data() would then silently treat as "no history"
+        instead of surfacing the loss.
 
         Args:
             data: Dict with 'version' and 'transactions' keys.
         """
-        with open(self._filepath, 'w', encoding='utf-8') as f:
+        tmp_path = self._filepath.with_name(self._filepath.name + '.tmp')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, self._filepath)
 
     def add(
         self,
