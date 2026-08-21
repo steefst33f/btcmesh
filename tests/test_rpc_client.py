@@ -73,6 +73,64 @@ class TestBitcoinRpcConnectionStory42(unittest.TestCase):
             self.assertEqual(parsed.port, 8332)
             self.assertEqual(parsed.username, "user%40name")
 
+    def test_onion_host_checks_tor_reachable_before_connecting(self):
+        """Issue 34: BitcoinRPCClient.connect() checks the Tor SOCKS proxy
+        is reachable before attempting the RPC call, for any caller - not
+        just the server GUI's "Test Connection" button, which used to be
+        the only place this check existed."""
+        with unittest.mock.patch("core.rpc_client.socket.socket") as mock_socket_cls, \
+                unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+            mock_sock = mock_socket_cls.return_value
+            mock_sock.connect_ex.return_value = 0  # Reachable
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"result": {"chain": "main"}, "error": None}
+            mock_post.return_value = mock_response
+
+            from core.rpc_client import BitcoinRPCClient
+            config = {
+                "host": "abcdefghijklmnop.onion",
+                "port": 8332,
+                "user": "testuser",
+                "password": "testpass",
+            }
+            rpc = BitcoinRPCClient(config)
+
+        self.assertIsNotNone(rpc)
+        mock_sock.connect_ex.assert_called_once_with(("127.0.0.1", 9050))
+        mock_sock.close.assert_called_once()
+
+    def test_onion_host_raises_when_tor_not_reachable(self):
+        with unittest.mock.patch("core.rpc_client.socket.socket") as mock_socket_cls, \
+                unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+            mock_sock = mock_socket_cls.return_value
+            mock_sock.connect_ex.return_value = 111  # Connection refused
+
+            from core.rpc_client import BitcoinRPCClient
+            config = {
+                "host": "abcdefghijklmnop.onion",
+                "port": 8332,
+                "user": "testuser",
+                "password": "testpass",
+            }
+            with self.assertRaises(ConnectionError) as cm:
+                BitcoinRPCClient(config)
+
+        self.assertIn("Tor service not reachable", str(cm.exception))
+        # Must fail fast on the socket check, never attempting the RPC call.
+        mock_post.assert_not_called()
+
+    def test_non_onion_host_does_not_check_tor(self):
+        with unittest.mock.patch("core.rpc_client.socket.socket") as mock_socket_cls, \
+                unittest.mock.patch("core.rpc_client.requests.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"result": {"chain": "main"}, "error": None}
+            mock_post.return_value = mock_response
+
+            from core.rpc_client import BitcoinRPCClient
+            BitcoinRPCClient(self.valid_config)
+
+        mock_socket_cls.assert_not_called()
+
     def test_non_int_port_invalid_config_raises(self):
         """Given invalid config, When connecting, Then error is raised."""
         from core.rpc_client import BitcoinRPCClient

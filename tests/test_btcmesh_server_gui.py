@@ -1374,7 +1374,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'):
+                     unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
                     # _stop_event is a MagicMock (threading is mocked); force
                     # is_set() to True so run_server()'s maintenance loop body
@@ -1406,7 +1406,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'):
+                     unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
                     gui._stop_event.is_set.return_value = True
                     gui.rpc_host_input.text = 'localhost'
@@ -1452,12 +1452,12 @@ class TestServerDeviceWatchdogStory283(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver') as mock_receiver_cls, \
+                     unittest.mock.patch('server.run_loop.TransactionReceiver') as mock_receiver_cls, \
                      unittest.mock.patch.object(
                          btcmesh_server_gui, 'build_device_watchdog',
                          side_effect=fake_build_device_watchdog,
                      ), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'time') as mock_time:
+                     unittest.mock.patch('server.run_loop.time') as mock_time:
                     mock_receiver_cls.return_value.get_active_sessions.return_value = []
                     mock_time.time.return_value = 100.0
                     mock_time.sleep = lambda *_: None
@@ -1558,8 +1558,8 @@ class TestServerLivenessLogStory282(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver') as mock_receiver_cls, \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'time') as mock_time:
+                     unittest.mock.patch('server.run_loop.TransactionReceiver') as mock_receiver_cls, \
+                     unittest.mock.patch('server.run_loop.time') as mock_time:
                     mock_receiver_cls.return_value.get_active_sessions.return_value = active_sessions
                     mock_time.time.side_effect = time_values
                     mock_time.sleep = lambda *_: None
@@ -1752,8 +1752,8 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport'), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReceiver'), \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'TransactionReassembler') as mock_reassembler_cls:
+                     unittest.mock.patch('server.run_loop.TransactionReceiver'), \
+                     unittest.mock.patch('server.run_loop.TransactionReassembler') as mock_reassembler_cls:
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
                     gui._stop_event.is_set.return_value = True
                     gui.rpc_host_input.text = 'localhost'

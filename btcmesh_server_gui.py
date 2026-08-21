@@ -13,7 +13,6 @@ import os
 import shutil
 import threading
 import queue
-import time
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -65,10 +64,9 @@ from core.device_watchdog import build_device_watchdog
 from core.meshtastic_utils import get_own_node_name
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
-from core.reassembler import TransactionReassembler
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
-from server.receiver import TransactionReceiver, ChunkReceived, BroadcastResult
+from server.run_loop import build_receiver, run_polling_loop
 
 
 # Set window size for desktop
@@ -93,12 +91,6 @@ DEVICE_NO_DEVICES = "No devices found"
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DOTENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
-CHECK_TIMEOUTS_INTERVAL_SECONDS = 10
-LIVENESS_LOG_INTERVAL_SECONDS = 300
-# Issue 21: an operator checking the log later has no way to tell the
-# server was actually still running vs. silently dead/hung, unless some
-# other activity happened to log something. A periodic positive signal
-# closes that gap regardless of whether anything else is happening.
 
 
 class BTCMeshServerGUI(BoxLayout):
@@ -598,24 +590,12 @@ class BTCMeshServerGUI(BoxLayout):
 
         def test_thread():
             try:
-                # Check for Tor requirement
+                # Issue 34: the Tor-reachability check now lives in
+                # BitcoinRPCClient.connect() itself (core/rpc_client.py),
+                # so it applies to every caller - including real server
+                # startup, which previously skipped it entirely and only
+                # this "Test Connection" button had it.
                 is_tor = host.endswith('.onion')
-                if is_tor:
-                    # Validate Tor is available on port 9050
-                    import socket
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(5)
-                        result = sock.connect_ex(('127.0.0.1', 9050))
-                        sock.close()
-                        if result != 0:
-                            self.result_queue.put(('test_connection_result', False,
-                                                'Tor service not reachable on port 9050'))
-                            return
-                    except Exception as e:
-                        self.result_queue.put(('test_connection_result', False,
-                                            f'Failed to check Tor: {e}'))
-                        return
 
                 # Test RPC connection
                 from core.rpc_client import BitcoinRPCClient
@@ -833,67 +813,16 @@ class BTCMeshServerGUI(BoxLayout):
 
             history = TransactionHistory()
 
-            def on_chunk_received(evt: ChunkReceived):
-                self.result_queue.put((
-                    'log',
-                    f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}",
-                    logging.INFO,
-                    COLOR_PRIMARY,
-                ))
-                if evt.chunk_num < evt.total_chunks:
-                    self.result_queue.put((
-                        'log',
-                        f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...",
-                        logging.INFO,
-                        COLOR_PRIMARY,
-                    ))
+            def gui_log(message, level, primary=False):
+                # Shared sink for server/run_loop.py's callback wiring
+                # (Issue 34) - narrative protocol-status lines (chunk
+                # progress, broadcast-started) pass primary=True so they
+                # read distinctly in the Activity Log from raw wire
+                # traffic and other messages below them.
+                if primary:
+                    self.result_queue.put(('log', message, level, COLOR_PRIMARY))
                 else:
-                    # By the time this fires, add_chunk() has already returned the
-                    # fully reassembled hex without raising - reassembly for this
-                    # session has already succeeded (see TransactionReceiver._on_message).
-                    self.result_queue.put((
-                        'log',
-                        f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.",
-                        logging.INFO,
-                        COLOR_PRIMARY,
-                    ))
-
-            def on_broadcast_started(session_id, sender_id):
-                self.result_queue.put((
-                    'log', f"[{session_id}] Broadcasting transaction to Bitcoin network...",
-                    logging.INFO, COLOR_PRIMARY,
-                ))
-
-            def on_broadcast(result: BroadcastResult):
-                if result.success:
-                    self.result_queue.put((
-                        'log', f"[{result.session_id}] Broadcast success. TXID: {result.txid}", logging.INFO
-                    ))
-                    history.add(session_id=result.session_id, sender=result.sender_id,
-                                status="success", txid=result.txid, raw_tx=result.raw_tx)
-                else:
-                    self.result_queue.put((
-                        'log', f"[{result.session_id}] Broadcast failed: {result.error}", logging.ERROR
-                    ))
-                    history.add(session_id=result.session_id, sender=result.sender_id,
-                                status="failed", error=result.error, raw_tx=result.raw_tx)
-
-            def on_error(session_id, sender_id, error):
-                self.result_queue.put((
-                    'log', f"[{session_id}] Error from {sender_id}: {error}", logging.WARNING
-                ))
-                history.add(session_id=session_id, sender=sender_id, status="failed",
-                            error=error, raw_tx=None)
-
-            # Raw wire-format traffic (the actual BTC_TX/BTC_CHUNK_ACK/BTC_ACK/
-            # BTC_NACK text), shown indented like the client GUI's "-> "/"<- "
-            # lines - separate from the semantic events above so NACKs/ACKs
-            # sent by this server are visible even when nothing else logs them.
-            def on_wire_sent(message_text):
-                self.result_queue.put(('log', f'  -> {message_text}', logging.INFO))
-
-            def on_wire_received(message_text):
-                self.result_queue.put(('log', f'  <- {message_text}', logging.INFO))
+                    self.result_queue.put(('log', message, level))
 
             # Safety net for anything unanticipated (e.g. a bad reassembly_timeout
             # value slipping past validation) - without this, an exception here
@@ -901,17 +830,8 @@ class BTCMeshServerGUI(BoxLayout):
             # showing "Starting server..." forever, since nothing would ever
             # report back to the result_queue.
             try:
-                receiver = TransactionReceiver(
-                    transport, rpc_client,
-                    reassembler=TransactionReassembler(timeout_seconds=reassembly_timeout),
-                    on_chunk_received=on_chunk_received,
-                    on_broadcast_started=on_broadcast_started,
-                    on_broadcast=on_broadcast,
-                    on_error=on_error,
-                    on_wire_sent=on_wire_sent,
-                    on_wire_received=on_wire_received,
-                    on_transport_error=lambda e: watchdog.record_failure(),
-                    on_transport_success=lambda: watchdog.record_success(),
+                receiver = build_receiver(
+                    transport, rpc_client, reassembly_timeout, history, watchdog, log=gui_log
                 )
             except Exception as e:
                 self.result_queue.put(('init_error', str(e)))
@@ -923,39 +843,22 @@ class BTCMeshServerGUI(BoxLayout):
             # TransactionReceiver itself is purely reactive: incoming chunks are
             # handled the instant the transport's pubsub callback fires, with no
             # polling needed for that part. But it deliberately does NOT run its
-            # own background thread/timer (see Story 23.1) - two things still need
-            # to happen on a schedule, so this loop (replacing btcmesh_server.py's
-            # old main() loop) is what drives them, entirely from this GUI's own
-            # background thread:
-            #   1. Push a fresh snapshot of active reassembly sessions to the GUI
-            #      every ~1s, so the "Active Sessions" panel stays live.
-            #   2. Every ~10s, call check_timeouts() so sessions that have gone
-            #      quiet past the reassembly timeout get NACKed and cleaned up
-            #      instead of lingering forever.
-            # The loop exits as soon as on_stop_pressed() sets self._stop_event;
-            # the finally block then always disconnects the transport (releasing
-            # the serial port) and reports 'server_stopped' to the GUI, whether we
-            # got here via a normal stop or an unexpected exception bubbling out
-            # of the loop.
+            # own background thread/timer (see Story 23.1) - run_polling_loop()
+            # (replacing btcmesh_server.py's old main() loop) is what drives the
+            # scheduled maintenance instead, entirely from this GUI's own
+            # background thread. on_tick pushes a fresh active-sessions snapshot
+            # every ~1s so the "Active Sessions" panel stays live - the CLI has
+            # no such display and omits it. The loop exits as soon as
+            # on_stop_pressed() sets self._stop_event; the finally block then
+            # always disconnects the transport (releasing the serial port) and
+            # reports 'server_stopped' to the GUI, whether we got here via a
+            # normal stop or an unexpected exception bubbling out of the loop.
             try:
-                last_cleanup_time = time.time()
-                last_liveness_log = time.time()
-                while not self._stop_event.is_set():
-                    active_sessions = receiver.get_active_sessions()
-                    self.result_queue.put(('active_sessions', active_sessions))
-                    now = time.time()
-                    if now - last_cleanup_time >= CHECK_TIMEOUTS_INTERVAL_SECONDS:
-                        receiver.check_timeouts()
-                        last_cleanup_time = now
-                    if now - last_liveness_log >= LIVENESS_LOG_INTERVAL_SECONDS:
-                        self.result_queue.put((
-                            'log',
-                            f"Server heartbeat: alive, listening. {len(active_sessions)} active session(s).",
-                            logging.INFO,
-                        ))
-                        last_liveness_log = now
-                    watchdog.tick(now)
-                    time.sleep(1)
+                run_polling_loop(
+                    receiver, watchdog, log=gui_log,
+                    stop_check=self._stop_event.is_set,
+                    on_tick=lambda sessions: self.result_queue.put(('active_sessions', sessions)),
+                )
             finally:
                 transport.disconnect()
                 self.result_queue.put(('server_stopped', None))
