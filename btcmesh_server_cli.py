@@ -7,7 +7,6 @@ file only handles: config loading, startup/shutdown, and logging.
 """
 import argparse
 import sys
-import time
 
 from core.config_loader import (
     get_meshtastic_serial_port,
@@ -17,19 +16,18 @@ from core.config_loader import (
 )
 from core.device_watchdog import build_device_watchdog
 from core.logger_setup import server_logger
-from core.reassembler import TransactionReassembler
 from core.rpc_client import BitcoinRPCClient
 from core.transaction_history import TransactionHistory
-from server.receiver import TransactionReceiver, ChunkReceived, BroadcastResult
+from server.run_loop import build_receiver, run_polling_loop
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
 
-CHECK_TIMEOUTS_INTERVAL_SECONDS = 10
-LIVENESS_LOG_INTERVAL_SECONDS = 300
-# Issue 21: an operator checking the log later has no way to tell the
-# server was actually still running vs. silently dead/hung, unless some
-# other activity happened to log something. A periodic positive signal
-# closes that gap regardless of whether anything else is happening.
+
+def _log(message: str, level: int, highlight: bool = False) -> None:
+    """Sink for server/run_loop.py's shared callbacks (Issue 34) - plain
+    logging, `highlight` has no meaning for a text logger (it only affects
+    the GUI's color-coding) so it's accepted and ignored."""
+    server_logger.log(level, message)
 
 
 def parse_args(argv=None):
@@ -44,59 +42,6 @@ def parse_args(argv=None):
              "one device is connected.",
     )
     return parser.parse_args(argv)
-
-
-def build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog) -> TransactionReceiver:
-    """Wire TransactionReceiver's callbacks to server_logger + history - the
-    same callback set and log wording btcmesh_server_gui.py's Activity Log
-    uses, just logged instead of pushed to a GUI queue. Also wires
-    record_success()/record_failure() into watchdog (Story 26.5) via
-    on_transport_success/on_transport_error, symmetric with each other -
-    every successful/failed reply send counts, not just chunk-acks
-    (Story 28.3 review fix; see project/plans/story_28_3.md)."""
-
-    def on_chunk_received(evt: ChunkReceived):
-        server_logger.info(f"[{evt.session_id}] Received chunk {evt.chunk_num}/{evt.total_chunks} from {evt.sender_id}")
-        if evt.chunk_num < evt.total_chunks:
-            server_logger.info(f"[{evt.session_id}] Requesting chunk {evt.chunk_num + 1}/{evt.total_chunks}...")
-        else:
-            server_logger.info(f"[{evt.session_id}] All {evt.total_chunks} chunks received. Reassembly successful.")
-
-    def on_broadcast_started(session_id, sender_id):
-        server_logger.info(f"[{session_id}] Broadcasting transaction to Bitcoin network...")
-
-    def on_broadcast(result: BroadcastResult):
-        if result.success:
-            server_logger.info(f"[{result.session_id}] Broadcast success. TXID: {result.txid}")
-            history.add(session_id=result.session_id, sender=result.sender_id,
-                        status="success", txid=result.txid, raw_tx=result.raw_tx)
-        else:
-            server_logger.error(f"[{result.session_id}] Broadcast failed: {result.error}")
-            history.add(session_id=result.session_id, sender=result.sender_id,
-                        status="failed", error=result.error, raw_tx=result.raw_tx)
-
-    def on_error(session_id, sender_id, error):
-        server_logger.warning(f"[{session_id}] Error from {sender_id}: {error}")
-        history.add(session_id=session_id, sender=sender_id, status="failed", error=error, raw_tx=None)
-
-    def on_wire_sent(message_text):
-        server_logger.info(f"  -> {message_text}")
-
-    def on_wire_received(message_text):
-        server_logger.info(f"  <- {message_text}")
-
-    return TransactionReceiver(
-        transport, rpc_client,
-        reassembler=TransactionReassembler(timeout_seconds=reassembly_timeout),
-        on_chunk_received=on_chunk_received,
-        on_broadcast_started=on_broadcast_started,
-        on_broadcast=on_broadcast,
-        on_error=on_error,
-        on_wire_sent=on_wire_sent,
-        on_wire_received=on_wire_received,
-        on_transport_error=lambda e: watchdog.record_failure(),
-        on_transport_success=lambda: watchdog.record_success(),
-    )
 
 
 def run_server(port=None) -> int:
@@ -147,23 +92,11 @@ def run_server(port=None) -> int:
 
     reassembly_timeout, _source = load_reassembly_timeout()
     history = TransactionHistory()
-    receiver = build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog)
+    receiver = build_receiver(transport, rpc_client, reassembly_timeout, history, watchdog, log=_log)
 
     server_logger.info("Server started. Listening for incoming transactions... (Ctrl+C to stop)")
     try:
-        last_cleanup = time.time()
-        last_liveness_log = time.time()
-        while True:
-            now = time.time()
-            if now - last_cleanup >= CHECK_TIMEOUTS_INTERVAL_SECONDS:
-                receiver.check_timeouts()
-                last_cleanup = now
-            if now - last_liveness_log >= LIVENESS_LOG_INTERVAL_SECONDS:
-                active = len(receiver.get_active_sessions())
-                server_logger.info(f"Server heartbeat: alive, listening. {active} active session(s).")
-                last_liveness_log = now
-            watchdog.tick(now)
-            time.sleep(1)
+        run_polling_loop(receiver, watchdog, log=_log)
     except KeyboardInterrupt:
         server_logger.info("Server shutting down by user request (Ctrl+C).")
     finally:

@@ -1243,7 +1243,7 @@ reset history to empty** ✅ RESOLVED
   described). Branch `issue-33`, full suite green (769 tests).
 
 **Issue 34: Server orchestration/wiring logic duplicated near-verbatim
-between CLI and GUI** 🔍 OPEN
+between CLI and GUI** ✅ RESOLVED
 - `btcmesh_server_cli.py:27-32`/`49-99`/`152-171` and
   `btcmesh_server_gui.py:96-101`/`811-890`/`915-936` define identical
   constants (with an identical copy-pasted comment) and wire up the same
@@ -1259,6 +1259,33 @@ between CLI and GUI** 🔍 OPEN
   `server/` helper that both entrypoints call with a sink-callback
   parameter; move the Tor pre-check into `core/rpc_client.py` or a
   `server/` helper so real startup benefits from it too.
+- **Resolved 2026-08-21**: added `server/run_loop.py` with
+  `build_receiver(transport, rpc_client, reassembly_timeout, history,
+  watchdog, log)` and `run_polling_loop(receiver, watchdog, log,
+  stop_check, on_tick)`, shared by both entrypoints. `log(message,
+  level, primary=False)` is the sink abstraction - the CLI's sink calls
+  `server_logger.log(level, message)` and ignores `primary`; the GUI's
+  pushes to its result queue, adding the `COLOR_PRIMARY` 4th tuple
+  element only when `primary=True` (preserving its existing narrative-
+  vs-wire-traffic color distinction exactly). `on_tick` lets the GUI
+  keep its "Active Sessions" panel live every ~1s without the CLI
+  paying for an unneeded `get_active_sessions()` call it never had.
+  `btcmesh_server_cli.py` dropped from 181 to 113 lines;
+  `btcmesh_server_gui.py`'s `run_server()` closure lost ~115 lines of
+  duplicated callback/loop code. The Tor-reachability check moved into
+  `BitcoinRPCClient.connect()` itself (`core/rpc_client.py`), so it now
+  applies to every caller - including real CLI/GUI server startup, which
+  previously skipped it entirely - not just the GUI's "Test Connection"
+  button, whose now-redundant manual copy was removed.
+  `TestBuildReceiver`'s tests relocated from `test_btcmesh_server_cli.py`
+  to a new `tests/test_server_run_loop.py` (exercising the shared module
+  directly via a mock `log` callable instead of patching
+  `server_logger`), plus new `TestRunPollingLoop` tests; GUI tests
+  needing `TransactionReceiver`/`time` mocked now patch
+  `server.run_loop.*` instead of the now-removed `btcmesh_server_gui.*`
+  equivalents (the real logic lives there now). Added tests for the new
+  Tor-reachability check. Branch `issue-34`, full suite green (780
+  tests).
 
 **Issue 35: Misc code-quality findings from code review (grouped)**
 🔍 OPEN
@@ -1388,6 +1415,6 @@ process** 🔍 OPEN
 | 31    | Three independent parsers of the `BTC_TX\|...` wire format, with confirmed divergence | Minor (maintainability) | **FIXED** |
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | **FIXED** |
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | **FIXED** |
-| 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | Open |
+| 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | Open |

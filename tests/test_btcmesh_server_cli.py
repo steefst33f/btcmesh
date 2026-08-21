@@ -1,16 +1,17 @@
 """Tests for btcmesh_server_cli.py — thin CLI entry point.
 
 Covers only genuine CLI-layer concerns: argument parsing, device
-connection/port resolution, RPC-failure tolerance, callback wiring to
-server_logger + TransactionHistory, and shutdown behavior. Business logic
-(chunk reassembly, ACK/NACK, RPC broadcast) is tested in
+connection/port resolution, RPC-failure tolerance, and shutdown behavior.
+The shared callback-wiring/polling-loop logic (Issue 34) is tested
+directly in tests/test_server_run_loop.py; business logic (chunk
+reassembly, ACK/NACK, RPC broadcast) is tested in
 tests/test_server_receiver.py and tests/test_meshtastic_serial_transport.py.
 """
+import logging
 import unittest
 from unittest.mock import patch, MagicMock
 
 from transport.base import TransportConnectionError
-from server.receiver import ChunkReceived, BroadcastResult
 import btcmesh_server_cli as cli
 
 
@@ -71,7 +72,7 @@ class TestRunServerConnection(unittest.TestCase):
         self._patch_successful_startup()
         with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt):
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt):
             # time.sleep raising KeyboardInterrupt on the first loop tick just
             # ends the otherwise-infinite loop so this test can return -
             # that's not what's being tested here, see
@@ -86,7 +87,7 @@ class TestRunServerConnection(unittest.TestCase):
         self._patch_successful_startup()
         with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt):
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt):
             mock_transport = mock_transport_cls.return_value
             code = cli.run_server()
 
@@ -101,7 +102,7 @@ class TestRunServerConnection(unittest.TestCase):
         self._patch_successful_startup()
         with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=[None, KeyboardInterrupt]) as mock_sleep:
+                patch("server.run_loop.time.sleep", side_effect=[None, KeyboardInterrupt]) as mock_sleep:
             # First call succeeds (one full loop tick completes normally =
             # "the server is running"); the second call raises, simulating
             # Ctrl+C arriving *while it's running* rather than on the very
@@ -143,7 +144,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     return_value=(mock_watchdog, None),
                 ), \
                 patch(
-                    "btcmesh_server_cli.time.sleep",
+                    "server.run_loop.time.sleep",
                     side_effect=[None, None, KeyboardInterrupt],
                 ):
             cli.run_server()
@@ -158,7 +159,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     return_value=(MagicMock(), MagicMock()),
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
 
@@ -172,7 +173,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     return_value=(MagicMock(), None),
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
 
@@ -196,7 +197,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     side_effect=fake_build_device_watchdog,
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
             captured["on_recovery_attempt"]()
@@ -219,7 +220,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     side_effect=fake_build_device_watchdog,
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
             from core.device_watchdog import RecoveryOutcome
@@ -241,7 +242,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     side_effect=fake_build_device_watchdog,
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
             from core.device_watchdog import RecoveryOutcome
@@ -278,13 +279,17 @@ class TestRunServerLivenessLog(unittest.TestCase):
                 patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
-                patch("btcmesh_server_cli.time.time", side_effect=[100.0, 100.0, 100.0, 401.0]), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=[None, KeyboardInterrupt]), \
+                patch("server.run_loop.time.time", side_effect=[100.0, 100.0, 100.0, 401.0]), \
+                patch("server.run_loop.time.sleep", side_effect=[None, KeyboardInterrupt]), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
 
-        mock_logger.info.assert_any_call(
-            "Server heartbeat: alive, listening. 2 active session(s)."
+        # The liveness log flows through run_polling_loop() -> _log() ->
+        # server_logger.log(level, message), not server_logger.info()
+        # directly (Issue 34 - _log() is the shared sink for
+        # server/run_loop.py's callbacks).
+        mock_logger.log.assert_any_call(
+            logging.INFO, "Server heartbeat: alive, listening. 2 active session(s)."
         )
 
     def test_liveness_log_does_not_fire_before_interval_elapses(self):
@@ -296,13 +301,13 @@ class TestRunServerLivenessLog(unittest.TestCase):
                 patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
-                patch("btcmesh_server_cli.time.time", side_effect=[100.0, 100.0, 100.0, 150.0]), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=[None, KeyboardInterrupt]), \
+                patch("server.run_loop.time.time", side_effect=[100.0, 100.0, 100.0, 150.0]), \
+                patch("server.run_loop.time.sleep", side_effect=[None, KeyboardInterrupt]), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
 
-        for call in mock_logger.info.call_args_list:
-            self.assertNotIn("heartbeat", call.args[0])
+        for call in mock_logger.log.call_args_list:
+            self.assertNotIn("heartbeat", call.args[1])
 
 
 class TestRunServerRpcFailure(unittest.TestCase):
@@ -323,7 +328,7 @@ class TestRunServerRpcFailure(unittest.TestCase):
                     "btcmesh_server_cli.build_device_watchdog",
                     return_value=(MagicMock(), None),
                 ), \
-                patch("btcmesh_server_cli.time.sleep", side_effect=KeyboardInterrupt), \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt), \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             code = cli.run_server()
 
@@ -334,111 +339,6 @@ class TestRunServerRpcFailure(unittest.TestCase):
         mock_build_receiver.assert_called_once()
         # build_receiver(transport, rpc_client, reassembly_timeout, history) - positional
         self.assertIsNone(mock_build_receiver.call_args.args[1])
-
-
-class TestBuildReceiver(unittest.TestCase):
-    """Tests for build_receiver()'s callback wiring to server_logger + history."""
-
-    def _extract_callbacks(self, watchdog=None):
-        history = MagicMock()
-        watchdog = watchdog if watchdog is not None else MagicMock()
-        with patch("btcmesh_server_cli.TransactionReceiver") as mock_receiver_cls:
-            cli.build_receiver(MagicMock(), MagicMock(), 300, history, watchdog)
-            kwargs = mock_receiver_cls.call_args.kwargs
-        return kwargs, history
-
-    def test_wires_all_eight_callbacks_and_reassembler_timeout(self):
-        with patch("btcmesh_server_cli.TransactionReceiver") as mock_receiver_cls, \
-                patch("btcmesh_server_cli.TransactionReassembler") as mock_reassembler_cls:
-            cli.build_receiver(MagicMock(), MagicMock(), 300, MagicMock(), MagicMock())
-
-        mock_reassembler_cls.assert_called_once_with(timeout_seconds=300)
-        kwargs = mock_receiver_cls.call_args.kwargs
-        for name in (
-            "on_chunk_received", "on_broadcast_started", "on_broadcast",
-            "on_error", "on_wire_sent", "on_wire_received", "on_transport_error",
-            "on_transport_success",
-        ):
-            self.assertIn(name, kwargs)
-            self.assertTrue(callable(kwargs[name]))
-
-    def test_on_transport_error_calls_watchdog_record_failure(self):
-        watchdog = MagicMock()
-        kwargs, _ = self._extract_callbacks(watchdog=watchdog)
-        kwargs["on_transport_error"](RuntimeError("device wedged"))
-        watchdog.record_failure.assert_called_once()
-
-    def test_on_transport_success_calls_watchdog_record_success(self):
-        watchdog = MagicMock()
-        kwargs, _ = self._extract_callbacks(watchdog=watchdog)
-        kwargs["on_transport_success"]()
-        watchdog.record_success.assert_called_once()
-
-    def test_on_chunk_received_logs_progress_when_not_last_chunk(self):
-        kwargs, _ = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_chunk_received"](
-                ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=1, total_chunks=3)
-            )
-        mock_logger.info.assert_any_call("[sess1] Received chunk 1/3 from !abc")
-        mock_logger.info.assert_any_call("[sess1] Requesting chunk 2/3...")
-
-    def test_on_chunk_received_logs_reassembly_success_on_last_chunk(self):
-        kwargs, _ = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_chunk_received"](
-                ChunkReceived(session_id="sess1", sender_id="!abc", chunk_num=3, total_chunks=3)
-            )
-        mock_logger.info.assert_any_call("[sess1] All 3 chunks received. Reassembly successful.")
-
-    def test_on_broadcast_started_logs_message(self):
-        kwargs, _ = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_broadcast_started"]("sess1", "!abc")
-        mock_logger.info.assert_any_call("[sess1] Broadcasting transaction to Bitcoin network...")
-
-    def test_on_broadcast_success_logs_and_records_history(self):
-        kwargs, history = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_broadcast"](BroadcastResult(
-                session_id="sess1", sender_id="!abc", success=True, txid="txid123", raw_tx="deadbeef"
-            ))
-        mock_logger.info.assert_any_call("[sess1] Broadcast success. TXID: txid123")
-        history.add.assert_called_once_with(
-            session_id="sess1", sender="!abc", status="success", txid="txid123", raw_tx="deadbeef"
-        )
-
-    def test_on_broadcast_failure_logs_error_and_records_history(self):
-        kwargs, history = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_broadcast"](BroadcastResult(
-                session_id="sess1", sender_id="!abc", success=False, error="Insufficient fee", raw_tx="deadbeef"
-            ))
-        mock_logger.error.assert_any_call("[sess1] Broadcast failed: Insufficient fee")
-        history.add.assert_called_once_with(
-            session_id="sess1", sender="!abc", status="failed", error="Insufficient fee", raw_tx="deadbeef"
-        )
-
-    def test_on_error_logs_warning_and_records_history(self):
-        kwargs, history = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_error"]("sess1", "!abc", "Timed out")
-        mock_logger.warning.assert_any_call("[sess1] Error from !abc: Timed out")
-        history.add.assert_called_once_with(
-            session_id="sess1", sender="!abc", status="failed", error="Timed out", raw_tx=None
-        )
-
-    def test_on_wire_sent_logs_message(self):
-        kwargs, _ = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_wire_sent"]("BTC_CHUNK_ACK|sess1|1|REQUEST_CHUNK|2")
-        mock_logger.info.assert_any_call("  -> BTC_CHUNK_ACK|sess1|1|REQUEST_CHUNK|2")
-
-    def test_on_wire_received_logs_message(self):
-        kwargs, _ = self._extract_callbacks()
-        with patch("btcmesh_server_cli.server_logger") as mock_logger:
-            kwargs["on_wire_received"]("BTC_TX|sess1|1/3|deadbeef")
-        mock_logger.info.assert_any_call("  <- BTC_TX|sess1|1/3|deadbeef")
 
 
 if __name__ == "__main__":

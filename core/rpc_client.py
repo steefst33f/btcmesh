@@ -1,9 +1,16 @@
 import requests
 import json
+import socket
 import time
 from urllib.parse import quote
 
 from core.logger_setup import server_logger  # Assuming a logger is available
+
+TOR_SOCKS_HOST = "127.0.0.1"
+TOR_SOCKS_PORT = 9050
+TOR_CHECK_TIMEOUT_SECONDS = 5
+
+
 class BitcoinRPCClient:
     class BitcoinRPCException(Exception):
         def __init__(self, error_info):
@@ -38,12 +45,37 @@ class BitcoinRPCClient:
 
     def connect(self):
         """Connects to Bitcoin Core RPC using the provided config dictionary."""
+        if self.use_tor:
+            self._check_tor_reachable()
         server_logger.debug("Connecting to Bitcoin RPC...")
 
         # Test connection and get chain info
         info = self.getblockchaininfo()
         self.chain = info['chain']  # Store chain for later access (main, test, testnet4, signet)
         server_logger.info(f"Connected to Bitcoin Core chain: {self.chain}")
+
+    def _check_tor_reachable(self) -> None:
+        """Verify the local Tor SOCKS proxy is reachable before attempting
+        an RPC call through it (Issue 34). Without this, a missing/stopped
+        Tor daemon surfaces as a confusing low-level connection-refused or
+        timeout error from deep inside requests/urllib3 instead of a clear
+        message - and previously this check only existed in the server
+        GUI's "Test Connection" button, so real server startup (CLI and
+        GUI alike) skipped it entirely.
+
+        Raises:
+            ConnectionError: If the SOCKS proxy port isn't reachable.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(TOR_CHECK_TIMEOUT_SECONDS)
+        try:
+            result = sock.connect_ex((TOR_SOCKS_HOST, TOR_SOCKS_PORT))
+        finally:
+            sock.close()
+        if result != 0:
+            raise ConnectionError(
+                f"Tor service not reachable on {TOR_SOCKS_HOST}:{TOR_SOCKS_PORT}"
+            )
 
     def rpc_request(self, method, params=None, retries: int = 3, delay: int = 5):
         """Performs a JSON-RPC requests with automatic connection retry logic."""
