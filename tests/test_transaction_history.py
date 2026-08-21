@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from core.transaction_history import TransactionHistory
@@ -125,6 +126,35 @@ class TestTransactionHistory(unittest.TestCase):
 
         entries = self.history.get_all()
         self.assertEqual(entries, [])
+
+    def test_no_leftover_tmp_file_after_save(self):
+        """Issue 33: the temp file used for atomic writes must not be left
+        behind after a successful save."""
+        self.history.add(session_id="a", sender="!1", status="success")
+        tmp_path = Path(str(self.temp_file) + ".tmp")
+        self.assertFalse(tmp_path.exists())
+
+    def test_original_file_untouched_if_write_fails_partway(self):
+        """Issue 33: a failure while writing the new data must not corrupt
+        or truncate the existing file - the old, complete data must still
+        be readable afterward (this is exactly what os.replace()-based
+        atomic writes guarantee and a plain open(...,'w') did not)."""
+        self.history.add(session_id="original", sender="!1", status="success")
+        original_bytes = Path(self.temp_file).read_bytes()
+
+        with unittest.mock.patch(
+            "core.transaction_history.json.dump",
+            side_effect=RuntimeError("simulated crash mid-write"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.history.add(session_id="never-saved", sender="!2", status="success")
+
+        # The real file must be exactly as it was before the failed write -
+        # not truncated, not replaced with a partial/empty tmp file.
+        self.assertEqual(Path(self.temp_file).read_bytes(), original_bytes)
+        entries = self.history.get_all()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["session_id"], "original")
 
     def test_filepath_property(self):
         """Test that filepath property returns correct path."""
