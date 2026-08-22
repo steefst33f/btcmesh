@@ -1471,21 +1471,26 @@ lora/
         `project/plans/story_27_1.md`'s "Enhancement: Node Names +
         Dropdown Dedup" section for the full design._
 
-- [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
-- [ ] *   **As a** client GUI user,
-- [ ] *   **I want** to see each device's node ID next to its port path,
-- [ ] *   **So that** I don't have to guess or remember which node is on which port.
-    - [ ] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
-        - [ ] *   **Given** the client GUI scans for devices.
-        - [ ] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
-        - [ ] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
-    - [ ] *   **Scenario:** Currently-connected device is not re-probed
-        - [ ] *   **Given** the app already holds an active connection to one of the listed devices.
-        - [ ] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
-    - [ ] *   **Scenario:** Selecting a device still works
-        - [ ] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
-        - [ ] *   **When** the user selects it.
-        - [ ] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+- [x] **Story 27.2: Show node IDs in the client GUI's device dropdown**
+- [x] *   **As a** client GUI user,
+- [x] *   **I want** to see each device's node ID next to its port path,
+- [x] *   **So that** I don't have to guess or remember which node is on which port.
+    - [x] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
+        - [x] *   **Given** the client GUI scans for devices.
+        - [x] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
+        - [x] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
+    - [x] *   **Scenario:** Currently-connected device is not re-probed
+        - [x] *   **Given** the app already holds an active connection to one of the listed devices.
+        - [x] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
+    - [x] *   **Scenario:** Selecting a device still works
+        - [x] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
+        - [x] *   **When** the user selects it.
+        - [x] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+    *   _Note: Implemented per `project/plans/story_27_1.md`'s Story 27.2
+        Implementation Notes. Single-device auto-connect skips the
+        background probe entirely (its node ID arrives via the live
+        `'connected'` result instead); multi-device scans probe
+        sequentially in the background. See PR (story-27-2)._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
