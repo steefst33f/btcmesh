@@ -1442,13 +1442,22 @@ lora/
         in `core/meshtastic_utils.py`, exactly per `project/plans/story_27_1.md`.
         See PR #49._
     *   _Note: Real-hardware manual verification of Story 27.2 (2026-08-22)
-        caught a genuine gap - a Seeed device that had connected fine
-        minutes earlier failed instantly on a single probe attempt (the
-        same transient "port not quite ready" pattern `_init_meshtastic()`
-        already retries around, per `CONNECT_MAX_ATTEMPTS`). Added
-        `PROBE_MAX_ATTEMPTS`/`PROBE_RETRY_DELAY_SECONDS` (2 attempts,
-        1.5s apart) to `probe_device_node_id()` so a healthy device isn't
-        silently left unlabeled by one bad attempt._
+        initially looked like it caught a gap - a Seeed device that had
+        connected fine minutes earlier failed on a single probe attempt -
+        so a retry (`PROBE_MAX_ATTEMPTS`/`PROBE_RETRY_DELAY_SECONDS`, 2
+        attempts, 1.5s apart) was added and shipped. Retested afterward
+        (still 2026-08-22) and found the retry didn't actually help: both
+        real failures observed were genuine ~30s connection timeouts (a
+        wedged device, confirmed cleared only by physically power-cycling
+        it - not a quick transient hiccup), so a second attempt on the
+        same timescale never turned a failure into a success. Reverted
+        the retry: it only added cost (doubling the wait for every
+        non-Meshtastic false-positive candidate, e.g. the relay board's
+        own port, which can never succeed regardless of attempt count)
+        with no observed benefit. See Issue 37 in `project/issues.txt`,
+        which now also proposes using the already-collected node ID (and
+        a probed node *name*) to fix the false-positive-candidate cost at
+        its actual root instead._
 
 - [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
 - [ ] *   **As a** client GUI user,
