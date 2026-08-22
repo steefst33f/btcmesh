@@ -91,6 +91,43 @@ def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
         return []
 
 
+def probe_device_node_id(path: str) -> Optional[str]:
+    """Briefly connect to a candidate serial port to learn its Meshtastic
+    node ID, then disconnect. Returns None (never raises) if the path
+    isn't a genuine Meshtastic device, is already in use, or the
+    connection attempt fails/times out - e.g. a false-positive candidate
+    from scan_meshtastic_devices()'s VID-blacklist filtering, such as the
+    Story 26.7 relay board's own serial port, which speaks a completely
+    different protocol.
+
+    Lazy-imports MeshtasticSerialTransport (matching this module's
+    existing dependency style) to avoid a hard import-time dependency
+    from core/ on transport/.
+    """
+    from transport.meshtastic_serial import MeshtasticSerialTransport
+    from transport.base import TransportConnectionError
+
+    transport = MeshtasticSerialTransport()
+    try:
+        transport.connect(path)
+        return transport.local_node_id
+    except TransportConnectionError:
+        return None
+    finally:
+        transport.disconnect()
+
+
+def format_device_display(path: str, node_id: Optional[str]) -> str:
+    """Format a device path and its (possibly not-yet-known) node ID for
+    display in a dropdown.
+
+    Returns:
+        'path' alone if node_id isn't known yet/unavailable, else
+        'path (node_id)' - e.g. '/dev/cu.usbserial-0001 (!7c5b4418)'.
+    """
+    return f"{path} ({node_id})" if node_id else path
+
+
 def get_own_node_id(iface) -> Optional[str]:
     """Get the node ID of the connected Meshtastic device.
 

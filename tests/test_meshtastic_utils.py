@@ -181,6 +181,70 @@ class TestScanMeshtasticDevicesDetailed(unittest.TestCase):
             self.assertEqual(result, [])
 
 
+class TestProbeDeviceNodeId(unittest.TestCase):
+    """Tests for probe_device_node_id (Story 27.1)."""
+
+    def test_probe_device_node_id_exists(self):
+        from core.meshtastic_utils import probe_device_node_id
+        self.assertTrue(callable(probe_device_node_id))
+
+    def test_returns_node_id_on_successful_connect(self):
+        """Given a transport that connects successfully, Then returns its
+        local_node_id and disconnects afterward."""
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ):
+            from core.meshtastic_utils import probe_device_node_id
+            result = probe_device_node_id('/dev/cu.usbserial-0001')
+
+        self.assertEqual(result, '!7c5b4418')
+        mock_transport.connect.assert_called_once_with('/dev/cu.usbserial-0001')
+        mock_transport.disconnect.assert_called_once()
+
+    def test_returns_none_when_connect_fails(self):
+        """Given connect() raises TransportConnectionError (e.g. not a real
+        Meshtastic device, already in use, or timed out), Then returns None
+        without raising, and still disconnects (safe no-op)."""
+        from transport.base import TransportConnectionError
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ):
+            from core.meshtastic_utils import probe_device_node_id
+            result = probe_device_node_id('/dev/cu.usbserial-relay')
+
+        self.assertIsNone(result)
+        mock_transport.disconnect.assert_called_once()
+
+
+class TestFormatDeviceDisplay(unittest.TestCase):
+    """Tests for format_device_display (Story 27.1)."""
+
+    def test_format_device_display_exists(self):
+        from core.meshtastic_utils import format_device_display
+        self.assertTrue(callable(format_device_display))
+
+    def test_path_only_when_node_id_none(self):
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display('/dev/cu.usbserial-0001', None)
+        self.assertEqual(result, '/dev/cu.usbserial-0001')
+
+    def test_path_and_node_id_when_known(self):
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display('/dev/cu.usbserial-0001', '!7c5b4418')
+        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
+
+
 class TestGetOwnNodeId(unittest.TestCase):
     """Tests for get_own_node_id function."""
 
