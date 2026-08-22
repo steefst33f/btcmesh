@@ -819,7 +819,12 @@ class BTCMeshGUI(BoxLayout):
                     self.device_spinner.unbind(text=self.on_device_selected)
                     self.device_spinner.text = SELECT_DEVICE_TEXT
                     self.device_spinner.bind(text=self.on_device_selected)
-                    self.status_log.add_message(f"Found {len(devices)} devices - select one to connect", COLOR_WARNING)
+                    # No count stated here (unlike the single-device case
+                    # above) - it's the raw scan count, which dedup may
+                    # still reduce once probing resolves names/node IDs
+                    # (Issue 37), and the dropdown itself is the accurate,
+                    # already-visible source of truth for "how many."
+                    self.status_log.add_message("Multiple devices found - select one to connect", COLOR_WARNING)
                     self._probe_device_identities()
             else:
                 self.devices = []
