@@ -1505,6 +1505,16 @@ lora/
         instantly despite the device being healthy (see Story 27.1's
         `PROBE_MAX_ATTEMPTS` fix above, and Issue 37 for the separate
         duplicate/false-positive scan finding)._
+    *   _Note: Extended 2026-08-22 for Issue 37's node-name work
+        (Story 27.1's `probe_device_identity()`). `self.devices` gains a
+        `name` field; dropdown entries show `Name (!nodeid)` once both
+        are known. New `_dedupe_devices_by_node_id()` collapses two
+        paths that resolve to the same node ID (the Heltec's two
+        aliases) into one entry - the side just authoritatively resolved
+        wins, except the currently active/connected device is never
+        dropped even if it resolved second. See
+        `project/plans/story_27_1.md`'s "Enhancement: Node Names +
+        Dropdown Dedup" section._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,

@@ -413,25 +413,35 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
   result tuple (the same `node_name` `_init_meshtastic()` already sends
   for the connection-status label), no new lookup needed. Then runs the
   same dedup call, with `keep_path=self._active_device_path`.
-- New `_dedupe_devices_by_node_id(keep_path)`: removes any *other*
-  device in `self.devices` sharing `keep_path`'s device's node ID.
-  `keep_path` is always the side that just got authoritative
-  information (a probe result, or a live connection) - the rule is
-  "the side that was just resolved wins," **except** the currently
-  active/connected device (`self._active_device_path`) is never removed
-  even if it resolved second - dropping the entry the user is actually
-  connected to would be actively wrong, not just imprecise.
+- New `_dedupe_devices_by_node_id(keep_path)`: removes the duplicate
+  device sharing `keep_path`'s node ID. Normally `keep_path` (the side
+  that just got authoritative information - a probe result, or a live
+  connection) wins and the other entry is dropped, **except** the
+  currently active/connected device (`self._active_device_path`) is
+  never dropped: if the active device turns out to be the duplicate (it
+  resolved first, `keep_path` resolved to the same node ID second),
+  `keep_path` is the one dropped instead. (An earlier draft of this rule
+  kept *both* sides whenever the active device was involved, since it
+  protected `keep_path` unconditionally *and* the active device
+  unconditionally - caught before implementation: those two protections
+  must be mutually exclusive, not both-or-nothing, or duplicates
+  involving the active device never actually collapse.)
   ```python
   def _dedupe_devices_by_node_id(self, keep_path):
       keeper = next((d for d in self.devices if d['path'] == keep_path), None)
       if keeper is None or not keeper['node_id']:
           return
-      self.devices = [
+      duplicates = [
           d for d in self.devices
-          if d['path'] == keep_path
-          or d['node_id'] != keeper['node_id']
-          or d['path'] == self._active_device_path
+          if d['path'] != keep_path and d['node_id'] == keeper['node_id']
       ]
+      if not duplicates:
+          return
+      if any(d['path'] == self._active_device_path for d in duplicates):
+          self.devices = [d for d in self.devices if d['path'] != keep_path]
+      else:
+          dup_paths = {d['path'] for d in duplicates}
+          self.devices = [d for d in self.devices if d['path'] not in dup_paths]
   ```
 - `_device_path_from_display()` / `_refresh_device_spinner_labels()`
   pass `device['name']` through to `format_device_display()` too.

@@ -60,7 +60,7 @@ from core.meshtastic_utils import (
     get_own_node_name,
     get_known_nodes,
     format_node_display,
-    probe_device_node_id,
+    probe_device_identity,
     format_device_display,
 )
 
@@ -663,19 +663,49 @@ class BTCMeshGUI(BoxLayout):
         self._disconnect_device()
         self._scan_devices()
 
-    def _probe_device_node_ids(self):
-        """Background: look up each just-scanned device's node ID one at a
-        time (Story 27.2), pushing a result per device as it resolves. Only
-        called for the multi-device case - by then nothing is connected yet
+    def _probe_device_identities(self):
+        """Background: look up each just-scanned device's node ID and name
+        one at a time (Story 27.2, extended by Issue 37's node-name work),
+        pushing a result per device as it resolves. Only called for the
+        multi-device case - by then nothing is connected yet
         (on_refresh_devices always disconnects before rescanning, and the
         startup scan begins with no connection), so no device needs to be
         skipped here."""
         def probe_thread():
             for device in list(self.devices):
-                node_id = probe_device_node_id(device['path'])
-                self.result_queue.put(('device_node_id', device['path'], node_id))
+                identity = probe_device_identity(device['path'])
+                self.result_queue.put((
+                    'device_identity', device['path'], identity.node_id, identity.name
+                ))
 
         threading.Thread(target=probe_thread, daemon=True).start()
+
+    def _dedupe_devices_by_node_id(self, keep_path: str):
+        """If keep_path's device shares its node ID with another entry in
+        self.devices, drop the duplicate - two paths resolving to the same
+        node ID are provably the same physical device (Issue 37: the
+        Heltec's two OS-level path aliases both surviving the scan's own
+        dedup). Normally the side that was just authoritatively resolved
+        (keep_path - a probe result, or a live connection) wins and the
+        other entry is dropped, EXCEPT the currently active/connected
+        device is never dropped: if it turns out to be the duplicate (it
+        resolved first, keep_path resolved to the same node ID second),
+        keep_path is the one dropped instead - removing the entry the user
+        is actually connected to would be wrong, not just imprecise."""
+        keeper = next((d for d in self.devices if d['path'] == keep_path), None)
+        if keeper is None or not keeper['node_id']:
+            return
+        duplicates = [
+            d for d in self.devices
+            if d['path'] != keep_path and d['node_id'] == keeper['node_id']
+        ]
+        if not duplicates:
+            return
+        if any(d['path'] == self._active_device_path for d in duplicates):
+            self.devices = [d for d in self.devices if d['path'] != keep_path]
+        else:
+            dup_paths = {d['path'] for d in duplicates}
+            self.devices = [d for d in self.devices if d['path'] not in dup_paths]
 
     def _device_path_from_display(self, text: str) -> str:
         """Resolve a device_spinner display string back to its underlying
@@ -684,7 +714,7 @@ class BTCMeshGUI(BoxLayout):
         (NO_DEVICES_TEXT/SCANNING_TEXT/SELECT_DEVICE_TEXT) that are
         deliberately never in self.devices."""
         for device in self.devices:
-            if format_device_display(device['path'], device['node_id']) == text:
+            if format_device_display(device['path'], device['node_id'], device['name']) == text:
                 return device['path']
         return text
 
@@ -698,12 +728,12 @@ class BTCMeshGUI(BoxLayout):
 
         self.device_spinner.unbind(text=self.on_device_selected)
         self.device_spinner.values = [
-            format_device_display(d['path'], d['node_id']) for d in self.devices
+            format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
         ]
         for device in self.devices:
             if device['path'] == selected_path:
                 self.device_spinner.text = format_device_display(
-                    device['path'], device['node_id']
+                    device['path'], device['node_id'], device['name']
                 )
                 break
         self.device_spinner.bind(text=self.on_device_selected)
@@ -766,9 +796,9 @@ class BTCMeshGUI(BoxLayout):
         if result[0] == 'devices_found':
             devices = result[1]
             if devices:
-                self.devices = [{'path': p, 'node_id': None} for p in devices]
+                self.devices = [{'path': p, 'node_id': None, 'name': None} for p in devices]
                 self.device_spinner.values = [
-                    format_device_display(d['path'], d['node_id']) for d in self.devices
+                    format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
                 ]
                 if len(devices) == 1:
                     # Auto-select and connect to single device. No background
@@ -790,7 +820,7 @@ class BTCMeshGUI(BoxLayout):
                     self.device_spinner.text = SELECT_DEVICE_TEXT
                     self.device_spinner.bind(text=self.on_device_selected)
                     self.status_log.add_message(f"Found {len(devices)} devices - select one to connect", COLOR_WARNING)
-                    self._probe_device_node_ids()
+                    self._probe_device_identities()
             else:
                 self.devices = []
                 self.device_spinner.values = [NO_DEVICES_TEXT]
@@ -798,13 +828,16 @@ class BTCMeshGUI(BoxLayout):
                 self.status_log.add_message("No Meshtastic devices found", COLOR_ERROR)
             return
 
-        # Background node-ID probe result for one device (Story 27.2)
-        if result[0] == 'device_node_id':
-            path, node_id = result[1], result[2]
+        # Background identity-probe result for one device (Story 27.2,
+        # extended by Issue 37's node-name work)
+        if result[0] == 'device_identity':
+            path, node_id, name = result[1], result[2], result[3]
             for device in self.devices:
                 if device['path'] == path:
-                    device['node_id'] = node_id
+                    device['node_id'], device['name'] = node_id, name
                     break
+            if node_id:
+                self._dedupe_devices_by_node_id(keep_path=path)
             self._refresh_device_spinner_labels()
             return
 
@@ -869,15 +902,20 @@ class BTCMeshGUI(BoxLayout):
         if action.store_iface is not None:
             self.iface = action.store_iface
 
-        # A live connection's real node ID replaces a probe for the same
-        # device (Story 27.2) - taken from the 'connected' result rather
-        # than ResultAction, since process_result() stays UI-decision-only.
+        # A live connection's real node ID and name replace a probe for the
+        # same device (Story 27.2) - taken from the 'connected' result
+        # rather than ResultAction, since process_result() stays
+        # UI-decision-only. node_name is already computed there for the
+        # connection-status label, so this is free - no separate lookup.
         if result[0] == 'connected' and self._active_device_path:
             node_id = result[2]
+            node_name = result[3] if len(result) > 3 else None
             for device in self.devices:
                 if device['path'] == self._active_device_path:
-                    device['node_id'] = node_id
+                    device['node_id'], device['name'] = node_id, node_name
                     break
+            if node_id:
+                self._dedupe_devices_by_node_id(keep_path=self._active_device_path)
             self._refresh_device_spinner_labels()
 
         # Add log messages first (before _update_known_nodes which also logs)
