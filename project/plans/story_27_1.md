@@ -216,3 +216,90 @@ whichever device it currently resolves to, immediately after updating
   seeed-xiao-s3 board), confirm the dropdown shows paths immediately,
   node IDs fill in within a few seconds without any clicking, and
   selecting an entry connects to the right physical device.
+
+---
+
+## Story 27.2 Implementation Notes (client GUI)
+
+Concrete integration into `btcmesh_client_gui.py`'s existing
+`self.result_queue` + `_check_results` polling + `_handle_result` pattern.
+
+**New state** (in `__init__`):
+- `self.devices: list[dict]` - `[{'path': str, 'node_id': Optional[str]}, ...]`,
+  rebuilt on every scan.
+- `self._active_device_path: Optional[str]` - path of the device currently
+  connecting or connected, so its node ID comes from the live connection
+  instead of a redundant probe.
+
+**`_handle_result`'s existing `devices_found` branch**, extended:
+- Build `self.devices` from the raw path list (`node_id: None` for all).
+- Single device found: auto-connect as today, and additionally set
+  `self._active_device_path = devices[0]`. Deliberately do **not** kick off
+  a background probe in this case - nothing to disambiguate, and the
+  device is about to connect anyway, so its real node ID arrives a few
+  seconds later via the `'connected'` result instead of a separate probe
+  connection.
+- Multiple devices found: unchanged selection-prompt behavior, plus kick
+  off `_probe_device_node_ids()` in the background.
+
+**New `_handle_result` branch for `'device_node_id'`** (one message per
+device, pushed by the probe thread): update the matching entry in
+`self.devices`, then call `_refresh_device_spinner_labels()`.
+
+**`'connected'` handling** (existing block that does
+`self.iface = action.store_iface`): additionally, if
+`self._active_device_path` is set, update that device's `node_id` in
+`self.devices` from `result[2]` and call `_refresh_device_spinner_labels()`
+- this is what satisfies "currently-connected device is not re-probed, its
+node ID comes from the live connection" without adding any explicit
+skip-list to the probe loop itself.
+
+**New methods**:
+- `_probe_device_node_ids()`: spawns one daemon thread that calls
+  `probe_device_node_id()` for every device in `self.devices` in turn,
+  pushing `('device_node_id', path, node_id)` per device. No skip-list
+  needed - by the time this runs (multi-device branch only), nothing is
+  connected yet in this codebase's actual flow: `on_refresh_devices`
+  always disconnects before rescanning, and the startup scan begins with
+  no connection either.
+- `_refresh_device_spinner_labels()`: rebuilds `device_spinner.values`
+  from `self.devices`; resolves the currently-selected entry's path via
+  `_device_path_from_display`, and re-sets `device_spinner.text` to that
+  path's new formatted label. Unbinds/rebinds `on_device_selected` around
+  the mutation (matching the existing pattern already used for
+  `SELECT_DEVICE_TEXT`) so relabeling never fires a spurious reconnect.
+- `_device_path_from_display(text)`: reverse lookup, mirroring
+  `on_node_selected`'s existing pattern for known nodes - returns the
+  matching device's path, or `text` itself unchanged as a fallback
+  (covers the sentinel values `NO_DEVICES_TEXT`/`SCANNING_TEXT`/
+  `SELECT_DEVICE_TEXT`, which are deliberately never in `self.devices`).
+
+**`on_device_selected`** updated to resolve the path from the (possibly
+node-ID-suffixed) display text before connecting:
+```python
+def on_device_selected(self, spinner, text):
+    if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
+        return
+    path = self._device_path_from_display(text)
+    self._disconnect_device()
+    self._active_device_path = path
+    self._init_meshtastic(port=path)
+```
+
+**`_disconnect_device()`**: reset `self._active_device_path = None`
+alongside its existing state resets (order-safe because
+`on_device_selected` re-sets it immediately after calling
+`_disconnect_device()`).
+
+**Edge cases considered, not specially handled** (consistent with the
+plan's "no custom timeout/synchronization" stance):
+- User selects a device while its background probe is still in flight:
+  the probe's `connect()` and the selection's `connect()` can race for
+  the same serial port. Worst case the probe attempt fails (port busy)
+  and returns `None` for that entry, silently overwritten moments later
+  by the real `'connected'` node ID anyway. No lock/cancellation added.
+- Single device that fails to connect: its dropdown entry is never
+  probed and stays path-only. Showing no node ID for an unreachable
+  device is arguably correct, not a bug to route around.
+
+Files touched: `btcmesh_client_gui.py`, `tests/test_btcmesh_client_gui.py`.
