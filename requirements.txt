@@ -1,7 +1,5 @@
 meshtastic
 python-dotenv
-python-bitcoinrpc
-stem
 requests[socks]
 kivy
 pyserial

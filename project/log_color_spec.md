@@ -100,7 +100,7 @@ These are informational messages showing normal operation.
 
 ## Implementation
 
-Update `get_log_color()` in `core/gui_common.py`:
+Update `get_log_color()` in `gui/gui_common.py`:
 
 ```python
 def get_log_color(level: int, msg: str,

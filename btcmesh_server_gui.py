@@ -28,7 +28,7 @@ from kivy.properties import BooleanProperty
 from kivy.core.clipboard import Clipboard
 
 # Import shared GUI components
-from core.gui_common import (
+from gui.gui_common import (
     # Colors
     COLOR_PRIMARY,
     COLOR_SUCCESS,
@@ -40,7 +40,7 @@ from core.gui_common import (
     COLOR_MAINNET,
     COLOR_TESTNET,
     COLOR_SIGNET,
-    COLOR_SECUNDARY,
+    COLOR_SECONDARY,
     # Classes
     ConnectionState,
     StatusLog,
@@ -456,7 +456,7 @@ class BTCMeshServerGUI(BoxLayout):
             size_hint_x=None,
             halign='right',
             valign='middle',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
         )
         device_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 15))
         settings_container.add_widget(device_label)
@@ -468,7 +468,7 @@ class BTCMeshServerGUI(BoxLayout):
             size_hint_x=0.75,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
         )
         settings_container.add_widget(self.device_spinner)
 
@@ -1170,7 +1170,7 @@ class BTCMeshServerGUI(BoxLayout):
             size_hint_x=0.4,
             halign='left',
             valign='middle',
-            color=COLOR_SECUNDARY
+            color=COLOR_SECONDARY
         )
         time_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
 
@@ -1199,7 +1199,7 @@ class BTCMeshServerGUI(BoxLayout):
             size_hint_x=0.5,
             halign='left',
             valign='middle',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
             font_size='12sp'
         )
         sender_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
@@ -1209,7 +1209,7 @@ class BTCMeshServerGUI(BoxLayout):
             size_hint_x=0.5,
             halign='right',
             valign='middle',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
             font_size='12sp'
         )
         session_label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
@@ -1297,17 +1297,17 @@ class BTCMeshServerGUI(BoxLayout):
         else:
             timestamp_display = 'Unknown'
 
-        time_row, _ = create_status_row('Time:', timestamp_display, COLOR_SECUNDARY)
+        time_row, _ = create_status_row('Time:', timestamp_display, COLOR_SECONDARY)
         content.add_widget(time_row)
 
         # Sender
         sender = entry.get('sender', 'Unknown')
-        sender_row, _ = create_status_row('Sender:', sender, COLOR_SECUNDARY)
+        sender_row, _ = create_status_row('Sender:', sender, COLOR_SECONDARY)
         content.add_widget(sender_row)
 
         # Session ID
         session_id = entry.get('session_id', '')
-        session_row, _ = create_status_row('Session:', session_id, COLOR_SECUNDARY)
+        session_row, _ = create_status_row('Session:', session_id, COLOR_SECONDARY)
         content.add_widget(session_row)
 
         # TXID (for success) with copy button
@@ -1330,7 +1330,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Raw TX section
         raw_tx = entry.get('raw_tx')
         if raw_tx:
-            raw_tx_row, _ = create_status_row('Raw TX:', '', COLOR_SECUNDARY)
+            raw_tx_row, _ = create_status_row('Raw TX:', '', COLOR_SECONDARY)
             content.add_widget(raw_tx_row)
 
             # Scrollable raw TX display - fills remaining space

@@ -10,9 +10,6 @@ UI concerns: widget setup, user interaction, and displaying progress/results.
 import threading
 import queue
 import logging
-import argparse
-import io
-import sys
 import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
@@ -32,7 +29,7 @@ from kivy.core.clipboard import Clipboard
 from kivy.properties import StringProperty, BooleanProperty
 
 # Import shared GUI components
-from core.gui_common import (
+from gui.gui_common import (
     # Colors
     COLOR_PRIMARY,
     COLOR_SUCCESS,
@@ -40,14 +37,13 @@ from core.gui_common import (
     COLOR_WARNING,
     COLOR_BG,
     COLOR_BG_LIGHT,
-    COLOR_SECUNDARY,
+    COLOR_SECONDARY,
     COLOR_DISCONNECTED,
     # Classes
     ConnectionState,
     StatusLog,
     # Functions
     get_log_color,
-    get_print_color,
     create_separator,
     create_section_label,
     create_title,
@@ -216,19 +212,6 @@ def process_result(result: tuple) -> ResultAction:
         color = get_log_color(level, msg)
         action.log_messages.append((msg, color))
 
-    elif result_type == 'print':
-        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
-        msg = result[1]
-        color = get_print_color(msg)
-        action.log_messages.append((msg, color))
-
-        # Detect success message with TXID and trigger popup
-        if 'TXID:' in msg and 'successfully' in msg.lower():
-            txid_start = msg.find('TXID:') + 5
-            txid = msg[txid_start:].strip().split()[0] if txid_start > 5 else 'Unknown'
-            action.show_success_popup = txid
-            action.stop_sending = True
-
     elif result_type == 'chunk_sending':
         chunk_num, total, attempt = result[1], result[2], result[3]
         if attempt > 1:
@@ -239,7 +222,7 @@ def process_result(result: tuple) -> ResultAction:
 
     elif result_type == 'wire_sent':
         wire_format = result[1]
-        action.log_messages.append((f'  -> {wire_format}', COLOR_SECUNDARY))
+        action.log_messages.append((f'  -> {wire_format}', COLOR_SECONDARY))
 
     elif result_type == 'progress':
         chunk_num, total = result[1], result[2]
@@ -251,7 +234,7 @@ def process_result(result: tuple) -> ResultAction:
 
     elif result_type == 'wire_received':
         message_text = result[1]
-        action.log_messages.append((f'  <- {message_text}', COLOR_SECUNDARY))
+        action.log_messages.append((f'  <- {message_text}', COLOR_SECONDARY))
 
     elif result_type == 'send_result':
         send_result = result[1]
@@ -265,30 +248,9 @@ def process_result(result: tuple) -> ResultAction:
             action.log_messages.append((f'Error: {send_result.error}', COLOR_ERROR))
             action.stop_sending = True
 
-    elif result_type == 'cli_finished':
-        # Old CLI result type - kept for backwards compatibility, will be removed in Step 7
-        exit_code = result[1]
-        if exit_code == 0:
-            action.log_messages.append(("Transaction completed successfully!", COLOR_SUCCESS))
-        else:
-            action.log_messages.append((f"CLI exited with code {exit_code}", COLOR_ERROR))
-        action.stop_sending = True
-
-    elif result_type == 'tx_success':
-        # Old result type - kept for backwards compatibility, will be removed in Step 7
-        txid = result[1]
-        action.log_messages.append(("Transaction broadcast successful!", COLOR_SUCCESS))
-        action.log_messages.append((f"TXID: {txid}", COLOR_SUCCESS))
-        action.show_success_popup = txid
-        action.stop_sending = True
-
     elif result_type == 'error':
         error = result[1]
         action.log_messages.append((f"Error: {error}", COLOR_ERROR))
-        action.stop_sending = True
-
-    elif result_type == 'aborted':
-        action.log_messages.append(("Transaction aborted by user", COLOR_WARNING))
         action.stop_sending = True
 
     return action
@@ -385,7 +347,7 @@ class BTCMeshGUI(BoxLayout):
             size_hint_x=1,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
         )
         self.device_spinner.bind(text=self.on_device_selected)
         device_selection_box.add_widget(self.device_spinner)
@@ -413,7 +375,7 @@ class BTCMeshGUI(BoxLayout):
             size_hint_x=0.5,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
         )
         self.node_spinner.bind(text=self.on_node_selected)
         dest_selection_box.add_widget(self.node_spinner)
@@ -424,8 +386,8 @@ class BTCMeshGUI(BoxLayout):
             multiline=False,
             size_hint_x=0.4,
             background_color=COLOR_BG_LIGHT,
-            foreground_color=COLOR_SECUNDARY,
-            cursor_color=COLOR_SECUNDARY,
+            foreground_color=COLOR_SECONDARY,
+            cursor_color=COLOR_SECONDARY,
         )
         dest_selection_box.add_widget(self.dest_input)
 
@@ -444,8 +406,8 @@ class BTCMeshGUI(BoxLayout):
             size_hint_y=None,
             height=180,
             background_color=COLOR_BG_LIGHT,
-            foreground_color=COLOR_SECUNDARY,
-            cursor_color=COLOR_SECUNDARY,
+            foreground_color=COLOR_SECONDARY,
+            cursor_color=COLOR_SECONDARY,
         )
         self.add_widget(self.tx_input)
 
@@ -999,7 +961,7 @@ class BTCMeshGUI(BoxLayout):
         content.add_widget(Label(
             text=txid,
             font_size=24,
-            color=COLOR_SECUNDARY,
+            color=COLOR_SECONDARY,
             text_size=(380, None),
             size_hint_y=None,
             height=70,
@@ -1015,7 +977,7 @@ class BTCMeshGUI(BoxLayout):
         # Copy button
         copy_btn = Button(
             text='Copy',
-            background_color=COLOR_SECUNDARY,
+            background_color=COLOR_SECONDARY,
             background_normal='',
             color=(0, 0, 0, 1),  # Black text
             bold=True,

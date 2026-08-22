@@ -213,8 +213,8 @@ pubsub_mock = unittest.mock.MagicMock()
 sys.modules['pubsub'] = pubsub_mock
 
 # Clear cached gui_common to ensure it uses our mocks
-if 'core.gui_common' in sys.modules:
-    del sys.modules['core.gui_common']
+if 'gui.gui_common' in sys.modules:
+    del sys.modules['gui.gui_common']
 
 # =============================================================================
 # Story 15.1: Create Server GUI Application Structure
@@ -400,8 +400,8 @@ class TestServerStartStopStory152(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Reload modules to get fresh state with correct mocks
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -523,8 +523,8 @@ class TestServerResultHandlingStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -833,8 +833,8 @@ class TestServerProcessResultsStory152(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -853,8 +853,8 @@ class TestRPCSettingsStory181(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -1783,8 +1783,8 @@ class TestActivityLogDisplayStory171(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -1959,8 +1959,8 @@ class TestSaveLoadSettingsStory184(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
@@ -2323,8 +2323,8 @@ class TestActiveSessionsDisplayStory172(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        if 'core.gui_common' in sys.modules:
-            del sys.modules['core.gui_common']
+        if 'gui.gui_common' in sys.modules:
+            del sys.modules['gui.gui_common']
         if 'btcmesh_server_gui' in sys.modules:
             del sys.modules['btcmesh_server_gui']
 
