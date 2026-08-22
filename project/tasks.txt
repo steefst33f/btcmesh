@@ -1426,18 +1426,21 @@ lora/
 
 ### 27. Node ID Display in Device Dropdowns
 
-- [ ] **Story 27.1: Add a shared device-node-ID lookup helper**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a shared helper that connects briefly to a device path and returns its node ID,
-- [ ] *   **So that** both GUIs can reuse the same logic instead of duplicating it.
-    - [ ] *   **Scenario:** Device responds normally
-        - [ ] *   **Given** a real Meshtastic device at a given serial port path.
-        - [ ] *   **When** the helper is called with that path.
-        - [ ] *   **Then** it connects, retrieves the node ID, disconnects, and returns the node ID.
-    - [ ] *   **Scenario:** Device doesn't respond / isn't a Meshtastic device
-        - [ ] *   **Given** a serial port path that isn't a genuine Meshtastic device (e.g. a false-positive candidate from the VID-blacklist scan, such as the Story 26.7 relay board).
-        - [ ] *   **When** the helper is called with that path.
-        - [ ] *   **Then** it returns `None` rather than raising, once the connection attempt fails or times out.
+- [x] **Story 27.1: Add a shared device-node-ID lookup helper**
+- [x] *   **As a** developer,
+- [x] *   **I want** a shared helper that connects briefly to a device path and returns its node ID,
+- [x] *   **So that** both GUIs can reuse the same logic instead of duplicating it.
+    - [x] *   **Scenario:** Device responds normally
+        - [x] *   **Given** a real Meshtastic device at a given serial port path.
+        - [x] *   **When** the helper is called with that path.
+        - [x] *   **Then** it connects, retrieves the node ID, disconnects, and returns the node ID.
+    - [x] *   **Scenario:** Device doesn't respond / isn't a Meshtastic device
+        - [x] *   **Given** a serial port path that isn't a genuine Meshtastic device (e.g. a false-positive candidate from the VID-blacklist scan, such as the Story 26.7 relay board).
+        - [x] *   **When** the helper is called with that path.
+        - [x] *   **Then** it returns `None` rather than raising, once the connection attempt fails or times out.
+    *   _Note: Implemented as `probe_device_node_id()` + `format_device_display()`
+        in `core/meshtastic_utils.py`, exactly per `project/plans/story_27_1.md`.
+        See PR #49._
 
 - [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
 - [ ] *   **As a** client GUI user,
