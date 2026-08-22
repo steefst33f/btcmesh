@@ -1491,6 +1491,20 @@ lora/
         background probe entirely (its node ID arrives via the live
         `'connected'` result instead); multi-device scans probe
         sequentially in the background. See PR (story-27-2)._
+    *   _Note: Real-hardware verified 2026-08-22 (Heltec + Seeed + Story
+        26.7 relay board attached, 5 raw scan candidates, see Issue 37).
+        Dropdown showed the "Select a device..." placeholder immediately;
+        `/dev/cu.SLAB_USBtoUART` and `/dev/cu.usbserial-0001` (the
+        Heltec's two path aliases) picked up `(!7c5b4418)` labels within
+        seconds with no clicking. Selecting the labeled
+        `/dev/cu.SLAB_USBtoUART (!7c5b4418)` entry connected successfully
+        (GUI log confirmed 60 known nodes fetched) - proving the reverse
+        lookup resolved the real path rather than passing the formatted
+        display text straight to the connector. Also caught and fixed a
+        real gap in the process: the Seeed's first probe attempt failed
+        instantly despite the device being healthy (see Story 27.1's
+        `PROBE_MAX_ATTEMPTS` fix above, and Issue 37 for the separate
+        duplicate/false-positive scan finding)._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
