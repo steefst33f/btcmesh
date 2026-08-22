@@ -1459,6 +1459,70 @@ process** 🔍 OPEN
 
 ---
 
+## Device Scanning: Duplicate/false-positive entries in the device dropdown
+
+**Issue 37: `scan_meshtastic_devices()` returns multiple OS-level paths for
+one physical device, plus non-Meshtastic candidates, with no way to tell
+them apart until each is individually probed** 🔍 OPEN
+
+- Found during Story 27.2's real-hardware manual verification
+  (2026-08-22), which made an existing-but-invisible gap directly
+  observable: with a Heltec, a Seeed, and the Story 26.7 relay board's
+  ESP32 (3 physical devices) attached, `scan_meshtastic_devices()`
+  returned **5** candidate paths:
+  - `/dev/cu.SLAB_USBtoUART` and `/dev/cu.usbserial-0001` - the *same*
+    physical Heltec, both surviving `eliminate_duplicate_port()`.
+  - `/dev/cu.usbmodem983DAEE5AB3C1` - the Seeed (correctly, one entry).
+  - `/dev/cu.usbserial-112440` and `/dev/cu.wchusbserial112440` - the
+    relay board's own CH340 serial port, which isn't a Meshtastic device
+    at all (different protocol entirely - see Story 26.7).
+- Root cause, two separate gaps:
+  1. `meshtastic.util.eliminate_duplicate_port()`'s heuristic (matching a
+     shared numeric suffix between two path names, e.g.
+     `/dev/cu.usbserial-1430` + `/dev/cu.wchusbserial1430`, per the
+     existing `test_scan_deduplicates_same_physical_device` regression
+     test) doesn't fire for this Heltec's actual pair of names -
+     `SLAB_USBtoUART` has no numeric suffix to match against
+     `usbserial-0001` at all, so nothing collapses them.
+  2. `scan_meshtastic_devices()` filters candidates by VID *blacklist*,
+     not a whitelist (a deliberate Issue 9 fix, so a second device with
+     an unlisted VID isn't silently hidden) - but that means a
+     non-Meshtastic serial device whose VID simply isn't on the (narrow)
+     blacklist, like the relay board's CH340 chip, passes through as a
+     seemingly-real candidate.
+- **Practical effect before Story 27.2**: harmless-looking - the dropdown
+  just showed a few extra raw paths, easy to visually skip past.
+- **Practical effect after Story 27.2**: the same duplicates/false
+  positives are now each individually *probed* in the background
+  (`probe_device_node_id()`, Story 27.1) - a full multi-second connect
+  handshake per entry on a busy mesh, or a fast-fail-then-retry cycle
+  for the non-Meshtastic ones (see Issue 27.1's `PROBE_MAX_ATTEMPTS` fix,
+  `project/tasks.txt`). Confirmed on real hardware: the Heltec got
+  probed twice (once per alias, each a full handshake), and both relay
+  board ports were probed and correctly failed - visible cost, no
+  incorrect behavior, but wasted time and a confusing-looking dropdown
+  (5 entries for 3 physical devices, 2 of which will never resolve to
+  anything).
+- Not a Story 27.2 bug - `probe_device_node_id()` and the dropdown
+  logic both handled every one of these cases exactly as designed (no
+  crash, no hang, no incorrect label). This is a pre-existing gap one
+  level down, in `scan_meshtastic_devices()`/`scan_meshtastic_devices_detailed()`
+  themselves.
+- Proposed fix directions for whenever this is picked up (not scoped/
+  decided yet):
+  - Extend `eliminate_duplicate_port`-style dedup with a fallback match
+    on `DeviceInfo.serial_number` (already collected by
+    `scan_meshtastic_devices_detailed()` for Story 26.3) when the
+    path-name heuristic doesn't fire - this Heltec's two aliases do
+    share the same reported serial number (`0001`).
+  - Consider a short, cheap pre-filter for "does this look like a
+    Meshtastic device at all" before it ever reaches the probe/connect
+    stage - e.g. by device `description` string, though `scan_*`'s
+    existing `DeviceInfo.description` values ("CP2102 USB to UART Bridge
+    Controller", "USB Serial") aren't reliably distinctive on their own.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1496,3 +1560,4 @@ process** 🔍 OPEN
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
+| 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **Open** |
