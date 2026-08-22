@@ -1,22 +1,25 @@
-import sys
-import os
+"""Manual diagnostic: verify real Bitcoin Core RPC connectivity (Issue 35).
 
-# Adjust the path to include the project root if
-# test_bitcoin_connection.py is in the root
-# and core module is in a subdirectory.
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+Not part of the automated suite - loads .env, connects via
+BitcoinRPCClient (Tor-reachability check included automatically if the
+configured host is .onion - see core/rpc_client.py's Issue 34 fix),
+calls getblockchaininfo(), and optionally broadcasts an example
+transaction as a final diagnostic step (harmless if it's already been
+broadcast - Bitcoin Core will just reject it as a duplicate).
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 try:
     from core.config_loader import load_app_config, load_bitcoin_rpc_config
     from core.rpc_client import BitcoinRPCClient
-
-    # # Import Tor management functions and SOCKS port from btcmesh_server
-    # from btcmesh_server import TOR_SOCKS_PORT, start_tor, stop_tor
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     print(
-        "Please ensure that test_bitcoin_connection.py is in the project root "
-        "directory, and the 'core' and 'btcmesh_server.py' are accessible."
+        "Please run this script from the project's scripts/ directory "
+        "with the project root's 'core' package importable."
     )
     sys.exit(1)
 

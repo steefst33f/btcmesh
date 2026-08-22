@@ -32,7 +32,7 @@ COLOR_ERROR = get_color_from_hex('#F44336')      # Red
 COLOR_WARNING = get_color_from_hex('#FF9800')    # Orange
 COLOR_BG = get_color_from_hex('#1E1E1E')         # Dark background
 COLOR_BG_LIGHT = get_color_from_hex('#2D2D2D')   # Lighter background
-COLOR_SECUNDARY = get_color_from_hex("#FFFFFF")  # White text
+COLOR_SECONDARY = get_color_from_hex("#FFFFFF")  # White text
 COLOR_DISCONNECTED = (0.7, 0.7, 0.7, 1)          # Gray for disconnected
 
 # Network badge colors
@@ -168,7 +168,7 @@ class StatusLog(ScrollView):
             color: Optional color tuple (r, g, b, a). If None, uses white.
         """
         if color is None:
-            color = COLOR_SECUNDARY
+            color = COLOR_SECONDARY
 
         label = Label(
             text=text,
@@ -415,7 +415,7 @@ def create_status_row(label_text: str, initial_value: str = '',
     Args:
         label_text: Text for the description label (e.g., 'Meshtastic:')
         initial_value: Initial text for the value label. Defaults to empty.
-        initial_color: Initial color for the value label. Defaults to COLOR_SECUNDARY.
+        initial_color: Initial color for the value label. Defaults to COLOR_SECONDARY.
         height: Height of the row in pixels. Defaults to 30.
         bold_value: Whether the value label should be bold. Defaults to False.
 
@@ -431,7 +431,7 @@ def create_status_row(label_text: str, initial_value: str = '',
         value_label.color = COLOR_SUCCESS
     """
     if initial_color is None:
-        initial_color = COLOR_SECUNDARY
+        initial_color = COLOR_SECONDARY
 
     row = BoxLayout(orientation='horizontal', size_hint_y=None, height=height)
 
@@ -441,7 +441,7 @@ def create_status_row(label_text: str, initial_value: str = '',
         size_hint_x=None,
         halign='left',
         valign='middle',
-        color=COLOR_SECUNDARY,
+        color=COLOR_SECONDARY,
     )
     # Bind width to texture size so label auto-fits its text content (+ padding for spacing)
     desc_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 25))
@@ -498,7 +498,7 @@ def create_input_row(label_text: str, initial_value: str = '',
         size_hint_x=None,
         halign='right',
         valign='middle',
-        color=COLOR_SECUNDARY,
+        color=COLOR_SECONDARY,
     )
     # Bind width to texture size so label auto-fits its text content (+ padding for spacing)
     desc_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 15))
@@ -512,7 +512,7 @@ def create_input_row(label_text: str, initial_value: str = '',
         password=password,
         size_hint_x=input_size_hint_x,
         background_color=COLOR_BG_LIGHT,
-        foreground_color=COLOR_SECUNDARY,
+        foreground_color=COLOR_SECONDARY,
         cursor_color=COLOR_PRIMARY,
     )
     if input_filter:

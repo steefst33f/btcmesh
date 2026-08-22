@@ -75,7 +75,7 @@ An operator using cookie auth (no static RPC password — the more secure setup)
 ### 8. Client CLI has no validation on `--destination`; GUI does
 **File:** [btcmesh_client_cli.py:108-120](../btcmesh_client_cli.py#L108-L120) vs [btcmesh_client_gui.py:297-335](../btcmesh_client_gui.py#L297-L335)
 The CLI validates only `--tx`. The GUI's `validate_send_inputs` separately checks that `dest` is non-empty, starts with `!`, and isn't the sender's own node — but this logic lives only in the GUI, not in `client/sender.py` (the layer both UIs delegate to). Running `btcmesh_client_cli.py -d "" -tx <hex>` gets no CLI-level or shared-layer feedback; whatever the Meshtastic library eventually raises is the only signal.
-**Fix:** move destination validation into `client/sender.py::send_transaction()` (or a small shared `validate_destination()` in `core/protocol.py`) so both UIs get it for free — this is the CLAUDE.md "no duplicated logic" rule pointing the other way (logic that should exist once, shared, rather than once, per-UI).
+**Fix:** move destination validation into `client/sender.py::send_transaction()` (or a small shared `validate_destination()` in `core/protocol.py`) so both UIs get it for free — this is the project's "no duplicated logic" convention pointing the other way (logic that should exist once, shared, rather than once, per-UI).
 
 ---
 
@@ -102,7 +102,7 @@ A crash or concurrent writer (GUI + CLI pointed at the same history file) mid-wr
 - **[core/rpc_client.py:13-14](../core/rpc_client.py#L13-L14)** — `BitcoinRPCException.__str__` does `'%d: %s' % (self.code, self.message)`; if `error_info` lacks a `'code'` key, `self.code` falls back to the string `'Unknown code'` ([line 9](../core/rpc_client.py#L9)), and `%d` on a string raises `TypeError` — an edge case that crashes while formatting the error itself. Fix: use `'%s: %s'`.
 - **[server/receiver.py:26](../server/receiver.py#L26)** — `_MAX_NACK_LEN = 200` duplicates `core/constants.py:38`'s `MAX_NACK_LENGTH = 200` as a separate literal instead of importing it.
 - **[core/config_loader.py:124-125, 138-139](../core/config_loader.py)** — `load_bitcoin_rpc_config()` reads the same `user`/`password` env vars twice (once unconditionally, again in the cookie-absent branch) — dead duplication, not a bug, but confusing.
-- **`core/gui_common.py`** imports Kivy directly, which conflicts with CLAUDE.md's description of `core/` as "pure business logic, no I/O" — structural placement smell (belongs under a `gui/` package), not a logic bug.
+- **`core/gui_common.py`** imports Kivy directly, which conflicts with the project's `core/` layering convention ("pure business logic, no I/O") — structural placement smell (belongs under a `gui/` package), not a logic bug.
 - **`requirements.txt`** pins no version numbers at all for any dependency, and two listed dependencies (`python-bitcoinrpc`, `stem`) are never imported anywhere in the codebase (confirmed via grep) — pure unused supply-chain surface.
 - **`btcmesh_client_gui.py:13-15`** imports `argparse`, `io`, `sys` — unused anywhere in the file (verified via grep), leftover from an earlier design.
 - **`btcmesh_client_gui.py`** `process_result()` — the `'print'`, `'cli_finished'`, `'tx_success'`, and `'aborted'` branches are unreachable dead code, explicitly marked "kept for backwards compatibility, will be removed in Step 7" — worth finishing that cleanup.

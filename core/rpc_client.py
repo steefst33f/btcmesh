@@ -19,7 +19,11 @@ class BitcoinRPCClient:
             super().__init__(self.message)
 
         def __str__(self):
-            return '%d: %s' % (self.code, self.message)
+            # Issue 35: self.code falls back to the string 'Unknown code'
+            # (line 17) when error_info lacks a 'code' key - '%d' on a
+            # string raises TypeError, crashing while formatting the
+            # error itself.
+            return '%s: %s' % (self.code, self.message)
 
         def __repr__(self):
             return '<%s \'%s\'>' % (self.__class__.__name__, self)

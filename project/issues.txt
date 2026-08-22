@@ -1288,7 +1288,7 @@ between CLI and GUI** ✅ RESOLVED
   tests).
 
 **Issue 35: Misc code-quality findings from code review (grouped)**
-🔍 OPEN
+✅ RESOLVED
 - `core/rpc_client.py:13-14` - `BitcoinRPCException.__str__` does
   `'%d: %s' % (self.code, self.message)`; if `error_info` lacks a `'code'`
   key, `self.code` falls back to the string `'Unknown code'` (line 9), and
@@ -1300,8 +1300,8 @@ between CLI and GUI** ✅ RESOLVED
 - `core/config_loader.py:124-125, 138-139` - `load_bitcoin_rpc_config()`
   reads the same `user`/`password` env vars twice - dead duplication, not
   a bug, but confusing.
-- `core/gui_common.py` imports Kivy directly, conflicting with CLAUDE.md's
-  description of `core/` as "pure business logic, no I/O" - structural
+- `core/gui_common.py` imports Kivy directly, conflicting with the
+  project's `core/` layering convention ("pure business logic, no I/O") - structural
   placement smell (belongs under a `gui/` package).
 - `requirements.txt` pins no version numbers for any dependency; two
   listed dependencies (`python-bitcoinrpc`, `stem`) are never imported
@@ -1323,6 +1323,44 @@ between CLI and GUI** ✅ RESOLVED
   (`test_bitcoin_connection.py`, `test_active_sessions_visual.py`,
   `test_popup_visual.py`); the first still references a
   `btcmesh_server.py` file that no longer exists under that name.
+- **Resolved 2026-08-22**, item by item:
+  - `BitcoinRPCException.__str__` now uses `'%s: %s'`; added tests for
+    both the with-code and missing-code cases.
+  - `server/receiver.py` now imports `MAX_NACK_LENGTH` from
+    `core/constants.py` instead of duplicating it as `_MAX_NACK_LEN`.
+  - The duplicate env-var read in `load_bitcoin_rpc_config()` was
+    already resolved as a side effect of Issue 29's refactor
+    (`build_bitcoin_rpc_config()` extraction) - confirmed, no separate
+    change needed.
+  - `core/gui_common.py` moved to `gui/gui_common.py` (new `gui/`
+    package), fixing the layering conflict; all import sites updated
+    (`btcmesh_client_gui.py`, `btcmesh_server_gui.py`,
+    `tests/test_gui_common.py`, `tests/test_btcmesh_server_gui.py`'s
+    `sys.modules` cache-clearing) plus doc references
+    (`project/log_color_spec.md`).
+  - Removed the two unused dependencies (`python-bitcoinrpc`, `stem`)
+    from `requirements.txt`; left version pinning alone as a separate,
+    larger policy decision not undertaken here.
+  - Removed the unused `argparse`/`io`/`sys` imports from
+    `btcmesh_client_gui.py`.
+  - Removed `process_result()`'s four dead branches (`'print'`,
+    `'cli_finished'`, `'tx_success'`, `'aborted'`) and the tests that
+    only exercised them; the real equivalents (`'send_result'` success/
+    error/abort) already have separate coverage.
+  - Renamed `COLOR_SECUNDARY` → `COLOR_SECONDARY` everywhere (~15+ call
+    sites across `gui/gui_common.py`, both GUI files, their tests, and
+    the two privately-tracked visual test scripts) - a full rename, no
+    compatibility alias.
+  - `-tx`/`--tx` left as-is: a public CLI flag rename for a cosmetic
+    nit risks breaking existing invocations for no functional gain.
+  - `test_bitcoin_connection.py` moved to `scripts/bitcoin_connection_test.py`
+    (out of `pytest`'s `test_*.py` discovery path, matching
+    `scripts/hw_tests/`'s convention for manual real-infrastructure
+    diagnostics not part of the automated suite), stale
+    `btcmesh_server.py` comment reference fixed, path resolution
+    updated for its new location. The other two flagged scripts are
+    privately-tracked GUI-visual test tools and were left in place.
+  Branch `issue-35`, full suite green (774 tests).
 
 ---
 
@@ -1416,5 +1454,5 @@ process** 🔍 OPEN
 | 32    | Node-ID formatting bug in client GUI's `_init_meshtastic` (missing zero-pad) | Minor (cosmetic/inconsistency) | **FIXED** |
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | **FIXED** |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
-| 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | Open |
+| 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | Open |

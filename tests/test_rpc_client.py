@@ -303,5 +303,21 @@ class TestBitcoinRpcBroadcastStory43(unittest.TestCase):
             self.assertIn("Connection refused", error)
 
 
+class TestBitcoinRpcExceptionStr(unittest.TestCase):
+    """Issue 35: __str__ crashed with TypeError if error_info lacked a
+    'code' key, since self.code then fell back to the string 'Unknown
+    code' and '%d' formatting doesn't accept a string."""
+
+    def test_str_with_code(self):
+        from core.rpc_client import BitcoinRPCClient
+        exc = BitcoinRPCClient.BitcoinRPCException({"code": -26, "message": "txn-mempool-conflict"})
+        self.assertEqual(str(exc), "-26: txn-mempool-conflict")
+
+    def test_str_without_code_does_not_raise(self):
+        from core.rpc_client import BitcoinRPCClient
+        exc = BitcoinRPCClient.BitcoinRPCException({"message": "something went wrong"})
+        self.assertEqual(str(exc), "Unknown code: something went wrong")
+
+
 if __name__ == "__main__":
     unittest.main()

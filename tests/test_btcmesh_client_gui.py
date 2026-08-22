@@ -158,7 +158,6 @@ def tearDownModule():
 
 from btcmesh_client_gui import (
     get_log_color,
-    get_print_color,
     process_result,
     validate_send_inputs,
     ResultAction,
@@ -173,7 +172,7 @@ from btcmesh_client_gui import (
     COLOR_WARNING,
     COLOR_SUCCESS,
     COLOR_PRIMARY,
-    COLOR_SECUNDARY,
+    COLOR_SECONDARY,
     COLOR_DISCONNECTED,
     ConnectionState,
     STATE_DISCONNECTED,
@@ -295,44 +294,10 @@ class TestSendButtonValidationStory91(unittest.TestCase):
         result = validate_send_inputs("!abcd1234", "aabbccdd", True, own_node_id=None)
         self.assertIsNone(result)
 
-    def test_cli_finished_success_stops_sending(self):
-        """Given 'cli_finished' with exit code 0, Then stops sending and shows success."""
-        result = ('cli_finished', 0)
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertIn('successfully', action.log_messages[0][0].lower())
-        self.assertEqual(action.log_messages[0][1], COLOR_SUCCESS)
-
-    def test_cli_finished_failure_stops_sending(self):
-        """Given 'cli_finished' with non-zero exit code, Then stops sending and shows error."""
-        result = ('cli_finished', 1)
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertIn('1', action.log_messages[0][0])
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-
-# =============================================================================
-# Story 9.3: Implement Abort Button
-# Tests for abort functionality
-# =============================================================================
-
-class TestAbortButtonStory93(unittest.TestCase):
-    """Tests for abort result processing - Story 9.3: Abort Button."""
-
-    def test_aborted_result_stops_sending(self):
-        """Given 'aborted' result, Then stops sending and shows warning."""
-        result = ('aborted',)
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertIn('aborted', action.log_messages[0][0].lower())
-        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
+    # Note: 'cli_finished' and 'aborted' were dead process_result() result
+    # types (Issue 35) - removed along with their branches. The real abort
+    # path is send_result.error == "Aborted by user", covered by
+    # test_send_result_aborted_by_user below.
 
 
 # =============================================================================
@@ -405,38 +370,10 @@ class TestConnectionStatusStory101(unittest.TestCase):
 class TestPopupsStory103(unittest.TestCase):
     """Tests for success/failure popup triggering - Story 10.3: Success/Failure Popups."""
 
-    def test_tx_success_result_shows_popup(self):
-        """Given 'tx_success' result, Then shows popup and success messages."""
-        result = ('tx_success', 'abc123def456789')
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertEqual(action.show_success_popup, 'abc123def456789')
-        self.assertEqual(len(action.log_messages), 2)
-        self.assertIn('successful', action.log_messages[0][0].lower())
-        self.assertIn('abc123def456789', action.log_messages[1][0])
-
-    def test_print_with_txid_success_triggers_popup(self):
-        """Given 'print' result with CLI success message and TXID, Then shows popup."""
-        # This is the actual message format from cli_main
-        result = ('print', 'Transaction successfully broadcast by relay. TXID: abc123def456')
-
-        action = process_result(result)
-
-        self.assertTrue(action.stop_sending)
-        self.assertEqual(action.show_success_popup, 'abc123def456')
-        self.assertEqual(len(action.log_messages), 1)
-
-    def test_print_with_txid_only_does_not_trigger_popup(self):
-        """Given 'print' result with just TXID (no success), Then no popup."""
-        # Just TXID without "successfully" should not trigger popup
-        result = ('print', 'TXID: abc123def456')
-
-        action = process_result(result)
-
-        self.assertFalse(action.stop_sending)
-        self.assertIsNone(action.show_success_popup)
+    # Note: 'tx_success' and 'print' were dead process_result() result
+    # types (Issue 35) - removed along with their branches. The success
+    # popup path for the current 'send_result' type is covered by
+    # test_send_result_success_shows_popup below.
 
     def test_error_result_stops_sending(self):
         """Given 'error' result, Then stops sending and shows error in log."""
@@ -497,7 +434,7 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
         self.assertEqual(len(action.log_messages), 1)
         self.assertIn('->', action.log_messages[0][0])
         self.assertIn(wire_format, action.log_messages[0][0])
-        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+        self.assertEqual(action.log_messages[0][1], COLOR_SECONDARY)
 
     def test_progress_intermediate_chunk(self):
         """Given progress for chunk 2 of 3, Then shows 'Chunk 2/3 sent'."""
@@ -531,7 +468,7 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
         self.assertEqual(len(action.log_messages), 1)
         self.assertIn('<-', action.log_messages[0][0])
         self.assertIn(message, action.log_messages[0][0])
-        self.assertEqual(action.log_messages[0][1], COLOR_SECUNDARY)
+        self.assertEqual(action.log_messages[0][1], COLOR_SECONDARY)
 
     def test_send_result_success_shows_popup(self):
         """Given send_result with success=True, Then shows popup and stops sending."""
@@ -1118,27 +1055,6 @@ class TestDisableControlsStory95(unittest.TestCase):
     3. on_send_pressed() calls _set_controls_enabled(False) when starting to send
     """
 
-    def test_handle_result_calls_set_controls_enabled_true_on_cli_finished(self):
-        """Given 'cli_finished' result, Then _handle_result calls _set_controls_enabled(True)."""
-        # Import the unbound function from the module
-        import btcmesh_client_gui
-
-        # Create a mock GUI instance with all required attributes
-        gui = unittest.mock.MagicMock()
-        gui._set_controls_enabled = unittest.mock.MagicMock()
-        gui.is_sending = True
-        gui.send_btn = unittest.mock.MagicMock()
-        gui.abort_btn = unittest.mock.MagicMock()
-        gui.status_log = unittest.mock.MagicMock()
-        gui.connection_label = unittest.mock.MagicMock()
-        gui._show_success_popup = unittest.mock.MagicMock()
-
-        # Call the actual _handle_result method with our mock as 'self'
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('cli_finished', 0))
-
-        # Verify _set_controls_enabled was called with True
-        gui._set_controls_enabled.assert_called_once_with(True)
-
     def test_handle_result_calls_set_controls_enabled_true_on_error(self):
         """Given 'error' result, Then _handle_result calls _set_controls_enabled(True)."""
         import btcmesh_client_gui
@@ -1153,23 +1069,6 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui._show_success_popup = unittest.mock.MagicMock()
 
         btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('error', 'Something failed'))
-
-        gui._set_controls_enabled.assert_called_once_with(True)
-
-    def test_handle_result_calls_set_controls_enabled_true_on_abort(self):
-        """Given 'aborted' result, Then _handle_result calls _set_controls_enabled(True)."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui._set_controls_enabled = unittest.mock.MagicMock()
-        gui.is_sending = True
-        gui.send_btn = unittest.mock.MagicMock()
-        gui.abort_btn = unittest.mock.MagicMock()
-        gui.status_log = unittest.mock.MagicMock()
-        gui.connection_label = unittest.mock.MagicMock()
-        gui._show_success_popup = unittest.mock.MagicMock()
-
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('aborted',))
 
         gui._set_controls_enabled.assert_called_once_with(True)
 
@@ -1235,13 +1134,14 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui._set_controls_enabled.assert_not_called()
 
     def test_process_result_stop_sending_true_for_completion_results(self):
-        """Verify process_result sets stop_sending=True for completion results."""
+        """Verify process_result sets stop_sending=True for completion results.
+
+        ('cli_finished', ...), ('aborted',), and ('tx_success', ...) were
+        dead result types (Issue 35) - removed from this list along with
+        their process_result() branches. Completion via the current
+        'send_result' type is covered separately (test_send_result_*)."""
         completion_results = [
-            ('cli_finished', 0),
-            ('cli_finished', 1),
             ('error', 'Failed'),
-            ('aborted',),
-            ('tx_success', 'txid123'),
         ]
 
         for result in completion_results:
@@ -1252,7 +1152,6 @@ class TestDisableControlsStory95(unittest.TestCase):
         """Verify process_result sets stop_sending=False for progress results."""
         progress_results = [
             ('log', 'Progress', logging.INFO),
-            ('print', 'Some output'),
             ('connected', unittest.mock.MagicMock(), '!abc123'),
         ]
 

@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from core.constants import CHUNK_DELIMITER
+from core.constants import CHUNK_DELIMITER, MAX_NACK_LENGTH
 from core.reassembler import (
     CHUNK_PREFIX,
     InvalidChunkFormatError,
@@ -24,8 +24,6 @@ from core.protocol import parse_chunk
 from core.rpc_client import BitcoinRPCClient
 from core.transaction_parser import basic_sanity_check, decode_raw_transaction_hex
 from transport.base import BaseTransport
-
-_MAX_NACK_LEN = 200
 
 # Concise error-message mapping for common Bitcoin Core RPC rejection
 # reasons, kept short enough to fit LoRa payload constraints in a NACK.
@@ -331,8 +329,8 @@ class TransactionReceiver:
 
     def _send_nack(self, session_id: str, sender_id: str, detail: str) -> str:
         msg = f"BTC_NACK|{session_id}|{detail}"
-        if len(msg) > _MAX_NACK_LEN:
-            msg = msg[: _MAX_NACK_LEN - 3] + "..."
+        if len(msg) > MAX_NACK_LENGTH:
+            msg = msg[: MAX_NACK_LENGTH - 3] + "..."
         self._send(msg, sender_id)
         return msg
 
