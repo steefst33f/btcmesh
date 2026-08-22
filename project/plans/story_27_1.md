@@ -491,3 +491,209 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
   relay board's 2 false-positive ports still present and still
   unlabeled - dedup doesn't touch those), and that the Heltec shows its
   configured name, not a bare path.
+
+---
+
+## Architecture Revision (2026-08-23): Connect-Only-At-Action Model
+
+**Context**: discussing Story 27.3 (server GUI) raised the question of
+*why* the client and server GUIs handle device selection so
+differently - client auto-connects the moment a device is chosen,
+server only connects when "Start Server" is pressed. Tracing it down:
+the honest reason isn't "client's job is connect, server's job is
+configure" (that's a description, not a cause) - it's that two
+specific *features* happen to depend on the client holding a
+persistent connection while otherwise idle:
+
+1. The known-nodes destination dropdown (`_update_known_nodes()`,
+   Story 11.2) reads `self.iface.nodes`, which needs a live connection.
+2. The idle-time device watchdog (Story 28.4) periodically pings an
+   already-open connection to catch a wedge before Send.
+
+Neither the server GUI nor either CLI (`btcmesh_client_cli.py`,
+`btcmesh_server_cli.py` - both checked directly) has anything like
+this: both CLIs resolve a port and connect *only* at the moment they're
+about to actually do their one job, then disconnect in a `finally`
+block. There's no interactive multi-device selection step in CLI-land
+at all - the port is already decided (via `-p`/`.env`) before the
+process starts, so this isn't really evidence either way on its own,
+but it does confirm "connect only when about to act" is a
+well-established, working pattern elsewhere in this codebase already.
+
+**Decision**: adopt one rule for both GUIs - **connect for real only at
+the moment of actually acting (Send for the client, Start for the
+server)**. Everything before that (browsing the device list, seeing
+names/IDs) uses the same brief connect-probe-disconnect cycle
+`probe_device_identity()` already provides. This is a bigger change
+than "finish Story 27.3" - it revises the client GUI behavior Story
+27.2 already implemented, and removes Story 28.4's client-side idle
+watchdog. Confirmed acceptable (2026-08-23): none of this code has
+real users yet, so there's no backward-compatibility cost to getting
+the underlying model right instead of layering Story 27.3 onto an
+inconsistency.
+
+**Why the idle watchdog specifically has to go, not just get
+disconnected from this change**: its entire premise is "the connection
+is already open, periodically verify it's still responsive." With no
+ambient connection to ping, the only way to preserve *some* form of
+idle liveness-checking would be to periodically reconnect just to test
+it - which is the exact rapid-reconnect-cycling pattern this project
+has already caught **causing** real wedges (Issue 12, and the Seeed
+wedge personally reproduced during this session's Story 27.2
+verification work). So idle liveness-checking would work against
+itself under this model, not just become redundant. A wedge is instead
+discovered at Send time, already handled cleanly by the existing
+connect retry (`CONNECT_MAX_ATTEMPTS`) and bounded send timeout (Story
+28.1) - a clear, immediate, actionable error instead of a background
+maybe-warning that periodically risks provoking the exact problem it's
+watching for.
+
+**What happens to the known-nodes dropdown**: it keeps working, just
+stops depending on an ambient connection. Its existing manual "Scan"
+button (`on_refresh_nodes`) becomes a self-contained brief-connect,
+fetch-known-nodes, disconnect action - the same primitive as device
+identity probing, applied to a different payload (`get_known_nodes()`
+instead of `get_own_node_name()`), off a transport that's opened and
+closed within that one action instead of borrowed from an ambient
+`self.iface`.
+
+### Shared device-selection module (`gui/gui_common.py`)
+
+The mechanics (probe orchestration, dedup-by-node-ID, reverse-lookup,
+relabeling) are identical between the client and server GUIs - this
+was already true before this revision (Story 27.3's original plan
+above duplicates Story 27.2's methods near-verbatim), and stays true
+after it. Per this project's "no duplicated logic" principle, and
+since these functions touch Kivy widgets directly (so `core/`, which
+must stay UI-free, isn't the right home), they move into
+`gui/gui_common.py` - where `StatusLog`/`ConnectionState`/the shared
+factory functions already live for cross-GUI concerns - as plain
+functions operating on passed-in state rather than bound methods, so
+neither GUI file needs to inherit from anything or share instance
+state:
+
+```python
+def probe_devices_in_background(devices: list, result_queue, skip_paths: frozenset = frozenset()) -> None:
+    """Starts a daemon thread that probes each device in `devices` (list
+    of {'path', 'node_id', 'name'} dicts) via probe_device_identity(),
+    pushing ('device_identity', path, node_id, name) onto result_queue
+    for each one not in skip_paths. skip_paths exists for callers that
+    still want to exclude specific paths (e.g. one already known some
+    other way) - neither GUI uses it after this revision (see below),
+    but the hook costs nothing to keep."""
+
+def dedupe_devices_by_node_id(devices: list, keep_path: str, protect_path: str = None) -> tuple[list, dict | None]:
+    """Returns (new_devices_list, removed_device_or_None). If keep_path's
+    device shares its node ID with another entry, that entry is dropped
+    and keep_path's wins - unless the duplicate's path equals
+    protect_path, in which case keep_path is dropped instead. Passing
+    protect_path=None (the server GUI's case - no live connection ever
+    exists during scanning, see below) simply disables that exemption,
+    since no device path ever equals None."""
+
+def device_path_from_display(devices: list, text: str) -> str:
+    """Reverse lookup: formatted display text -> underlying path, or
+    text unchanged as a fallback (sentinel values, already-resolved
+    real paths that aren't in `devices`)."""
+
+def refresh_device_spinner_labels(spinner, devices: list, selection_handler=None) -> None:
+    """Rebuilds spinner.values from devices, preserving the current
+    selection across the relabel. Unbinds/rebinds selection_handler
+    around the mutation if given (the client still needs this, even
+    without an active-device concept - see below); omitted entirely for
+    the server GUI, which has no bound handler to protect."""
+```
+
+**Does the client still need dedup's `protect_path` exemption without
+an ambient connection?** No live-connection case remains, but a
+different, narrower one does: if the user manually selects a
+not-yet-fully-probed alias *before* its duplicate resolves, a later
+dedup pass could drop the very entry they just selected out from under
+them. Accepted as a known edge case rather than engineered around:
+worst case the spinner keeps showing that alias's raw, unformatted (but
+still perfectly valid) path instead of the pretty label, and Send-time
+connection to it still works correctly - `device_path_from_display()`'s
+existing fallback rule (return unmatched text as-is) means a stale-but-
+real path continues to resolve to a real device either way. Not
+reachable in this codebase's actual flow today (mirrors the exact
+"probe/selection race" edge case Story 27.2's original design already
+accepted for the same reason), so `protect_path` isn't used by the
+client under this revision either - both GUIs now call
+`dedupe_devices_by_node_id(devices, keep_path)` identically, and the
+parameter exists in the shared function's signature only because a
+future caller with a genuine live-connection-during-scan scenario might
+need it, not because either GUI here does.
+
+**Still needs unbind/rebind in `refresh_device_spinner_labels()` for
+the client, even now**: relabeling changes `spinner.text`, and Kivy
+Spinner fires its bound `text` handler on any value change - without
+unbinding first, a relabel-only mutation would still spuriously
+re-trigger the client's selection handler. The server GUI has no
+bound handler at all (per the original Story 27.3 plan above), so it
+passes `selection_handler=None` and the function skips that step
+entirely.
+
+### `btcmesh_client_gui.py` changes
+
+- **Remove**: auto-connect on `devices_found` (single-device case),
+  `on_device_selected`'s immediate `_disconnect_device()` +
+  `_init_meshtastic()`, the Story 28.4 watchdog thread/wiring
+  (`_start_watchdog_thread`, `build_device_watchdog` import and use,
+  `watchdog`/`power_control` state), `_active_device_path` (no longer
+  meaningful with no ambient connection).
+- **Keep, unchanged**: the scan itself, `self.devices` state shape,
+  `_probe_device_identities()`'s call site (now unconditional -
+  always probe, matching the server GUI, since there's no more
+  "about to auto-connect anyway" shortcut for the single-device case
+  either).
+- **Move**: real connection logic (what `_init_meshtastic()` already
+  does) into `on_send_pressed()`, resolving the device path via
+  `device_path_from_display(self.devices, self.device_spinner.text)`
+  first - mirrors `btcmesh_client_cli.py`'s `run_send()` almost
+  exactly (connect, send, disconnect in a `finally`), just wrapped in
+  the existing background-thread + `result_queue` pattern this file
+  already uses throughout.
+- **Change**: `_update_known_nodes()` (Story 11.2, triggered by
+  `on_refresh_nodes`) opens its own transport, calls
+  `get_known_nodes()`/`get_own_node_name()` off it, and disconnects -
+  no longer reads an ambient `self.iface`.
+
+### `btcmesh_server_gui.py` changes
+
+Story 27.3's original plan above still applies almost entirely - it
+already matches the connect-only-at-Start model. The only change from
+that plan: `_probe_device_identities()`, `dedupe_devices_by_node_id()`,
+`device_path_from_display()`, `refresh_device_spinner_labels()` are now
+imported from `gui/gui_common.py` rather than reimplemented locally,
+and the fix to `_on_save_settings()`/`on_start_pressed()` (resolving
+`self.device_spinner.text` through `device_path_from_display()` before
+using it as a literal path) stands exactly as planned.
+
+### Critical Files (supersedes the table in Story 27.3's section above)
+
+| File | Change |
+|------|--------|
+| `gui/gui_common.py` | New: `probe_devices_in_background()`, `dedupe_devices_by_node_id()`, `device_path_from_display()`, `refresh_device_spinner_labels()` |
+| `btcmesh_client_gui.py` | Remove auto-connect-on-select and Story 28.4 watchdog wiring; move real connection into `on_send_pressed()`; `_update_known_nodes()` opens its own brief connection instead of reading `self.iface` |
+| `btcmesh_server_gui.py` | Adopt the shared `gui/gui_common.py` functions; fix `_on_save_settings()`/`on_start_pressed()` to resolve display text to a real path first |
+| `tests/test_gui_common.py` | New tests for the four extracted functions |
+| `tests/test_btcmesh_client_gui.py` | Remove tests for deleted auto-connect/watchdog behavior; add tests for connect-at-Send and the new known-nodes fetch path |
+| `tests/test_btcmesh_server_gui.py` | Tests mirroring the client's for the shared-function usage; `_on_save_settings()`/`on_start_pressed()` path-resolution tests |
+| `project/tasks.txt` | Story 28.4 marked superseded by this revision; Story 27.2/27.3 notes updated |
+| `project/issues.txt` | Issue 37 updated once server GUI also gets the fix |
+
+### Verification
+
+- **Unit tests**: the four shared functions tested directly in
+  `tests/test_gui_common.py`, independent of either GUI; both GUI test
+  files updated for the new connection-lifecycle and known-nodes
+  behavior; full suite green.
+- **Manual**: client GUI - selecting a device no longer opens a
+  connection (confirm via log: no "Connecting to..." until Send is
+  pressed); Send still works end-to-end; known-nodes "Scan" still
+  populates the destination dropdown. Server GUI - same real-hardware
+  multi-device scenario as before, plus confirming Start Server
+  connects to the correct physical device when a labeled entry is
+  selected, and no device-related log/behavior regression from
+  removing the client's Story 28.4 watchdog (server keeps its own
+  watchdog, wired at Start, unchanged).
