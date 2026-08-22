@@ -7,8 +7,9 @@ This module provides reusable Kivy widgets, color constants, and helper
 functions to maintain visual consistency across BTCMesh applications.
 """
 import logging
+import threading
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.widget import Widget
@@ -20,6 +21,8 @@ from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.utils import get_color_from_hex
+
+from core.meshtastic_utils import probe_device_identity, format_device_display
 
 
 # =============================================================================
@@ -520,3 +523,108 @@ def create_input_row(label_text: str, initial_value: str = '',
     row.add_widget(text_input)
 
     return row, text_input
+
+
+# =============================================================================
+# Device Selection Helpers - shared between client and server GUIs (Story
+# 27.2/27.3). Both GUIs' device dropdowns need identical mechanics: probe
+# each scanned candidate for its Meshtastic identity in the background,
+# dedupe entries that turn out to be the same physical device (two OS-level
+# path aliases resolving to the same node ID - Issue 37), resolve a
+# formatted display string back to its underlying path, and relabel the
+# dropdown as identities resolve without disrupting the current selection.
+# Written as plain functions operating on passed-in state (a `devices` list
+# of {'path', 'node_id', 'name'} dicts) rather than bound methods, since
+# neither GUI needs to share instance state with the other - see
+# project/plans/story_27_1.md's "Architecture Revision" section.
+# =============================================================================
+
+def probe_devices_in_background(devices: List[dict], result_queue,
+                                 skip_paths: frozenset = frozenset()) -> None:
+    """Start a background thread that briefly connects to each device in
+    `devices` to learn its Meshtastic node ID and name (probe_device_identity()
+    - connect, read identity, disconnect), pushing
+    ('device_identity', path, node_id, name) onto result_queue for each one
+    not in skip_paths.
+    """
+    def probe_thread():
+        for device in list(devices):
+            if device['path'] in skip_paths:
+                continue
+            identity = probe_device_identity(device['path'])
+            result_queue.put((
+                'device_identity', device['path'], identity.node_id, identity.name
+            ))
+
+    threading.Thread(target=probe_thread, daemon=True).start()
+
+
+def dedupe_devices_by_node_id(devices: List[dict], keep_path: str,
+                               protect_path: Optional[str] = None):
+    """If keep_path's device shares its node ID with another entry in
+    devices, drop the duplicate - two paths resolving to the same node ID
+    are provably the same physical device (Issue 37: two OS-level path
+    aliases for one device). Normally keep_path (the side that was just
+    authoritatively resolved - a probe result, or a live connection) wins
+    and the other entry is dropped, EXCEPT protect_path is never dropped:
+    if it turns out to be the duplicate (it was already known; keep_path
+    resolved to the same node ID after), keep_path is the one dropped
+    instead. Pass protect_path=None (the default) to disable that
+    exemption entirely - no device path is ever equal to None, so nothing
+    is ever protected.
+
+    Returns (new_devices_list, removed_device_or_None). Does not mutate
+    `devices` in place.
+    """
+    keeper = next((d for d in devices if d['path'] == keep_path), None)
+    if keeper is None or not keeper['node_id']:
+        return devices, None
+    duplicates = [
+        d for d in devices
+        if d['path'] != keep_path and d['node_id'] == keeper['node_id']
+    ]
+    if not duplicates:
+        return devices, None
+    if any(d['path'] == protect_path for d in duplicates):
+        removed = keeper
+        new_devices = [d for d in devices if d['path'] != keep_path]
+    else:
+        removed = duplicates[0]
+        dup_paths = {d['path'] for d in duplicates}
+        new_devices = [d for d in devices if d['path'] not in dup_paths]
+    return new_devices, removed
+
+
+def device_path_from_display(devices: List[dict], text: str) -> str:
+    """Resolve a device dropdown's display string back to its underlying
+    path, mirroring the known-nodes dropdown's reverse-lookup pattern.
+    Falls back to treating text as a raw path unchanged if it doesn't
+    match any entry (sentinel values like "Auto-detect", or a path that
+    hasn't been added to `devices` yet)."""
+    for device in devices:
+        if format_device_display(device['path'], device['node_id'], device['name']) == text:
+            return device['path']
+    return text
+
+
+def refresh_device_spinner_labels(spinner, devices: List[dict], selection_handler=None) -> None:
+    """Rebuild spinner.values from devices as identities resolve,
+    preserving the currently selected device across the relabel.
+    Unbinds/rebinds selection_handler around the mutation if given, so
+    relabeling never fires a spurious selection event - Kivy Spinner fires
+    its bound text handler on any value change, including a relabel-only
+    one. Omit selection_handler for a spinner with no bound handler to
+    protect (e.g. the server GUI's, which has none at all)."""
+    selected_path = device_path_from_display(devices, spinner.text)
+
+    if selection_handler is not None:
+        spinner.unbind(text=selection_handler)
+    spinner.values = [
+        format_device_display(d['path'], d['node_id'], d['name']) for d in devices
+    ]
+    for device in devices:
+        if device['path'] == selected_path:
+            spinner.text = format_device_display(device['path'], device['node_id'], device['name'])
+            break
+    if selection_handler is not None:
+        spinner.bind(text=selection_handler)

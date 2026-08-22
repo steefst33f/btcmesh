@@ -534,5 +534,278 @@ class TestWidgetFactories(unittest.TestCase):
         self.assertEqual(btn.text, 'Toggle')
 
 
+# =============================================================================
+# Device Selection Helpers - shared between client and server GUIs
+# (Story 27.2/27.3; see project/plans/story_27_1.md's "Architecture
+# Revision" section for the design)
+# =============================================================================
+
+class _ImmediateThread:
+    """Runs the thread target synchronously so tests stay deterministic,
+    without real background threads."""
+
+    def __init__(self, target=None, daemon=None, **kwargs):
+        self._target = target
+
+    def start(self):
+        if self._target:
+            self._target()
+
+
+def _drain(q):
+    results = []
+    while not q.empty():
+        results.append(q.get_nowait())
+    return results
+
+
+class TestProbeDevicesInBackground(unittest.TestCase):
+    """Tests for probe_devices_in_background()."""
+
+    def test_pushes_one_result_per_device(self):
+        """Given a list of devices, Then probe_device_identity() is called
+        for each and a device_identity result is pushed per device."""
+        import queue
+        from gui import gui_common
+        from core.meshtastic_utils import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_device_identity',
+                 side_effect=[
+                     ProbedDevice(node_id='!11111111', name='Node One'),
+                     ProbedDevice(node_id=None, name=None),
+                 ],
+             ):
+            gui_common.probe_devices_in_background(devices, result_queue)
+
+        self.assertEqual(
+            _drain(result_queue),
+            [
+                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
+                ('device_identity', '/dev/ttyACM0', None, None),
+            ],
+        )
+
+    def test_skip_paths_are_not_probed(self):
+        """Given a path in skip_paths, Then it's not probed and no result
+        is pushed for it."""
+        import queue
+        from gui import gui_common
+        from core.meshtastic_utils import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_device_identity',
+                 return_value=ProbedDevice(node_id='!22222222', name='Node Two'),
+             ) as mock_probe:
+            gui_common.probe_devices_in_background(
+                devices, result_queue, skip_paths=frozenset({'/dev/ttyUSB0'})
+            )
+
+        mock_probe.assert_called_once_with('/dev/ttyACM0')
+        self.assertEqual(
+            _drain(result_queue),
+            [('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two')],
+        )
+
+
+class TestDedupeDevicesByNodeId(unittest.TestCase):
+    """Tests for dedupe_devices_by_node_id()."""
+
+    def test_removes_earlier_duplicate_no_protection(self):
+        """Given two paths sharing a node ID and no protect_path, Then the
+        earlier-resolved one is dropped and keep_path survives."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+
+        new_devices, removed = gui_common.dedupe_devices_by_node_id(
+            devices, keep_path='/dev/cu.usbserial-0001'
+        )
+
+        self.assertEqual(len(new_devices), 1)
+        self.assertEqual(new_devices[0]['path'], '/dev/cu.usbserial-0001')
+        self.assertEqual(removed['path'], '/dev/cu.SLAB_USBtoUART')
+
+    def test_protect_path_survives_even_if_it_is_the_duplicate(self):
+        """Given protect_path is the duplicate side (it resolved first;
+        keep_path resolved to the same node ID second), Then keep_path is
+        dropped instead - protect_path is never removed."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+
+        new_devices, removed = gui_common.dedupe_devices_by_node_id(
+            devices,
+            keep_path='/dev/cu.usbserial-0001',
+            protect_path='/dev/cu.SLAB_USBtoUART',
+        )
+
+        self.assertEqual(len(new_devices), 1)
+        self.assertEqual(new_devices[0]['path'], '/dev/cu.SLAB_USBtoUART')
+        self.assertEqual(removed['path'], '/dev/cu.usbserial-0001')
+
+    def test_protect_path_none_disables_exemption(self):
+        """Given protect_path=None (the default), Then no device is ever
+        protected - dedup behaves as if no active/protected device exists
+        (the server GUI's case, which has no live-connection concept)."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+
+        new_devices, removed = gui_common.dedupe_devices_by_node_id(
+            devices, keep_path='/dev/cu.usbserial-0001', protect_path=None
+        )
+
+        self.assertEqual(len(new_devices), 1)
+        self.assertEqual(new_devices[0]['path'], '/dev/cu.usbserial-0001')
+
+    def test_no_op_when_no_duplicate(self):
+        """Given no other device shares keep_path's node ID, Then nothing
+        is removed and removed is None."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': 'One'},
+            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Two'},
+        ]
+
+        new_devices, removed = gui_common.dedupe_devices_by_node_id(devices, keep_path='/dev/ttyUSB0')
+
+        self.assertEqual(len(new_devices), 2)
+        self.assertIsNone(removed)
+
+    def test_no_op_when_keep_path_node_id_is_none(self):
+        """Given keep_path's own node_id is None (a failed probe), Then
+        nothing is removed - there's nothing to dedupe against."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+
+        new_devices, removed = gui_common.dedupe_devices_by_node_id(devices, keep_path='/dev/ttyUSB0')
+
+        self.assertEqual(len(new_devices), 2)
+        self.assertIsNone(removed)
+
+    def test_does_not_mutate_input_list(self):
+        """Given a devices list, Then the original list object is left
+        untouched - callers must use the returned list."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+        original_len = len(devices)
+
+        gui_common.dedupe_devices_by_node_id(devices, keep_path='/dev/cu.usbserial-0001')
+
+        self.assertEqual(len(devices), original_len)
+
+
+class TestDevicePathFromDisplay(unittest.TestCase):
+    """Tests for device_path_from_display()."""
+
+    def test_resolves_labeled_entry(self):
+        """Given a formatted 'name (node_id)' display string, Then it
+        resolves back to the underlying path."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+
+        result = gui_common.device_path_from_display(devices, 'Meshtastic 4418 (!7c5b4418)')
+        self.assertEqual(result, '/dev/ttyUSB0')
+
+    def test_falls_back_for_unknown_text(self):
+        """Given text that doesn't match any known device (a sentinel
+        value, or a raw path not yet in devices), Then it's returned
+        unchanged."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+
+        result = gui_common.device_path_from_display(devices, 'Auto-detect')
+        self.assertEqual(result, 'Auto-detect')
+
+
+class TestRefreshDeviceSpinnerLabels(unittest.TestCase):
+    """Tests for refresh_device_spinner_labels()."""
+
+    def test_preserves_selection_across_relabel(self):
+        """Given the currently selected device gains a name/node_id, Then
+        the spinner's values are rebuilt and its text updates to the new
+        formatted label for that same device - not silently reset."""
+        from gui import gui_common
+
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Node Two'},
+        ]
+        spinner = unittest.mock.MagicMock()
+        spinner.text = '/dev/ttyACM0'  # selected before it had a label
+
+        gui_common.refresh_device_spinner_labels(spinner, devices)
+
+        self.assertEqual(
+            spinner.values,
+            ['/dev/ttyUSB0 (!11111111)', 'Node Two (!22222222)'],
+        )
+        self.assertEqual(spinner.text, 'Node Two (!22222222)')
+
+    def test_unbinds_and_rebinds_selection_handler_when_given(self):
+        """Given a selection_handler, Then it's unbound/rebound around the
+        mutation, so relabeling never fires a spurious selection event."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
+        spinner = unittest.mock.MagicMock()
+        spinner.text = '/dev/ttyUSB0'
+        handler = unittest.mock.MagicMock()
+
+        gui_common.refresh_device_spinner_labels(spinner, devices, selection_handler=handler)
+
+        spinner.unbind.assert_called_once_with(text=handler)
+        spinner.bind.assert_called_once_with(text=handler)
+
+    def test_no_bind_calls_when_selection_handler_omitted(self):
+        """Given no selection_handler (the server GUI's case - no bound
+        handler exists to protect), Then unbind/bind are never called."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
+        spinner = unittest.mock.MagicMock()
+        spinner.text = '/dev/ttyUSB0'
+
+        gui_common.refresh_device_spinner_labels(spinner, devices)
+
+        spinner.unbind.assert_not_called()
+        spinner.bind.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
