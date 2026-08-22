@@ -1517,11 +1517,27 @@ them apart until each is individually probed** 🔍 OPEN
     `scan_meshtastic_devices_detailed()` for Story 26.3) when the
     path-name heuristic doesn't fire - this Heltec's two aliases do
     share the same reported serial number (`0001`).
-  - Consider a short, cheap pre-filter for "does this look like a
-    Meshtastic device at all" before it ever reaches the probe/connect
-    stage - e.g. by device `description` string, though `scan_*`'s
-    existing `DeviceInfo.description` values ("CP2102 USB to UART Bridge
-    Controller", "USB Serial") aren't reliably distinctive on their own.
+  - A pre-filter for "does this look like a Meshtastic device at all"
+    before it ever reaches the probe/connect stage was considered
+    (2026-08-22) and **rejected in both forms tried so far**:
+    - By device `description` string (e.g. the relay board's CH340
+      reports `"USB Serial"`) - unreliable on its own, since that's just
+      the chip's generic default descriptor, shared by a huge range of
+      unrelated non-Meshtastic devices *and* potentially some genuine
+      Meshtastic boards using the same bare chip. Blacklisting it risks
+      hiding a real device, not just the relay board.
+    - By excluding whatever path equals the configured
+      `core.config_loader.get_relay_serial_port()` (`RELAY_SERIAL_PORT`)
+      - reliable *when set* (the operator's own explicit config, not a
+        guess), but rejected anyway: it only filters the one specific
+      device the app happens to already know about, leaving any *other*
+      unrelated non-Meshtastic serial device on the machine unfiltered -
+      an inconsistent result ("why did this junk entry disappear but
+      not that one?") is worse than no filtering at all.
+    No general solution found yet - this half of the issue (the
+    false-positive candidates specifically, as opposed to the
+    duplicate-physical-device half below) remains open with no accepted
+    fix direction.
   - **Also fetch the node's name during the probe, and dedupe the
     dropdown by node ID once probing completes** (proposed 2026-08-22).
     `probe_device_node_id()` already opens a full connection per
@@ -1544,9 +1560,9 @@ them apart until each is individually probed** 🔍 OPEN
     path, entirely from data the probe already collects. This does
     **not** fix the other half (the relay board's two false-positive
     ports) - those never get a node ID at all, since they don't speak
-    the protocol, so they'd still need the separate VID/description
-    pre-filter above; dedup-by-node-ID and pre-filtering the false
-    positives are complementary, not either/or.
+    the protocol, so no amount of dedup touches them. That half stays
+    open (see the rejected pre-filter attempts above) - dedup-by-node-ID
+    is worth doing on its own merits regardless.
 
 ---
 
