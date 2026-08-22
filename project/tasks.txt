@@ -1441,6 +1441,14 @@ lora/
     *   _Note: Implemented as `probe_device_node_id()` + `format_device_display()`
         in `core/meshtastic_utils.py`, exactly per `project/plans/story_27_1.md`.
         See PR #49._
+    *   _Note: Real-hardware manual verification of Story 27.2 (2026-08-22)
+        caught a genuine gap - a Seeed device that had connected fine
+        minutes earlier failed instantly on a single probe attempt (the
+        same transient "port not quite ready" pattern `_init_meshtastic()`
+        already retries around, per `CONNECT_MAX_ATTEMPTS`). Added
+        `PROBE_MAX_ATTEMPTS`/`PROBE_RETRY_DELAY_SECONDS` (2 attempts,
+        1.5s apart) to `probe_device_node_id()` so a healthy device isn't
+        silently left unlabeled by one bad attempt._
 
 - [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
 - [ ] *   **As a** client GUI user,

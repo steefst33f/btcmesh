@@ -206,10 +206,12 @@ class TestProbeDeviceNodeId(unittest.TestCase):
         mock_transport.disconnect.assert_called_once()
 
     def test_returns_none_when_connect_fails(self):
-        """Given connect() raises TransportConnectionError (e.g. not a real
-        Meshtastic device, already in use, or timed out), Then returns None
-        without raising, and still disconnects (safe no-op)."""
+        """Given connect() keeps raising TransportConnectionError across
+        every attempt (e.g. not a real Meshtastic device, or persistently
+        already in use), Then returns None without raising, retrying
+        PROBE_MAX_ATTEMPTS times and disconnecting after each attempt."""
         from transport.base import TransportConnectionError
+        from core.meshtastic_utils import PROBE_MAX_ATTEMPTS
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
@@ -217,12 +219,41 @@ class TestProbeDeviceNodeId(unittest.TestCase):
         with unittest.mock.patch(
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
-        ):
+        ), unittest.mock.patch('time.sleep'):
             from core.meshtastic_utils import probe_device_node_id
             result = probe_device_node_id('/dev/cu.usbserial-relay')
 
         self.assertIsNone(result)
-        mock_transport.disconnect.assert_called_once()
+        self.assertEqual(mock_transport.connect.call_count, PROBE_MAX_ATTEMPTS)
+        self.assertEqual(mock_transport.disconnect.call_count, PROBE_MAX_ATTEMPTS)
+
+    def test_retries_once_after_transient_failure_then_succeeds(self):
+        """Given the first attempt fails transiently (e.g. a port that just
+        got released and isn't quite ready yet - observed on real hardware
+        during Story 27.2's manual verification, 2026-08-22: a Seeed device
+        that had connected fine minutes earlier failed instantly on a
+        single probe attempt) and the second attempt succeeds, Then
+        returns the node ID rather than giving up after one try."""
+        from transport.base import TransportConnectionError
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = [
+            TransportConnectionError("Resource temporarily unavailable"),
+            None,
+        ]
+        mock_transport.local_node_id = '!aee5ab3c'
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch('time.sleep') as mock_sleep:
+            from core.meshtastic_utils import probe_device_node_id
+            result = probe_device_node_id('/dev/cu.usbmodem983DAEE5AB3C1')
+
+        self.assertEqual(result, '!aee5ab3c')
+        self.assertEqual(mock_transport.connect.call_count, 2)
+        self.assertEqual(mock_transport.disconnect.call_count, 2)
+        mock_sleep.assert_called_once()
 
 
 class TestFormatDeviceDisplay(unittest.TestCase):

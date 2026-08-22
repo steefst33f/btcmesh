@@ -91,30 +91,48 @@ def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
         return []
 
 
+# A freshly enumerated serial port (or one just released by another
+# process) can transiently fail to open for a moment - matches the same
+# transient-failure pattern btcmesh_client_gui.py's _init_meshtastic()
+# already retries around. Confirmed against real hardware (see Story 27.2
+# manual verification, 2026-08-22): a Seeed device that connected fine
+# moments earlier failed instantly on a single probe attempt. Kept short
+# (2 attempts) since every non-Meshtastic candidate (e.g. the Story 26.7
+# relay board's own port) also pays this cost, and those fail fast anyway.
+PROBE_MAX_ATTEMPTS = 2
+PROBE_RETRY_DELAY_SECONDS = 1.5
+
+
 def probe_device_node_id(path: str) -> Optional[str]:
     """Briefly connect to a candidate serial port to learn its Meshtastic
     node ID, then disconnect. Returns None (never raises) if the path
     isn't a genuine Meshtastic device, is already in use, or the
-    connection attempt fails/times out - e.g. a false-positive candidate
-    from scan_meshtastic_devices()'s VID-blacklist filtering, such as the
-    Story 26.7 relay board's own serial port, which speaks a completely
-    different protocol.
+    connection attempt still fails/times out after PROBE_MAX_ATTEMPTS -
+    e.g. a false-positive candidate from scan_meshtastic_devices()'s
+    VID-blacklist filtering, such as the Story 26.7 relay board's own
+    serial port, which speaks a completely different protocol.
 
     Lazy-imports MeshtasticSerialTransport (matching this module's
     existing dependency style) to avoid a hard import-time dependency
     from core/ on transport/.
     """
+    import time
+
     from transport.meshtastic_serial import MeshtasticSerialTransport
     from transport.base import TransportConnectionError
 
-    transport = MeshtasticSerialTransport()
-    try:
-        transport.connect(path)
-        return transport.local_node_id
-    except TransportConnectionError:
-        return None
-    finally:
-        transport.disconnect()
+    for attempt in range(PROBE_MAX_ATTEMPTS):
+        transport = MeshtasticSerialTransport()
+        try:
+            transport.connect(path)
+            return transport.local_node_id
+        except TransportConnectionError:
+            if attempt < PROBE_MAX_ATTEMPTS - 1:
+                time.sleep(PROBE_RETRY_DELAY_SECONDS)
+        finally:
+            transport.disconnect()
+
+    return None
 
 
 def format_device_display(path: str, node_id: Optional[str]) -> str:
