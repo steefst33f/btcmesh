@@ -51,28 +51,31 @@ from gui.gui_common import (
     create_clear_button,
     create_refresh_button,
     create_popup_button,
+    # Device-selection mechanics (Story 27.2/27.3 - identical between this
+    # GUI and the server GUI, see project/plans/story_27_1.md's
+    # "Architecture Revision" section)
+    probe_devices_in_background,
+    dedupe_devices_by_node_id,
+    device_path_from_display,
+    refresh_device_spinner_labels,
 )
 
 # Import Meshtastic utilities from core
 from core.meshtastic_utils import (
     scan_meshtastic_devices,
-    get_own_node_id,
     get_own_node_name,
     get_known_nodes,
     format_node_display,
-    probe_device_identity,
     format_device_display,
 )
 
 # Import transport layer
 from transport.meshtastic_serial import MeshtasticSerialTransport
+from transport.base import TransportConnectionError
 
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
 from core.protocol import is_valid_hex, validate_destination
-
-# Import device watchdog (Story 28.4 - detection-only client-side wiring)
-from core.device_watchdog import build_device_watchdog
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
@@ -131,10 +134,8 @@ MANUAL_ENTRY_TEXT = "Enter manually..."
 # Set window size for desktop testing
 Window.size = (450, 700)
 
-# Connection states (using ConnectionState from gui_common)
+# Connection state (using ConnectionState from gui_common)
 STATE_DISCONNECTED = ConnectionState('Meshtastic: Not connected', COLOR_DISCONNECTED)
-STATE_CONNECTION_FAILED = ConnectionState('Meshtastic: Connection failed', COLOR_ERROR)
-STATE_CONNECTION_ERROR = ConnectionState('Meshtastic: Error', COLOR_ERROR)
 
 
 @dataclass
@@ -189,25 +190,6 @@ def process_result(result: tuple) -> ResultAction:
             action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
         action.connection_color = COLOR_SUCCESS
 
-    elif result_type == 'connection_failed':
-        action.connection_text = STATE_CONNECTION_FAILED.text
-        action.connection_color = STATE_CONNECTION_FAILED.color
-        # Use specific error message if provided, otherwise generic message
-        error_msg = result[1] if len(result) > 1 and result[1] else "Failed to connect to Meshtastic device"
-        action.log_messages.append((error_msg, COLOR_ERROR))
-
-    elif result_type == 'connection_error':
-        error = result[1]
-        action.connection_text = STATE_CONNECTION_ERROR.text
-        action.connection_color = STATE_CONNECTION_ERROR.color
-        action.log_messages.append((f"Connection error: {error}", COLOR_ERROR))
-
-    elif result_type == 'connection_initializing':
-        # Device is still initializing - show informational message
-        action.log_messages.append(("Device is initializing, please wait...", COLOR_WARNING))
-        action.connection_text = 'Meshtastic: Initializing...'
-        action.connection_color = COLOR_WARNING
-
     elif result_type == 'log':
         msg = result[1]
         level = result[2]
@@ -258,18 +240,21 @@ def process_result(result: tuple) -> ResultAction:
     return action
 
 
-def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool = False,
-                        own_node_id: Optional[str] = None) -> Optional[str]:
-    """Validate the inputs for sending a transaction.
+def validate_send_inputs(dest: str, tx_hex: str) -> Optional[str]:
+    """Validate the format-level inputs for sending a transaction, before
+    any connection is attempted.
 
     This is a pure function that validates inputs without touching the GUI.
+    Connection readiness is no longer checked here (2026-08-23 revision):
+    connecting is now part of the send flow itself, not a precondition
+    checked ahead of it - see project/plans/story_27_1.md's "Architecture
+    Revision" section. Likewise, the self-send check ("Cannot send to your
+    own node") moved to _send_transaction_thread, since the device's own
+    node ID isn't known until after connecting.
 
     Args:
         dest: The destination node ID
         tx_hex: The raw transaction hex (already cleaned of whitespace)
-        has_iface: Whether the Meshtastic interface is connected
-        dry_run: Whether this is a dry run (skips Meshtastic connection check)
-        own_node_id: The node ID of the connected device (for self-send check)
 
     Returns:
         An error message string if validation fails, or None if inputs are valid
@@ -283,10 +268,6 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
         # here, to keep this GUI's existing user-facing copy unchanged.
         return "Enter destination node ID" if not dest else str(e)
 
-    # Check for sending to own node
-    if own_node_id and dest.lower() == own_node_id.lower():
-        return "Cannot send to your own node"
-
     if not tx_hex:
         return "Enter transaction hex"
 
@@ -295,9 +276,6 @@ def validate_send_inputs(dest: str, tx_hex: str, has_iface: bool, dry_run: bool 
 
     if not is_valid_hex(tx_hex):
         return "Invalid hex characters"
-
-    if not has_iface and not dry_run:
-        return "Meshtastic not connected"
 
     return None
 
@@ -313,22 +291,24 @@ class BTCMeshGUI(BoxLayout):
         self.padding = 15
         self.spacing = 20
 
+        # transport/iface are only ever set for the duration of an active
+        # send (Story 27.2 revision, 2026-08-23) - no ambient connection is
+        # held while idle. See project/plans/story_27_1.md's "Architecture
+        # Revision" section for why: nothing needs it before Send is
+        # pressed (identity display uses its own brief probe connections),
+        # and holding one open during idle browsing was the reason a
+        # dedicated idle-liveness watchdog (Story 28.4) ever needed to
+        # exist - itself a wedge-risk, per the rapid-reconnect-cycling
+        # pattern documented in Issue 12.
         self.transport = None
         self.iface = None
         self.send_thread = None
         self.result_queue = queue.Queue()
-        # Devices found by the last scan, with node IDs filled in as
-        # background probes resolve (Story 27.2): [{'path':..., 'node_id':...}]
+        # Devices found by the last scan, with node IDs/names filled in as
+        # background probes resolve (Story 27.2): [{'path':, 'node_id':, 'name':}]
         self.devices = []
-        # Path of the device currently connecting/connected, so its node ID
-        # (once known) comes from the live connection rather than a probe
-        self._active_device_path = None
         self._connection_monitor = None  # Track the connection state monitor
         self._active_sender = None  # Track the active TransactionSender instance
-        self.watchdog = None
-        self.power_control = None
-        self._watchdog_thread = None
-        self._watchdog_running = False
 
         self._build_ui()
 
@@ -348,7 +328,10 @@ class BTCMeshGUI(BoxLayout):
 
         device_selection_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
 
-        # Spinner (drop down list)
+        # Spinner (drop down list) - no bound selection handler (2026-08-23
+        # revision): picking a device no longer connects anything, it just
+        # decides what Send will connect to. Mirrors the server GUI's
+        # device settings spinner, which never had one either.
         self.device_spinner = Spinner(
             text=SCANNING_TEXT,
             values=[],
@@ -357,7 +340,6 @@ class BTCMeshGUI(BoxLayout):
             background_normal='',
             color=COLOR_SECONDARY,
         )
-        self.device_spinner.bind(text=self.on_device_selected)
         device_selection_box.add_widget(self.device_spinner)
 
         # Refresh button
@@ -500,243 +482,67 @@ class BTCMeshGUI(BoxLayout):
 
         threading.Thread(target=scan_thread, daemon=True).start()
 
-    def _init_meshtastic(self, port=None):
-        """Initialize Meshtastic interface in background.
+    def _connect_with_retry(self, port):
+        """Connect to the Meshtastic device with retries, blocking until
+        success or final failure - synchronous, called only from the send
+        thread (2026-08-23 revision: connecting is now part of Send, not a
+        standalone ambient action - see project/plans/story_27_1.md's
+        "Architecture Revision" section). Mirrors
+        btcmesh_client_cli.py's run_send() connect step, adapted to push
+        progress as log messages for this GUI's activity log instead of
+        printing to stdout.
 
-        Args:
-            port: Optional device path to connect to. If None, uses auto-detect.
+        Returns the connected MeshtasticSerialTransport.
+        Raises TransportConnectionError on final failure.
         """
-        self.status_log.add_message(f"Connecting to Meshtastic device{f' ({port})' if port else ''}...")
+        self.result_queue.put((
+            'log', f"Connecting to Meshtastic device{f' ({port})' if port else ''}...", logging.INFO
+        ))
 
-        def try_connect() -> bool:
-            """Single connection attempt.
-
-            Returns:
-                True if the attempt reached a final outcome (success or
-                permanent failure) and should not be retried. False if it hit
-                a transient error and a retry may succeed.
-            """
+        last_error = None
+        for attempt in range(CONNECT_MAX_ATTEMPTS):
             try:
                 transport = MeshtasticSerialTransport()
                 transport.connect(port)
-
-                # Get the raw interface for node listing (Stories 11.2, 11.3)
-                iface = transport._iface
-
-                # Validate we got valid device info. Issue 32: use the
-                # already-computed, correctly zero-padded
-                # transport.local_node_id instead of reformatting
-                # iface.myInfo.my_node_num inline here (which produced a
-                # shorter, inconsistent ID for small node numbers, e.g.
-                # "!abcd12" instead of "!00abcd12"). transport.connect()
-                # already guarantees local_node_id is set by the time it
-                # returns without raising - it performs this exact check
-                # itself and raises TransportConnectionError otherwise.
-                node_id = transport.local_node_id
-
-                if not node_id or not node_id.startswith('!'):
-                    # Interface created but device info invalid - likely no device connected
-                    try:
-                        transport.disconnect()
-                    except Exception:
-                        pass
-                    self.result_queue.put(('connection_failed', "Could not retrieve device info. Ensure device is connected.", None))
-                    return True
-
-                node_name = get_own_node_name(iface)
-                self.result_queue.put(('connected', iface, node_id, node_name))
-                # Also store transport for later use in sending
-                self.result_queue.put(('transport_ready', transport))
-                return True
-
-            except ImportError:
-                self.result_queue.put(('connection_error', "Meshtastic library not installed", None))
-                return True
-            except Exception as e:
+                # Issue 32: local_node_id is always correctly zero-padded;
+                # transport.connect() already guarantees it's set by the
+                # time it returns without raising.
+                if not transport.local_node_id:
+                    transport.disconnect()
+                    raise TransportConnectionError(
+                        "Could not retrieve device info. Ensure device is connected."
+                    )
+                return transport
+            except TransportConnectionError as e:
+                last_error = e
                 error_msg = str(e)
-                # Check if this is a transient error from the Meshtastic library/OS
-                # still releasing or initializing the port (e.g. right after a
-                # previous device on this or another port was disconnected).
+                # A freshly enumerated serial port (or one just released by
+                # a prior disconnect) can transiently fail to open for a
+                # moment - retry before giving up.
                 is_transient = any(x in error_msg.lower() for x in [
                     'resource temporarily unavailable',
                     'busy',
                 ])
-                if is_transient:
-                    # Show as info message - device is still initializing
-                    self.result_queue.put(('connection_initializing', error_msg, None))
-                    return False
-
-                # Provide more helpful error messages for common cases
-                if "No Meshtastic" in error_msg or "No serial" in error_msg:
-                    error_msg = "No Meshtastic device found"
-                elif "Permission denied" in error_msg:
-                    error_msg = f"Permission denied accessing {port or 'device'}"
-                elif "could not open port" in error_msg.lower():
-                    error_msg = f"Could not open port {port or '(auto-detect)'}"
-                self.result_queue.put(('connection_error', error_msg, None))
-                return True
-
-        def init_thread():
-            for attempt in range(CONNECT_MAX_ATTEMPTS):
-                if try_connect():
-                    return
-                if attempt < CONNECT_MAX_ATTEMPTS - 1:
+                if is_transient and attempt < CONNECT_MAX_ATTEMPTS - 1:
+                    self.result_queue.put((
+                        'log', "Device is initializing, please wait...", logging.WARNING
+                    ))
                     time.sleep(CONNECT_RETRY_DELAY_SECONDS)
-            self.result_queue.put((
-                'connection_error',
-                f"Device at {port or '(auto-detect)'} did not become ready "
-                f"after {CONNECT_MAX_ATTEMPTS} attempts",
-                None,
-            ))
+                    continue
+                break
 
-        threading.Thread(target=init_thread, daemon=True).start()
-
-    def _start_watchdog_thread(self):
-        """Drive DeviceWatchdog.tick() on a dedicated background thread -
-        deliberately not Clock.schedule_interval, since tick() can block
-        (up to check_alive()'s ~20s timeout, or a full multi-minute
-        recovery cycle if a relay is configured) and Clock callbacks run
-        on Kivy's main thread, which would freeze the whole window for
-        that long. Skips ticking while a send is active so it never races
-        the transport with an in-progress send (see project/plans/story_26_6.md)."""
-        self._watchdog_running = True
-
-        def watchdog_loop():
-            while self._watchdog_running:
-                if self.watchdog is not None and self._active_sender is None:
-                    self.watchdog.tick(time.time())
-                time.sleep(1)
-
-        self._watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True)
-        self._watchdog_thread.start()
-
-    def _disconnect_device(self):
-        """Disconnect current Meshtastic interface and reset connection status."""
-        self._watchdog_running = False
-        self.watchdog = None
-        self.power_control = None
-        if self.transport:
-            # Disconnect transport in background thread to avoid blocking main thread
-            transport_to_close = self.transport
-            self.transport = None
-            self.iface = None
-
-            def close_thread():
-                try:
-                    transport_to_close.disconnect()
-                except Exception as e:
-                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
-
-            threading.Thread(target=close_thread, daemon=True).start()
-        elif self.iface:
-            # Fallback for backward compatibility
-            iface_to_close = self.iface
-            self.iface = None
-
-            def close_thread():
-                try:
-                    iface_to_close.close()
-                except Exception as e:
-                    self.result_queue.put(('log', f'Warning: error disconnecting device: {e}', logging.WARNING))
-
-            threading.Thread(target=close_thread, daemon=True).start()
-        self.connection_label.text = STATE_DISCONNECTED.text
-        self.connection_label.color = STATE_DISCONNECTED.color
-        self._active_device_path = None
-        # Clear known nodes
-        self.known_nodes = []
-        self.node_spinner.values = [MANUAL_ENTRY_TEXT]
-        self.node_spinner.text = MANUAL_ENTRY_TEXT
-
-    def on_device_selected(self, spinner, text):
-        """Handle device selection from dropdown."""
-        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
-            return
-
-        path = self._device_path_from_display(text)
-        self._disconnect_device()
-        self._active_device_path = path
-        self._init_meshtastic(port=path)
+        error_msg = str(last_error)
+        if "No Meshtastic" in error_msg or "No serial" in error_msg:
+            error_msg = "No Meshtastic device found"
+        elif "Permission denied" in error_msg:
+            error_msg = f"Permission denied accessing {port or 'device'}"
+        elif "could not open port" in error_msg.lower():
+            error_msg = f"Could not open port {port or '(auto-detect)'}"
+        raise TransportConnectionError(error_msg) from last_error
 
     def on_refresh_devices(self, instance):
         """Handle refresh button press to rescan devices."""
-        self._disconnect_device()
         self._scan_devices()
-
-    def _probe_device_identities(self):
-        """Background: look up each just-scanned device's node ID and name
-        one at a time (Story 27.2, extended by Issue 37's node-name work),
-        pushing a result per device as it resolves. Only called for the
-        multi-device case - by then nothing is connected yet
-        (on_refresh_devices always disconnects before rescanning, and the
-        startup scan begins with no connection), so no device needs to be
-        skipped here."""
-        def probe_thread():
-            for device in list(self.devices):
-                identity = probe_device_identity(device['path'])
-                self.result_queue.put((
-                    'device_identity', device['path'], identity.node_id, identity.name
-                ))
-
-        threading.Thread(target=probe_thread, daemon=True).start()
-
-    def _dedupe_devices_by_node_id(self, keep_path: str):
-        """If keep_path's device shares its node ID with another entry in
-        self.devices, drop the duplicate - two paths resolving to the same
-        node ID are provably the same physical device (Issue 37: the
-        Heltec's two OS-level path aliases both surviving the scan's own
-        dedup). Normally the side that was just authoritatively resolved
-        (keep_path - a probe result, or a live connection) wins and the
-        other entry is dropped, EXCEPT the currently active/connected
-        device is never dropped: if it turns out to be the duplicate (it
-        resolved first, keep_path resolved to the same node ID second),
-        keep_path is the one dropped instead - removing the entry the user
-        is actually connected to would be wrong, not just imprecise."""
-        keeper = next((d for d in self.devices if d['path'] == keep_path), None)
-        if keeper is None or not keeper['node_id']:
-            return
-        duplicates = [
-            d for d in self.devices
-            if d['path'] != keep_path and d['node_id'] == keeper['node_id']
-        ]
-        if not duplicates:
-            return
-        if any(d['path'] == self._active_device_path for d in duplicates):
-            self.devices = [d for d in self.devices if d['path'] != keep_path]
-        else:
-            dup_paths = {d['path'] for d in duplicates}
-            self.devices = [d for d in self.devices if d['path'] not in dup_paths]
-
-    def _device_path_from_display(self, text: str) -> str:
-        """Resolve a device_spinner display string back to its underlying
-        path, mirroring on_node_selected's reverse-lookup pattern for known
-        nodes. Falls back to treating text as a raw path for sentinel values
-        (NO_DEVICES_TEXT/SCANNING_TEXT/SELECT_DEVICE_TEXT) that are
-        deliberately never in self.devices."""
-        for device in self.devices:
-            if format_device_display(device['path'], device['node_id'], device['name']) == text:
-                return device['path']
-        return text
-
-    def _refresh_device_spinner_labels(self):
-        """Rebuild device_spinner.values from self.devices as node IDs
-        resolve, preserving the currently selected device across the
-        relabel (Story 27.2). Unbinds/rebinds on_device_selected around the
-        mutation so relabeling never fires a spurious reconnect - mirrors
-        the existing SELECT_DEVICE_TEXT pattern above."""
-        selected_path = self._device_path_from_display(self.device_spinner.text)
-
-        self.device_spinner.unbind(text=self.on_device_selected)
-        self.device_spinner.values = [
-            format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
-        ]
-        for device in self.devices:
-            if device['path'] == selected_path:
-                self.device_spinner.text = format_device_display(
-                    device['path'], device['node_id'], device['name']
-                )
-                break
-        self.device_spinner.bind(text=self.on_device_selected)
 
     def on_node_selected(self, spinner, text):
         """Handle node selection from dropdown."""
@@ -754,18 +560,31 @@ class BTCMeshGUI(BoxLayout):
                 break
 
     def on_refresh_nodes(self, instance):
-        """Handle refresh button press to update known nodes list."""
-        self._update_known_nodes()
+        """Handle refresh button press: briefly connect to the currently
+        selected device, fetch its known nodes, then disconnect (Story
+        11.2, revised 2026-08-23 - no longer reads an ambient connection;
+        see project/plans/story_27_1.md's "Architecture Revision"
+        section)."""
+        port = device_path_from_display(self.devices, self.device_spinner.text)
+        self.status_log.add_message("Fetching known nodes...")
 
-    def _update_known_nodes(self):
-        """Update the known nodes dropdown from the connected interface."""
-        if not self.iface:
-            self.node_spinner.values = [NO_NODES_TEXT]
-            self.node_spinner.text = NO_NODES_TEXT
-            self.known_nodes = []
-            return
+        def fetch_thread():
+            try:
+                transport = MeshtasticSerialTransport()
+                transport.connect(port)
+            except TransportConnectionError as e:
+                self.result_queue.put(('log', f"Could not fetch known nodes: {e}", logging.ERROR))
+                return
+            try:
+                nodes = get_known_nodes(transport._iface)
+                self.result_queue.put(('known_nodes_fetched', nodes))
+            finally:
+                transport.disconnect()
 
-        nodes = get_known_nodes(self.iface)
+        threading.Thread(target=fetch_thread, daemon=True).start()
+
+    def _update_known_nodes(self, nodes):
+        """Apply a fetched known-nodes list to the destination dropdown."""
         self.known_nodes = nodes
 
         if not nodes:
@@ -801,24 +620,16 @@ class BTCMeshGUI(BoxLayout):
                     format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
                 ]
                 if len(devices) == 1:
-                    # Auto-select and connect to single device. No background
-                    # probe needed - its node ID comes from the live
-                    # connection itself once connected (see 'connected'
-                    # handling below), and there's nothing to disambiguate.
+                    # Auto-select (not auto-connect - 2026-08-23 revision,
+                    # see project/plans/story_27_1.md's "Architecture
+                    # Revision" section) the lone device.
                     self.device_spinner.text = devices[0]
-                    self.status_log.add_message(f"Found 1 device: {devices[0]}", COLOR_SUCCESS)
-                    self._active_device_path = devices[0]
-                    self._init_meshtastic(port=devices[0])
+                    self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
-                    # Multiple devices - don't connect, let user choose.
-                    # Use a placeholder distinct from every real device path
-                    # (rather than devices[0]) so that selecting the first
-                    # device in the list still registers as a text change and
-                    # fires on_device_selected - Kivy Spinner only dispatches
-                    # its text event when the value actually changes.
-                    self.device_spinner.unbind(text=self.on_device_selected)
+                    # Multiple devices - no bound selection handler exists
+                    # to worry about triggering, so just show the
+                    # placeholder directly.
                     self.device_spinner.text = SELECT_DEVICE_TEXT
-                    self.device_spinner.bind(text=self.on_device_selected)
                     # No specific count stated here (unlike the single-
                     # device case above) - the raw scan count can still
                     # drop once probing resolves names/node IDs and dedup
@@ -828,7 +639,10 @@ class BTCMeshGUI(BoxLayout):
                     # the real, already-visible source of truth for
                     # "how many."
                     self.status_log.add_message("Device(s) found - select one to connect", COLOR_WARNING)
-                    self._probe_device_identities()
+                # Always probe now (both single- and multi-device cases) -
+                # no live connection is imminent to get identity for free
+                # from anymore.
+                probe_devices_in_background(self.devices, self.result_queue)
             else:
                 self.devices = []
                 self.device_spinner.values = [NO_DEVICES_TEXT]
@@ -845,57 +659,17 @@ class BTCMeshGUI(BoxLayout):
                     device['node_id'], device['name'] = node_id, name
                     break
             if node_id:
-                self._dedupe_devices_by_node_id(keep_path=path)
-            self._refresh_device_spinner_labels()
+                self.devices, _removed = dedupe_devices_by_node_id(self.devices, keep_path=path)
+            refresh_device_spinner_labels(self.device_spinner, self.devices)
             return
 
-        # Handle transport_ready specially (store transport, don't process as normal result)
-        if result[0] == 'transport_ready':
-            self.transport = result[1]
-            self.watchdog, self.power_control = build_device_watchdog(
-                self.transport,
-                on_recovery_attempt=lambda: self.result_queue.put(('watchdog_attempt',)),
-                on_recovered=lambda outcome: self.result_queue.put(('watchdog_recovered', outcome)),
-                on_recovery_failed=lambda outcome: self.result_queue.put(('watchdog_failed', outcome)),
-            )
-            self._start_watchdog_thread()
+        if result[0] == 'known_nodes_fetched':
+            self._update_known_nodes(result[1])
             return
 
-        if result[0] == 'watchdog_attempt':
-            self.status_log.add_message(
-                "Device appears wedged - attempting automatic recovery...", COLOR_WARNING
-            )
-            return
-
-        if result[0] == 'watchdog_recovered':
-            outcome = result[1]
-            self.status_log.add_message(
-                f"Device recovered. Reconnected at {outcome.new_device_path}.", COLOR_SUCCESS
-            )
-            if self.transport:
-                # DeviceWatchdog reconnects the same transport object under
-                # us - self.iface is a separate raw-interface reference the
-                # GUI captured for node listing (Stories 11.2/11.3), which
-                # goes stale across a reconnect unless refreshed here.
-                self.iface = self.transport._iface
-                self._update_known_nodes()
-            return
-
-        if result[0] == 'watchdog_failed':
-            outcome = result[1]
-            if self.power_control is None:
-                # The common client case: no relay hardware configured, so
-                # the watchdog can only detect a wedge, never recover it -
-                # this isn't a failed recovery attempt, just an honest
-                # "you'll need to reconnect it yourself" report.
-                self.status_log.add_message(
-                    "Device appears unresponsive. Please reconnect it manually.",
-                    COLOR_WARNING,
-                )
-            else:
-                self.status_log.add_message(
-                    f"Automatic device recovery failed: {outcome.error}", COLOR_ERROR
-                )
+        if result[0] == 'disconnected':
+            self.connection_label.text = STATE_DISCONNECTED.text
+            self.connection_label.color = STATE_DISCONNECTED.color
             return
 
         action = process_result(result)
@@ -910,29 +684,9 @@ class BTCMeshGUI(BoxLayout):
         if action.store_iface is not None:
             self.iface = action.store_iface
 
-        # A live connection's real node ID and name replace a probe for the
-        # same device (Story 27.2) - taken from the 'connected' result
-        # rather than ResultAction, since process_result() stays
-        # UI-decision-only. node_name is already computed there for the
-        # connection-status label, so this is free - no separate lookup.
-        if result[0] == 'connected' and self._active_device_path:
-            node_id = result[2]
-            node_name = result[3] if len(result) > 3 else None
-            for device in self.devices:
-                if device['path'] == self._active_device_path:
-                    device['node_id'], device['name'] = node_id, node_name
-                    break
-            if node_id:
-                self._dedupe_devices_by_node_id(keep_path=self._active_device_path)
-            self._refresh_device_spinner_labels()
-
-        # Add log messages first (before _update_known_nodes which also logs)
+        # Add log messages
         for msg, color in action.log_messages:
             self.status_log.add_message(msg, color)
-
-        # Fetch known nodes AFTER connection success message is logged
-        if action.store_iface is not None:
-            self._update_known_nodes()
 
         # Handle state changes
         if action.stop_sending:
@@ -975,14 +729,18 @@ class BTCMeshGUI(BoxLayout):
         tx_hex = self.tx_input.text.strip().replace('\n', '').replace(' ', '')
         dry_run = self.dry_run_toggle.state == 'down'
 
-        # Validation (dry_run skips Meshtastic connection check)
-        own_node_id = get_own_node_id(self.iface)
-        error = validate_send_inputs(dest, tx_hex, bool(self.iface), dry_run, own_node_id=own_node_id)
+        error = validate_send_inputs(dest, tx_hex)
         if error:
             self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
-            if error == "Meshtastic not connected":
-                self._init_meshtastic()
             return
+
+        # Resolve which physical device to use now, while the dropdown's
+        # current selection is still on the main thread - connecting
+        # itself happens inside the send thread below (2026-08-23
+        # revision: connecting is part of Send, not a standalone ambient
+        # action - see project/plans/story_27_1.md's "Architecture
+        # Revision" section).
+        port = device_path_from_display(self.devices, self.device_spinner.text)
 
         # Start sending
         self.send_btn.disabled = True
@@ -997,44 +755,67 @@ class BTCMeshGUI(BoxLayout):
         # Run send in background thread
         self.send_thread = threading.Thread(
             target=self._send_transaction_thread,
-            args=(dest, tx_hex, dry_run),
+            args=(dest, tx_hex, dry_run, port),
             daemon=True
         )
         self.send_thread.start()
 
-    def _send_transaction_thread(self, dest, tx_hex, dry_run):
-        """Send transaction in background thread using TransactionSender."""
+    def _send_transaction_thread(self, dest, tx_hex, dry_run, port):
+        """Connect (unless dry-run), send the transaction, then disconnect
+        - mirrors btcmesh_client_cli.py's run_send() (connect, send,
+        disconnect in a finally), just wrapped in this file's existing
+        background-thread + result_queue pattern."""
+        if dry_run:
+            # No connection needed at all for a preview.
+            self._run_preview(tx_hex)
+            return
+
         try:
-            if dry_run:
-                # For dry run, show a preview of how the transaction would be chunked
-                self._run_preview(tx_hex)
-            else:
-                # Create sender and send transaction
-                sender = TransactionSender(self.transport)
-                self._active_sender = sender
+            transport = self._connect_with_retry(port)
+        except TransportConnectionError as e:
+            self.result_queue.put(('error', str(e)))
+            return
 
-                def on_chunk_sending(chunk_num, total, attempt, wire_format):
-                    self.result_queue.put(('chunk_sending', chunk_num, total, attempt))
-                    self.result_queue.put(('wire_sent', wire_format))
+        self.transport = transport
+        self.iface = transport._iface
+        try:
+            node_id = transport.local_node_id
+            node_name = get_own_node_name(self.iface)
+            self.result_queue.put(('connected', self.iface, node_id, node_name))
 
-                def on_progress(chunk_num, total):
-                    self.result_queue.put(('progress', chunk_num, total))
+            if dest.lower() == node_id.lower():
+                self.result_queue.put(('error', "Cannot send to your own node"))
+                return
 
-                def on_response_received(message_text):
-                    self.result_queue.put(('wire_received', message_text))
+            sender = TransactionSender(self.transport)
+            self._active_sender = sender
 
-                result = sender.send_transaction(
-                    tx_hex, dest,
-                    on_progress=on_progress,
-                    on_chunk_sending=on_chunk_sending,
-                    on_response_received=on_response_received,
-                )
-                self.result_queue.put(('send_result', result))
+            def on_chunk_sending(chunk_num, total, attempt, wire_format):
+                self.result_queue.put(('chunk_sending', chunk_num, total, attempt))
+                self.result_queue.put(('wire_sent', wire_format))
+
+            def on_progress(chunk_num, total):
+                self.result_queue.put(('progress', chunk_num, total))
+
+            def on_response_received(message_text):
+                self.result_queue.put(('wire_received', message_text))
+
+            result = sender.send_transaction(
+                tx_hex, dest,
+                on_progress=on_progress,
+                on_chunk_sending=on_chunk_sending,
+                on_response_received=on_response_received,
+            )
+            self.result_queue.put(('send_result', result))
 
         except Exception as e:
             self.result_queue.put(('error', str(e)))
         finally:
             self._active_sender = None
+            self.transport.disconnect()
+            self.transport = None
+            self.iface = None
+            self.result_queue.put(('disconnected',))
 
     def _run_preview(self, tx_hex):
         """Show a preview of how the transaction would be chunked."""
@@ -1178,12 +959,11 @@ class BTCMeshApp(App):
         return BTCMeshGUI()
 
     def on_stop(self):
-        """Cleanup on app close."""
-        if hasattr(self.root, '_watchdog_running'):
-            self.root._watchdog_running = False
-        if hasattr(self.root, 'iface') and self.root.iface:
+        """Cleanup on app close - only matters if a send is active when
+        the window closes, since no connection is otherwise held open."""
+        if hasattr(self.root, 'transport') and self.root.transport:
             try:
-                self.root.iface.close()
+                self.root.transport.disconnect()
             except Exception:
                 pass
 

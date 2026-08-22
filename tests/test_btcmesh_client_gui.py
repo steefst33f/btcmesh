@@ -176,8 +176,6 @@ from btcmesh_client_gui import (
     COLOR_DISCONNECTED,
     ConnectionState,
     STATE_DISCONNECTED,
-    STATE_CONNECTION_FAILED,
-    STATE_CONNECTION_ERROR,
 )
 
 
@@ -187,117 +185,73 @@ from btcmesh_client_gui import (
 # =============================================================================
 
 class TestSendButtonValidationStory91(unittest.TestCase):
-    """Tests for validate_send_inputs() - Story 9.1: Send Transaction Button."""
+    """Tests for validate_send_inputs() - Story 9.1: Send Transaction Button.
+
+    2026-08-23 revision: validate_send_inputs() no longer checks
+    connection readiness or the self-send case - connecting is now part
+    of the send flow itself (see project/plans/story_27_1.md's
+    "Architecture Revision" section), so those two checks moved to
+    _send_transaction_thread, covered separately below
+    (TestConnectAndSendFlow)."""
 
     def test_empty_destination_returns_error(self):
         """Given empty destination, Then returns error message."""
-        result = validate_send_inputs("", "aabbccdd", True)
+        result = validate_send_inputs("", "aabbccdd")
         self.assertEqual(result, "Enter destination node ID")
 
     def test_destination_without_exclamation_returns_error(self):
         """Given destination without '!', Then returns error message."""
-        result = validate_send_inputs("abc123", "aabbccdd", True)
+        result = validate_send_inputs("abc123", "aabbccdd")
         self.assertEqual(result, "Destination must start with '!'")
 
     def test_empty_tx_hex_returns_error(self):
         """Given empty tx_hex, Then returns error message."""
-        result = validate_send_inputs("!abc123", "", True)
+        result = validate_send_inputs("!abc123", "")
         self.assertEqual(result, "Enter transaction hex")
 
     def test_odd_length_tx_hex_returns_error(self):
         """Given tx_hex with odd length, Then returns error message."""
-        result = validate_send_inputs("!abc123", "aabbccd", True)
+        result = validate_send_inputs("!abc123", "aabbccd")
         self.assertEqual(result, "Hex must have even length")
 
     def test_invalid_hex_characters_returns_error(self):
         """Given tx_hex with invalid characters, Then returns error message."""
-        result = validate_send_inputs("!abc123", "gghhiijj", True)
+        result = validate_send_inputs("!abc123", "gghhiijj")
         self.assertEqual(result, "Invalid hex characters")
-
-    def test_no_interface_returns_error(self):
-        """Given no Meshtastic interface, Then returns error message."""
-        result = validate_send_inputs("!abc123", "aabbccdd", False)
-        self.assertEqual(result, "Meshtastic not connected")
 
     def test_valid_inputs_returns_none(self):
         """Given all valid inputs, Then returns None."""
-        result = validate_send_inputs("!abc123", "aabbccdd", True)
+        result = validate_send_inputs("!abc123", "aabbccdd")
         self.assertIsNone(result)
 
     def test_validation_order_checks_dest_first(self):
         """Given multiple invalid inputs, Then checks destination first."""
-        result = validate_send_inputs("", "", False)
+        result = validate_send_inputs("", "")
         self.assertEqual(result, "Enter destination node ID")
 
     def test_validation_order_checks_dest_format_second(self):
         """Given invalid dest format and other errors, Then checks dest format second."""
-        result = validate_send_inputs("abc", "", False)
+        result = validate_send_inputs("abc", "")
         self.assertEqual(result, "Destination must start with '!'")
 
     def test_validation_order_checks_tx_hex_third(self):
-        """Given empty tx_hex and no interface, Then checks tx_hex third."""
-        result = validate_send_inputs("!abc123", "", False)
+        """Given valid destination and empty tx_hex, Then checks tx_hex third."""
+        result = validate_send_inputs("!abc123", "")
         self.assertEqual(result, "Enter transaction hex")
 
     def test_whitespace_only_destination_returns_error(self):
         """Given whitespace-only destination (after strip), Then returns error."""
-        result = validate_send_inputs("", "aabbccdd", True)
+        result = validate_send_inputs("", "aabbccdd")
         self.assertEqual(result, "Enter destination node ID")
 
-    def test_dry_run_without_interface_returns_none(self):
-        """Given dry_run=True and no Meshtastic interface, Then returns None (valid).
-
-        Story 6.5: Dry run should work without Meshtastic connection.
-        """
-        result = validate_send_inputs("!abc123", "aabbccdd", False, dry_run=True)
-        self.assertIsNone(result)
-
-    def test_dry_run_still_validates_other_inputs(self):
-        """Given dry_run=True but invalid hex, Then still returns error.
-
-        Story 6.5: Dry run should still validate destination and tx_hex.
-        """
-        result = validate_send_inputs("!abc123", "gghhiijj", False, dry_run=True)
+    def test_dry_run_still_validates_inputs(self):
+        """Given invalid hex, Then still returns an error regardless of
+        dry-run status - dry_run is no longer a validate_send_inputs()
+        parameter at all (Story 6.5's original intent - dry run still
+        validates destination/tx_hex - now holds unconditionally, since
+        there's no longer a connection-readiness check to skip)."""
+        result = validate_send_inputs("!abc123", "gghhiijj")
         self.assertEqual(result, "Invalid hex characters")
-
-    def test_non_dry_run_without_interface_returns_error(self):
-        """Given dry_run=False and no Meshtastic interface, Then returns error.
-
-        Ensures regular mode still requires Meshtastic connection.
-        """
-        result = validate_send_inputs("!abc123", "aabbccdd", False, dry_run=False)
-        self.assertEqual(result, "Meshtastic not connected")
-
-    def test_destination_same_as_own_node_returns_error(self):
-        """Given destination same as own node ID, Then returns error.
-
-        Story 11.2: Cannot send transaction to yourself.
-        """
-        own_node_id = "!abcd1234"
-        result = validate_send_inputs("!abcd1234", "aabbccdd", True, own_node_id=own_node_id)
-        self.assertEqual(result, "Cannot send to your own node")
-
-    def test_destination_different_from_own_node_returns_none(self):
-        """Given destination different from own node ID, Then returns None (valid).
-
-        Story 11.2: Sending to a different node should be allowed.
-        """
-        own_node_id = "!abcd1234"
-        result = validate_send_inputs("!efef5678", "aabbccdd", True, own_node_id=own_node_id)
-        self.assertIsNone(result)
-
-    def test_own_node_id_none_skips_validation(self):
-        """Given own_node_id is None, Then skips self-send validation.
-
-        When not connected, we don't know our own node ID.
-        """
-        result = validate_send_inputs("!abcd1234", "aabbccdd", True, own_node_id=None)
-        self.assertIsNone(result)
-
-    # Note: 'cli_finished' and 'aborted' were dead process_result() result
-    # types (Issue 35) - removed along with their branches. The real abort
-    # path is send_result.error == "Aborted by user", covered by
-    # test_send_result_aborted_by_user below.
 
 
 # =============================================================================
@@ -321,39 +275,12 @@ class TestConnectionStatusStory101(unittest.TestCase):
         self.assertEqual(len(action.log_messages), 1)
         self.assertIn('Connected to Meshtastic device: !abc123', action.log_messages[0][0])
 
-    def test_connection_failed_result(self):
-        """Given 'connection_failed' result, Then sets error connection info."""
-        result = ('connection_failed', None, None)
-
-        action = process_result(result)
-
-        self.assertEqual(action.connection_text, 'Meshtastic: Connection failed')
-        self.assertEqual(action.connection_color, COLOR_ERROR)
-        self.assertEqual(len(action.log_messages), 1)
-        self.assertEqual(action.log_messages[0][1], COLOR_ERROR)
-
-    def test_connection_error_result(self):
-        """Given 'connection_error' result, Then includes error message."""
-        result = ('connection_error', 'Device not found', None)
-
-        action = process_result(result)
-
-        self.assertEqual(action.connection_text, 'Meshtastic: Error')
-        self.assertEqual(action.connection_color, COLOR_ERROR)
-        self.assertIn('Device not found', action.log_messages[0][0])
-
-    def test_connection_initializing_result(self):
-        """Given 'connection_initializing' result, Then shows initializing message."""
-        result = ('connection_initializing', 'Resource temporarily unavailable', None)
-
-        action = process_result(result)
-
-        # Should show initializing message (not error)
-        self.assertIn('initializing', action.log_messages[0][0].lower())
-        self.assertEqual(action.log_messages[0][1], COLOR_WARNING)
-        # Should update connection status
-        self.assertEqual(action.connection_text, 'Meshtastic: Initializing...')
-        self.assertEqual(action.connection_color, COLOR_WARNING)
+    # Note: 'connection_failed'/'connection_error'/'connection_initializing'
+    # were process_result() result types produced only by the old
+    # _init_meshtastic() - removed along with it in the 2026-08-23 revision
+    # (see project/plans/story_27_1.md's "Architecture Revision" section).
+    # Connect failures during Send now surface as a plain 'error' result
+    # instead (TestConnectAndSendFlow covers this).
 
 
 # =============================================================================
@@ -590,101 +517,61 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
             results.append(q.get_nowait())
         return results
 
-    def test_init_meshtastic_retries_transient_error_then_succeeds(self):
+    def test_connect_with_retry_retries_transient_error_then_succeeds(self):
         """Given a transient error on the first attempt and success on the
-        second, Then it retries instead of giving up immediately."""
+        second, Then it retries instead of giving up immediately, and
+        returns the connected transport."""
         import btcmesh_client_gui
+        from transport.base import TransportConnectionError
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
-        gui.status_log = unittest.mock.MagicMock()
-
-        mock_iface = unittest.mock.MagicMock()
-        mock_iface.myInfo.my_node_num = 0x12345678
 
         failing_transport = unittest.mock.MagicMock()
-        failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+        failing_transport.connect.side_effect = TransportConnectionError(
+            "Resource temporarily unavailable"
+        )
 
         succeeding_transport = unittest.mock.MagicMock()
         succeeding_transport.connect.return_value = None
-        succeeding_transport._iface = mock_iface
         succeeding_transport.local_node_id = "!12345678"
 
         transports = [failing_transport, succeeding_transport]
 
         with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', side_effect=transports), \
-             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
-             unittest.mock.patch('btcmesh_client_gui.time.sleep'), \
-             unittest.mock.patch('btcmesh_client_gui.get_own_node_name', return_value='TestNode'):
-            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
+             unittest.mock.patch('btcmesh_client_gui.time.sleep'):
+            result = btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyFake')
 
-        result_types = [r[0] for r in self._drain(gui.result_queue)]
-        self.assertEqual(result_types.count('connection_initializing'), 1)
-        self.assertIn('connected', result_types)
-        self.assertIn('transport_ready', result_types)
+        self.assertIs(result, succeeding_transport)
+        log_messages = [r[1] for r in self._drain(gui.result_queue) if r[0] == 'log']
+        self.assertTrue(any('initializing' in m.lower() for m in log_messages))
 
-    def test_init_meshtastic_uses_transport_local_node_id_zero_padded(self):
-        """Issue 32: the 'connected' result's node_id must come from
-        transport.local_node_id (always zero-padded to 8 hex digits), not
-        a reformatted iface.myInfo.my_node_num - which previously produced
-        a shorter, inconsistent ID for small node numbers, e.g. "!abcd12"
-        instead of "!00abcd12"."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.result_queue = queue.Queue()
-        gui.status_log = unittest.mock.MagicMock()
-
-        mock_iface = unittest.mock.MagicMock()
-        mock_iface.myInfo.my_node_num = 0x00ABCD12  # A small node number
-
-        transport = unittest.mock.MagicMock()
-        transport.connect.return_value = None
-        transport._iface = mock_iface
-        transport.local_node_id = "!00abcd12"  # Correctly zero-padded
-
-        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=transport), \
-             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
-             unittest.mock.patch('btcmesh_client_gui.get_own_node_name', return_value='TestNode'):
-            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
-
-        results = self._drain(gui.result_queue)
-        connected = next(r for r in results if r[0] == 'connected')
-        # connected = ('connected', iface, node_id, node_name)
-        self.assertEqual(connected[2], "!00abcd12")
-
-    def test_init_meshtastic_gives_up_after_max_attempts(self):
+    def test_connect_with_retry_raises_after_max_attempts(self):
         """Given a persistently transient error, Then after CONNECT_MAX_ATTEMPTS
-        it reports connection_error instead of hanging forever (regression
-        test for the GUI getting permanently stuck on 'Device is
-        initializing, please wait...')."""
+        it raises TransportConnectionError instead of retrying forever
+        (regression test for the GUI getting permanently stuck - see
+        Issue 10/11)."""
         import btcmesh_client_gui
+        from transport.base import TransportConnectionError
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
-        gui.status_log = unittest.mock.MagicMock()
 
         always_failing_transport = unittest.mock.MagicMock()
-        always_failing_transport.connect.side_effect = Exception("Resource temporarily unavailable")
+        always_failing_transport.connect.side_effect = TransportConnectionError(
+            "Resource temporarily unavailable"
+        )
 
         with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
-             unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch('btcmesh_client_gui.time.sleep'):
-            btcmesh_client_gui.BTCMeshGUI._init_meshtastic(gui, port='/dev/ttyFake')
-
-        results = self._drain(gui.result_queue)
-        result_types = [r[0] for r in results]
+            with self.assertRaises(TransportConnectionError):
+                btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyFake')
 
         self.assertEqual(always_failing_transport.connect.call_count, CONNECT_MAX_ATTEMPTS)
-        self.assertEqual(result_types.count('connection_initializing'), CONNECT_MAX_ATTEMPTS)
-        self.assertEqual(result_types[-1], 'connection_error')
 
-    def test_devices_found_multiple_sets_placeholder_not_first_device(self):
-        """Given multiple devices found, Then the spinner's displayed text is
-        a placeholder distinct from any real device path (not devices[0]) -
-        Kivy Spinner only fires its text-change event when the value actually
-        changes, so reusing devices[0] as the placeholder silently prevented
-        selecting the first device until a different one was picked first."""
+    def test_devices_found_multiple_sets_placeholder(self):
+        """Given multiple devices found, Then the spinner shows the
+        select-a-device placeholder and its values list the raw paths."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
@@ -692,25 +579,11 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         gui.status_log = unittest.mock.MagicMock()
 
         devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+        with unittest.mock.patch('btcmesh_client_gui.probe_devices_in_background'):
+            btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
 
         self.assertEqual(gui.device_spinner.values, devices)
         self.assertEqual(gui.device_spinner.text, SELECT_DEVICE_TEXT)
-        self.assertNotIn(gui.device_spinner.text, devices)
-
-    def test_on_device_selected_ignores_placeholder_text(self):
-        """Given the multi-device placeholder text, Then on_device_selected
-        does nothing (no connection attempt)."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui._disconnect_device = unittest.mock.MagicMock()
-        gui._init_meshtastic = unittest.mock.MagicMock()
-
-        btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, SELECT_DEVICE_TEXT)
-
-        gui._disconnect_device.assert_not_called()
-        gui._init_meshtastic.assert_not_called()
 
 
 # =============================================================================
@@ -720,37 +593,27 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 # =============================================================================
 
 class TestNodeIdDisplayStory272(unittest.TestCase):
-    """Tests for node ID display in the client GUI's device dropdown."""
-
-    class _ImmediateThread:
-        """Runs the thread target synchronously so tests stay deterministic."""
-
-        def __init__(self, target=None, daemon=None, **kwargs):
-            self._target = target
-
-        def start(self):
-            if self._target:
-                self._target()
-
-    def _drain(self, q):
-        results = []
-        while not q.empty():
-            results.append(q.get_nowait())
-        return results
+    """Tests for node ID/name display in the client GUI's device dropdown -
+    the GUI-specific wiring around gui.gui_common's shared device-selection
+    functions. The shared functions' own logic (dedup rules, reverse
+    lookup, relabeling) is tested independently in tests/test_gui_common.py
+    - these tests only verify this file calls them correctly, per the
+    2026-08-23 revision (project/plans/story_27_1.md's "Architecture
+    Revision" section)."""
 
     def test_devices_found_multiple_builds_devices_list_and_probes(self):
         """Given multiple devices found, Then self.devices is built with
-        node_id=None/name=None for each, and a background probe is kicked
-        off."""
+        node_id=None/name=None for each, and probing is kicked off via the
+        shared probe_devices_in_background()."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.device_spinner = unittest.mock.MagicMock()
         gui.status_log = unittest.mock.MagicMock()
-        gui._probe_device_identities = unittest.mock.MagicMock()
 
         devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+        with unittest.mock.patch('btcmesh_client_gui.probe_devices_in_background') as mock_probe:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
 
         self.assertEqual(
             gui.devices,
@@ -759,30 +622,30 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
                 {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
             ],
         )
-        gui._probe_device_identities.assert_called_once()
+        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
 
-    def test_devices_found_single_sets_active_path_and_skips_probe(self):
-        """Given a single device found, Then it's set as the active device
-        (about to connect) and no background probe is started - its node ID
-        will come from the live connection instead."""
+    def test_devices_found_single_auto_selects_and_still_probes(self):
+        """Given a single device found, Then it's auto-selected but not
+        auto-connected (2026-08-23 revision), and still probed - unlike
+        the old behavior, there's no imminent live connection to get
+        identity from for free anymore."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.device_spinner = unittest.mock.MagicMock()
         gui.status_log = unittest.mock.MagicMock()
-        gui._probe_device_identities = unittest.mock.MagicMock()
-        gui._init_meshtastic = unittest.mock.MagicMock()
 
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', ['/dev/ttyUSB0']))
+        with unittest.mock.patch('btcmesh_client_gui.probe_devices_in_background') as mock_probe:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', ['/dev/ttyUSB0']))
 
-        self.assertEqual(gui._active_device_path, '/dev/ttyUSB0')
-        gui._probe_device_identities.assert_not_called()
-        gui._init_meshtastic.assert_called_once_with(port='/dev/ttyUSB0')
+        self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
+        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
 
-    def test_device_identity_result_updates_matching_device_and_relabels(self):
-        """Given a device_identity probe result, Then the matching device's
-        node_id and name are updated, dedup runs (node_id is truthy), and
-        the spinner labels are refreshed."""
+    def test_device_identity_result_updates_matching_device_and_dedupes(self):
+        """Given a device_identity probe result, Then the matching
+        device's node_id/name are updated, dedup runs via the shared
+        dedupe_devices_by_node_id() (node_id is truthy), and the spinner
+        labels are refreshed via the shared refresh_device_spinner_labels()."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
@@ -790,285 +653,224 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
             {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
             {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
         ]
-        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
-        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
 
-        btcmesh_client_gui.BTCMeshGUI._handle_result(
-            gui, ('device_identity', '/dev/ttyACM0', '!7c5b4418', 'Meshtastic 4418')
-        )
+        with unittest.mock.patch(
+            'btcmesh_client_gui.dedupe_devices_by_node_id',
+            return_value=(gui.devices, None),
+        ) as mock_dedupe, unittest.mock.patch(
+            'btcmesh_client_gui.refresh_device_spinner_labels'
+        ) as mock_refresh:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(
+                gui, ('device_identity', '/dev/ttyACM0', '!7c5b4418', 'Meshtastic 4418')
+            )
 
         self.assertIsNone(gui.devices[0]['node_id'])
         self.assertEqual(gui.devices[1]['node_id'], '!7c5b4418')
         self.assertEqual(gui.devices[1]['name'], 'Meshtastic 4418')
-        gui._dedupe_devices_by_node_id.assert_called_once_with(keep_path='/dev/ttyACM0')
-        gui._refresh_device_spinner_labels.assert_called_once()
+        mock_dedupe.assert_called_once_with(gui.devices, keep_path='/dev/ttyACM0')
+        mock_refresh.assert_called_once_with(gui.device_spinner, gui.devices)
 
-    def test_device_identity_none_when_probe_fails(self):
+    def test_device_identity_none_skips_dedupe(self):
         """Given a probe result of node_id=None/name=None (not a real
-        Meshtastic device, or connect failed), Then the device's identity
-        stays None without error, and dedup is skipped (nothing to dedupe
-        against a None node_id)."""
+        Meshtastic device, or connect failed), Then dedup is skipped
+        (nothing to dedupe against a None node_id), but labels still
+        refresh."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
-        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
-        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
 
-        btcmesh_client_gui.BTCMeshGUI._handle_result(
-            gui, ('device_identity', '/dev/ttyUSB0', None, None)
-        )
+        with unittest.mock.patch('btcmesh_client_gui.dedupe_devices_by_node_id') as mock_dedupe, \
+             unittest.mock.patch('btcmesh_client_gui.refresh_device_spinner_labels') as mock_refresh:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(
+                gui, ('device_identity', '/dev/ttyUSB0', None, None)
+            )
 
         self.assertIsNone(gui.devices[0]['node_id'])
         self.assertIsNone(gui.devices[0]['name'])
-        gui._dedupe_devices_by_node_id.assert_not_called()
-        gui._refresh_device_spinner_labels.assert_called_once()
+        mock_dedupe.assert_not_called()
+        mock_refresh.assert_called_once()
 
-    def test_connected_updates_active_device_identity(self):
-        """Given a successful connection to the currently-active device,
-        Then its node_id and name are taken from the live connection (not
-        a separate probe), dedup runs, and the spinner labels are
-        refreshed."""
+    def test_on_send_pressed_resolves_device_path_from_display(self):
+        """Given a labeled 'name (node_id)' selection, Then on_send_pressed
+        resolves it to the real underlying path (via the shared
+        device_path_from_display()) before starting the send thread, not
+        the formatted display string - the actual regression risk this
+        revision introduces if missed, since the send thread passes this
+        straight to transport.connect()."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
-        gui._active_device_path = '/dev/ttyUSB0'
-        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
-        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
-        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
-        gui.connection_label = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = 'Meshtastic 4418 (!7c5b4418)'
+        gui.dest_input.text = '!abcd1234'
+        gui.tx_input.text = 'aabbccdd'
+        gui.dry_run_toggle.state = 'normal'
         gui.status_log = unittest.mock.MagicMock()
+        gui.send_btn = unittest.mock.MagicMock()
+        gui.abort_btn = unittest.mock.MagicMock()
 
-        mock_iface = unittest.mock.MagicMock()
-        btcmesh_client_gui.BTCMeshGUI._handle_result(
-            gui, ('connected', mock_iface, '!7c5b4418', 'TestNode')
-        )
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread') as mock_thread:
+            btcmesh_client_gui.BTCMeshGUI.on_send_pressed(gui, None)
 
-        self.assertEqual(gui.devices[0]['node_id'], '!7c5b4418')
-        self.assertEqual(gui.devices[0]['name'], 'TestNode')
-        gui._dedupe_devices_by_node_id.assert_called_once_with(keep_path='/dev/ttyUSB0')
-        gui._refresh_device_spinner_labels.assert_called_once()
+        args = mock_thread.call_args.kwargs['args']
+        self.assertEqual(args[3], '/dev/ttyUSB0')
 
-    def test_connected_without_active_device_path_does_not_touch_devices(self):
-        """Given a connection with no tracked active device path (shouldn't
-        normally happen, but must not crash), Then relabeling is skipped."""
-        import btcmesh_client_gui
 
-        gui = unittest.mock.MagicMock()
-        gui._active_device_path = None
-        gui.devices = []
-        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
-        gui.connection_label = unittest.mock.MagicMock()
-        gui.status_log = unittest.mock.MagicMock()
+# =============================================================================
+# _send_transaction_thread's connect-send-disconnect flow (2026-08-23
+# revision - see project/plans/story_27_1.md's "Architecture Revision"
+# section). Mirrors btcmesh_client_cli.py's run_send(): connect, send,
+# disconnect in a finally - connecting is no longer a precondition checked
+# before Send, it's part of the send flow itself.
+# =============================================================================
 
-        mock_iface = unittest.mock.MagicMock()
-        btcmesh_client_gui.BTCMeshGUI._handle_result(
-            gui, ('connected', mock_iface, '!7c5b4418', 'TestNode')
-        )
+class TestConnectAndSendFlow(unittest.TestCase):
+    """Tests for _send_transaction_thread()'s connect/send/disconnect
+    lifecycle."""
 
-        gui._refresh_device_spinner_labels.assert_not_called()
-
-    def test_probe_device_identities_pushes_one_result_per_device(self):
-        """Given self.devices, Then _probe_device_identities() calls
-        probe_device_identity() for each and pushes a device_identity
-        result (path, node_id, name) per device."""
-        import btcmesh_client_gui
-        from core.meshtastic_utils import ProbedDevice
-
+    def _make_gui(self):
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
-            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
-        ]
+        return gui
 
-        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
-             unittest.mock.patch(
-                 'btcmesh_client_gui.probe_device_identity',
-                 side_effect=[
-                     ProbedDevice(node_id='!11111111', name='Node One'),
-                     ProbedDevice(node_id=None, name=None),
-                 ],
-             ):
-            btcmesh_client_gui.BTCMeshGUI._probe_device_identities(gui)
+    def _drain(self, q):
+        results = []
+        while not q.empty():
+            results.append(q.get_nowait())
+        return results
 
+    def test_dry_run_never_connects(self):
+        """Given dry_run=True, Then no connection is attempted at all -
+        just the chunking preview."""
+        import btcmesh_client_gui
+
+        gui = self._make_gui()
+        gui._run_preview = unittest.mock.MagicMock()
+
+        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls:
+            btcmesh_client_gui.BTCMeshGUI._send_transaction_thread(
+                gui, '!abcd1234', 'aabbccdd', True, '/dev/ttyUSB0'
+            )
+
+        mock_transport_cls.assert_not_called()
+        gui._run_preview.assert_called_once_with('aabbccdd')
+
+    def test_successful_send_connects_sends_and_disconnects(self):
+        """Given a successful connect, Then it pushes 'connected', sends
+        via TransactionSender, pushes 'send_result', then always
+        disconnects and pushes 'disconnected'."""
+        import btcmesh_client_gui
+
+        gui = self._make_gui()
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+        gui._connect_with_retry = unittest.mock.MagicMock(return_value=mock_transport)
+
+        mock_sender = unittest.mock.MagicMock()
+        mock_result = unittest.mock.MagicMock(success=True, txid='abc123')
+        mock_sender.send_transaction.return_value = mock_result
+
+        with unittest.mock.patch(
+            'btcmesh_client_gui.TransactionSender', return_value=mock_sender
+        ), unittest.mock.patch(
+            'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
+        ):
+            btcmesh_client_gui.BTCMeshGUI._send_transaction_thread(
+                gui, '!abcd1234', 'aabbccdd', False, '/dev/ttyUSB0'
+            )
+
+        gui._connect_with_retry.assert_called_once_with('/dev/ttyUSB0')
+        mock_sender.send_transaction.assert_called_once()
+        mock_transport.disconnect.assert_called_once()
+        self.assertIsNone(gui.transport)
+        self.assertIsNone(gui.iface)
+
+        result_types = [r[0] for r in self._drain(gui.result_queue)]
+        self.assertEqual(
+            result_types,
+            ['connected', 'send_result', 'disconnected'],
+        )
+
+    def test_connect_failure_pushes_error_and_never_sends(self):
+        """Given _connect_with_retry raises, Then a plain 'error' result is
+        pushed and TransactionSender is never constructed - no
+        'disconnected' either, since nothing was ever connected."""
+        import btcmesh_client_gui
+        from transport.base import TransportConnectionError
+
+        gui = self._make_gui()
+        gui._connect_with_retry = unittest.mock.MagicMock(
+            side_effect=TransportConnectionError("No Meshtastic device found")
+        )
+
+        with unittest.mock.patch('btcmesh_client_gui.TransactionSender') as mock_sender_cls:
+            btcmesh_client_gui.BTCMeshGUI._send_transaction_thread(
+                gui, '!abcd1234', 'aabbccdd', False, '/dev/ttyUSB0'
+            )
+
+        mock_sender_cls.assert_not_called()
         results = self._drain(gui.result_queue)
-        self.assertEqual(
-            results,
-            [
-                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
-                ('device_identity', '/dev/ttyACM0', None, None),
-            ],
-        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], 'error')
+        self.assertIn('No Meshtastic device found', results[0][1])
 
-    def test_dedupe_devices_by_node_id_removes_earlier_duplicate(self):
-        """Given two paths that resolved to the same node ID and neither
-        is the active device, Then the earlier-resolved one is dropped and
-        keep_path (the one just resolved) survives."""
+    def test_self_send_rejected_after_connecting(self):
+        """Given the destination matches the just-connected device's own
+        node ID, Then a 'Cannot send to your own node' error is pushed,
+        TransactionSender is never used, but the transport is still
+        disconnected (self-send is discovered only after connecting,
+        since the own node ID isn't known before then)."""
         import btcmesh_client_gui
 
-        gui = unittest.mock.MagicMock()
-        gui._active_device_path = None
-        gui.devices = [
-            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
-            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
-        ]
+        gui = self._make_gui()
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!abcd1234'
+        gui._connect_with_retry = unittest.mock.MagicMock(return_value=mock_transport)
 
-        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(
-            gui, keep_path='/dev/cu.usbserial-0001'
-        )
+        with unittest.mock.patch(
+            'btcmesh_client_gui.TransactionSender'
+        ) as mock_sender_cls, unittest.mock.patch(
+            'btcmesh_client_gui.get_own_node_name', return_value=None
+        ):
+            btcmesh_client_gui.BTCMeshGUI._send_transaction_thread(
+                gui, '!ABCD1234', 'aabbccdd', False, '/dev/ttyUSB0'
+            )
 
-        self.assertEqual(len(gui.devices), 1)
-        self.assertEqual(gui.devices[0]['path'], '/dev/cu.usbserial-0001')
+        mock_sender_cls.assert_not_called()
+        mock_transport.disconnect.assert_called_once()
+        result_types = [r[0] for r in self._drain(gui.result_queue)]
+        self.assertEqual(result_types, ['connected', 'error', 'disconnected'])
 
-    def test_dedupe_devices_by_node_id_never_drops_the_active_device(self):
-        """Given the active/connected device turns out to be the
-        duplicate (it resolved first; keep_path resolved to the same node
-        ID second), Then keep_path is dropped instead - the entry the
-        user is actually connected to is never removed."""
+    def test_disconnect_happens_even_when_send_raises(self):
+        """Given sender.send_transaction() raises, Then the transport is
+        still disconnected and 'disconnected' is still pushed - the
+        finally block covers exceptions, not just the happy path."""
         import btcmesh_client_gui
 
-        gui = unittest.mock.MagicMock()
-        gui._active_device_path = '/dev/cu.SLAB_USBtoUART'
-        gui.devices = [
-            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
-            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
-        ]
+        gui = self._make_gui()
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+        gui._connect_with_retry = unittest.mock.MagicMock(return_value=mock_transport)
 
-        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(
-            gui, keep_path='/dev/cu.usbserial-0001'
-        )
+        mock_sender = unittest.mock.MagicMock()
+        mock_sender.send_transaction.side_effect = RuntimeError("boom")
 
-        self.assertEqual(len(gui.devices), 1)
-        self.assertEqual(gui.devices[0]['path'], '/dev/cu.SLAB_USBtoUART')
+        with unittest.mock.patch(
+            'btcmesh_client_gui.TransactionSender', return_value=mock_sender
+        ), unittest.mock.patch(
+            'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
+        ):
+            btcmesh_client_gui.BTCMeshGUI._send_transaction_thread(
+                gui, '!abcd1234', 'aabbccdd', False, '/dev/ttyUSB0'
+            )
 
-    def test_dedupe_devices_by_node_id_no_op_when_no_duplicate(self):
-        """Given no other device shares keep_path's node ID, Then nothing
-        is removed."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui._active_device_path = None
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': 'One'},
-            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Two'},
-        ]
-
-        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(gui, keep_path='/dev/ttyUSB0')
-
-        self.assertEqual(len(gui.devices), 2)
-
-    def test_device_path_from_display_resolves_labeled_entry(self):
-        """Given a formatted 'name (node_id)' display string, Then it
-        resolves back to the underlying path."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
-        ]
-
-        result = btcmesh_client_gui.BTCMeshGUI._device_path_from_display(
-            gui, 'Meshtastic 4418 (!7c5b4418)'
-        )
-        self.assertEqual(result, '/dev/ttyUSB0')
-
-    def test_device_path_from_display_falls_back_for_unknown_text(self):
-        """Given text that doesn't match any known device (e.g. a sentinel
-        value like SELECT_DEVICE_TEXT), Then it's returned unchanged."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
-        ]
-
-        result = btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, SELECT_DEVICE_TEXT)
-        self.assertEqual(result, SELECT_DEVICE_TEXT)
-
-    def test_on_device_selected_resolves_labeled_text_to_path(self):
-        """Given a dropdown entry now showing 'name (node_id)', Then
-        selecting it connects to the correct underlying path, not the
-        formatted display string."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
-        ]
-        gui._device_path_from_display = lambda text: (
-            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
-        )
-        gui._disconnect_device = unittest.mock.MagicMock()
-        gui._init_meshtastic = unittest.mock.MagicMock()
-
-        btcmesh_client_gui.BTCMeshGUI.on_device_selected(
-            gui, None, 'Meshtastic 4418 (!7c5b4418)'
-        )
-
-        self.assertEqual(gui._active_device_path, '/dev/ttyUSB0')
-        gui._init_meshtastic.assert_called_once_with(port='/dev/ttyUSB0')
-
-    def test_refresh_device_spinner_labels_preserves_selection(self):
-        """Given the currently selected device gains a node_id, Then the
-        spinner's values are rebuilt and its text updates to the new
-        formatted label for that same device - not silently reset."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.devices = [
-            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None},
-            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Node Two'},
-        ]
-        gui._device_path_from_display = lambda text: (
-            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
-        )
-        gui.device_spinner = unittest.mock.MagicMock()
-        gui.device_spinner.text = '/dev/ttyACM0'  # selected before it had a label
-
-        btcmesh_client_gui.BTCMeshGUI._refresh_device_spinner_labels(gui)
-
-        self.assertEqual(
-            gui.device_spinner.values,
-            ['/dev/ttyUSB0 (!11111111)', 'Node Two (!22222222)'],
-        )
-        self.assertEqual(gui.device_spinner.text, 'Node Two (!22222222)')
-
-    def test_refresh_device_spinner_labels_unbinds_and_rebinds_selection_handler(self):
-        """Then on_device_selected is unbound/rebound around the mutation,
-        so relabeling never fires a spurious reconnect (Kivy Spinner fires
-        its text event on any value change, including a relabel)."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
-        gui._device_path_from_display = lambda text: (
-            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
-        )
-        gui.device_spinner = unittest.mock.MagicMock()
-        gui.device_spinner.text = '/dev/ttyUSB0'
-
-        btcmesh_client_gui.BTCMeshGUI._refresh_device_spinner_labels(gui)
-
-        gui.device_spinner.unbind.assert_called_once_with(text=gui.on_device_selected)
-        gui.device_spinner.bind.assert_called_once_with(text=gui.on_device_selected)
-
-    def test_disconnect_device_resets_active_device_path(self):
-        """Given a tracked active device path, Then disconnecting clears it
-        so a subsequent connection cycle starts fresh."""
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.transport = None
-        gui.iface = None
-        gui._watchdog_running = True
-        gui.watchdog = None
-        gui.power_control = None
-        gui._active_device_path = '/dev/ttyUSB0'
-
-        btcmesh_client_gui.BTCMeshGUI._disconnect_device(gui)
-
-        self.assertIsNone(gui._active_device_path)
+        mock_transport.disconnect.assert_called_once()
+        result_types = [r[0] for r in self._drain(gui.result_queue)]
+        self.assertEqual(result_types, ['connected', 'error', 'disconnected'])
 
 
 # =============================================================================
@@ -1281,6 +1083,120 @@ class TestKnownNodesStory112(unittest.TestCase):
     def test_manual_entry_text_constant(self):
         """Verify MANUAL_ENTRY_TEXT constant is defined correctly."""
         self.assertEqual(MANUAL_ENTRY_TEXT, "Enter manually...")
+
+
+# =============================================================================
+# Story 11.2 revised (2026-08-23): on-demand known-nodes fetch
+# Tests for on_refresh_nodes()'s own brief connect/fetch/disconnect cycle -
+# it no longer reads an ambient self.iface (see
+# project/plans/story_27_1.md's "Architecture Revision" section).
+# =============================================================================
+
+class TestKnownNodesFetchFlow(unittest.TestCase):
+    """Tests for on_refresh_nodes()'s connect-fetch-disconnect flow and
+    _update_known_nodes()'s new (nodes) signature."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously so tests stay deterministic."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def test_on_refresh_nodes_connects_fetches_and_disconnects(self):
+        """Given the Scan-for-nodes button is pressed, Then it briefly
+        connects to the currently selected device, fetches known nodes,
+        pushes a known_nodes_fetched result, and disconnects."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = 'Meshtastic 4418 (!7c5b4418)'
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_nodes = [{'id': '!11111111', 'name': 'Other', 'lastHeard': 0, 'is_recent': False}]
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.get_known_nodes', return_value=mock_nodes
+             ) as mock_get_nodes:
+            btcmesh_client_gui.BTCMeshGUI.on_refresh_nodes(gui, None)
+
+        mock_transport.connect.assert_called_once_with('/dev/ttyUSB0')
+        mock_get_nodes.assert_called_once_with(mock_transport._iface)
+        mock_transport.disconnect.assert_called_once()
+        results = []
+        while not gui.result_queue.empty():
+            results.append(gui.result_queue.get_nowait())
+        self.assertIn(('known_nodes_fetched', mock_nodes), results)
+
+    def test_on_refresh_nodes_logs_error_and_disconnects_nothing_on_connect_failure(self):
+        """Given the device fails to connect, Then a log error is pushed
+        instead of a known_nodes_fetched result, and get_known_nodes() is
+        never called."""
+        import btcmesh_client_gui
+        from transport.base import TransportConnectionError
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = []
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = 'Auto-detect'
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes') as mock_get_nodes:
+            btcmesh_client_gui.BTCMeshGUI.on_refresh_nodes(gui, None)
+
+        mock_get_nodes.assert_not_called()
+        results = []
+        while not gui.result_queue.empty():
+            results.append(gui.result_queue.get_nowait())
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], 'log')
+
+    def test_update_known_nodes_applies_fetched_list(self):
+        """Given a fetched nodes list, Then the destination dropdown is
+        populated from it (the pure UI-update half of the old
+        _update_known_nodes(), now taking the list as a parameter instead
+        of reading self.iface)."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.node_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        nodes = [{'id': '!11111111', 'name': 'Relay', 'lastHeard': 0, 'is_recent': False}]
+
+        btcmesh_client_gui.BTCMeshGUI._update_known_nodes(gui, nodes)
+
+        self.assertEqual(gui.known_nodes, nodes)
+        self.assertIn('Relay (!11111111)', gui.node_spinner.values)
+
+    def test_update_known_nodes_empty_list_shows_no_nodes_option(self):
+        """Given an empty fetched nodes list, Then the dropdown shows the
+        no-nodes placeholder rather than an empty list."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.node_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._update_known_nodes(gui, [])
+
+        self.assertEqual(gui.node_spinner.values, [MANUAL_ENTRY_TEXT, NO_NODES_TEXT])
 
 
 # =============================================================================
@@ -1516,145 +1432,6 @@ class TestDisableControlsStory95(unittest.TestCase):
         for result in progress_results:
             action = process_result(result)
             self.assertFalse(action.stop_sending, f"stop_sending should be False for {result}")
-
-
-# =============================================================================
-# Story 28.4: Detection-Only DeviceWatchdog for the Client GUI
-# =============================================================================
-
-class TestDeviceWatchdogStory284(unittest.TestCase):
-    """Tests for the client GUI's DeviceWatchdog wiring (Story 28.4)."""
-
-    def test_transport_ready_builds_watchdog_and_starts_thread(self):
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        mock_transport = unittest.mock.MagicMock()
-        mock_watchdog = unittest.mock.MagicMock()
-
-        with unittest.mock.patch(
-            'btcmesh_client_gui.build_device_watchdog',
-            return_value=(mock_watchdog, None),
-        ) as mock_build:
-            btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('transport_ready', mock_transport))
-
-        mock_build.assert_called_once_with(
-            mock_transport,
-            on_recovery_attempt=unittest.mock.ANY,
-            on_recovered=unittest.mock.ANY,
-            on_recovery_failed=unittest.mock.ANY,
-        )
-        self.assertEqual(gui.transport, mock_transport)
-        self.assertEqual(gui.watchdog, mock_watchdog)
-        self.assertIsNone(gui.power_control)
-        gui._start_watchdog_thread.assert_called_once()
-
-    def test_watchdog_thread_ticks_when_not_sending(self):
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui._watchdog_running = True
-        gui._active_sender = None
-        gui.watchdog = unittest.mock.MagicMock()
-
-        def fake_sleep(_):
-            gui._watchdog_running = False  # stop after one iteration
-
-        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', TestDeviceConnectionRetryAndSelectionFix._ImmediateThread), \
-                unittest.mock.patch('btcmesh_client_gui.time.sleep', side_effect=fake_sleep), \
-                unittest.mock.patch('btcmesh_client_gui.time.time', return_value=100.0):
-            btcmesh_client_gui.BTCMeshGUI._start_watchdog_thread(gui)
-
-        gui.watchdog.tick.assert_called_once_with(100.0)
-
-    def test_watchdog_thread_skips_tick_during_active_send(self):
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui._watchdog_running = True
-        gui._active_sender = unittest.mock.MagicMock()  # a send is active
-        gui.watchdog = unittest.mock.MagicMock()
-
-        def fake_sleep(_):
-            gui._watchdog_running = False  # stop after one iteration
-
-        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', TestDeviceConnectionRetryAndSelectionFix._ImmediateThread), \
-                unittest.mock.patch('btcmesh_client_gui.time.sleep', side_effect=fake_sleep):
-            btcmesh_client_gui.BTCMeshGUI._start_watchdog_thread(gui)
-
-        gui.watchdog.tick.assert_not_called()
-
-    def test_watchdog_attempt_logs_warning_message(self):
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_attempt',))
-
-        gui.status_log.add_message.assert_called_once_with(
-            "Device appears wedged - attempting automatic recovery...", COLOR_WARNING
-        )
-
-    def test_watchdog_recovered_logs_and_refreshes_iface(self):
-        import btcmesh_client_gui
-        from core.device_watchdog import RecoveryOutcome
-
-        gui = unittest.mock.MagicMock()
-        mock_iface = unittest.mock.MagicMock()
-        gui.transport._iface = mock_iface
-
-        outcome = RecoveryOutcome(success=True, new_device_path="/dev/ttyNEW")
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_recovered', outcome))
-
-        gui.status_log.add_message.assert_called_once_with(
-            "Device recovered. Reconnected at /dev/ttyNEW.", COLOR_SUCCESS
-        )
-        self.assertEqual(gui.iface, mock_iface)
-        gui._update_known_nodes.assert_called_once()
-
-    def test_watchdog_failed_with_no_power_control_shows_reconnect_message(self):
-        import btcmesh_client_gui
-        from core.device_watchdog import RecoveryOutcome
-
-        gui = unittest.mock.MagicMock()
-        gui.power_control = None
-
-        outcome = RecoveryOutcome(success=False, error="No power control configured")
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_failed', outcome))
-
-        gui.status_log.add_message.assert_called_once_with(
-            "Device appears unresponsive. Please reconnect it manually.", COLOR_WARNING
-        )
-
-    def test_watchdog_failed_with_power_control_shows_error_message(self):
-        import btcmesh_client_gui
-        from core.device_watchdog import RecoveryOutcome
-
-        gui = unittest.mock.MagicMock()
-        gui.power_control = unittest.mock.MagicMock()  # a relay is configured
-
-        outcome = RecoveryOutcome(success=False, error="Device did not reappear within the wait window")
-        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('watchdog_failed', outcome))
-
-        gui.status_log.add_message.assert_called_once_with(
-            "Automatic device recovery failed: Device did not reappear within the wait window",
-            COLOR_ERROR,
-        )
-
-    def test_disconnect_device_stops_watchdog(self):
-        import btcmesh_client_gui
-
-        gui = unittest.mock.MagicMock()
-        gui.transport = None
-        gui.iface = None
-        gui._watchdog_running = True
-        gui.watchdog = unittest.mock.MagicMock()
-        gui.power_control = unittest.mock.MagicMock()
-
-        btcmesh_client_gui.BTCMeshGUI._disconnect_device(gui)
-
-        self.assertFalse(gui._watchdog_running)
-        self.assertIsNone(gui.watchdog)
-        self.assertIsNone(gui.power_control)
 
 
 if __name__ == '__main__':
