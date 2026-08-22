@@ -1416,6 +1416,25 @@ process** 🔍 OPEN
   `MockToggleButton` class with a real `__init__(self, **kwargs)` that
   stores `disabled`, `text`, etc. as real per-instance attributes, so
   each constructed widget is a genuinely distinct object.
+- **Resolved 2026-08-22.** Added `MockButton` and `MockPopup` classes
+  (mirroring the existing `MockTextInput`/`MockSpinner` pattern) with
+  real `__init__` methods capturing `text`, `disabled`, `bold`,
+  `background_color`, `size_hint_x/y`, `width`, `height`, `font_size`,
+  and (for `Popup`) `title`, `content`, `size_hint`, plus `open()`/
+  `dismiss()` methods. Each now gets its own dedicated mock module
+  (`button_mock`/`popup_mock`) instead of sharing the generic
+  `kivy_mock` bare `MagicMock()`, so every constructed instance is a
+  genuinely distinct object with its own attributes, matching what the
+  real Kivy widgets do.
+  `ToggleButton` was intentionally left mapped to the bare `kivy_mock`
+  in this file: `btcmesh_server_gui.py` (the module this test file
+  covers) never imports `ToggleButton` at all - only the client GUI
+  does - so there is no real caller in this file to fix, and adding an
+  unused `MockToggleButton` class here would just be dead code.
+  Verified the fix actually closes the gap: running
+  `TestReassemblyTimeoutSettingsStory183` standalone (the case that
+  originally surfaced this bug) now passes cleanly on its own, not just
+  as part of the full suite. Full suite still green (774 tests).
 
 ---
 
@@ -1455,4 +1474,4 @@ process** 🔍 OPEN
 | 33    | Non-atomic JSON writes in transaction history can silently reset history | Minor (data-loss edge case) | **FIXED** |
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
-| 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | Open |
+| 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
