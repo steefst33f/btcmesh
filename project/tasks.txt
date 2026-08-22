@@ -1454,10 +1454,22 @@ lora/
         the retry: it only added cost (doubling the wait for every
         non-Meshtastic false-positive candidate, e.g. the relay board's
         own port, which can never succeed regardless of attempt count)
-        with no observed benefit. See Issue 37 in `project/issues.txt`,
-        which now also proposes using the already-collected node ID (and
-        a probed node *name*) to fix the false-positive-candidate cost at
-        its actual root instead._
+        with no observed benefit. See Issue 37 in `project/issues.txt`._
+    *   _Note: Extended 2026-08-22 to also fetch the node's configured
+        name during the same probe connection (free - `get_own_node_name()`
+        just reads data already delivered by the handshake).
+        `probe_device_node_id() -> Optional[str]` became
+        `probe_device_identity() -> ProbedDevice` (a `node_id`/`name`
+        dataclass, never a bare `None`); `format_device_display()` gained
+        an optional `name` param, showing `Name (!nodeid)` when both are
+        known. Enables the client GUI (Story 27.2) to dedupe dropdown
+        entries that resolve to the same node ID - fixing Issue 37's
+        duplicate-physical-device half using data the probe already
+        collects, though not its false-positive-candidate half (relay
+        board ports never get a node ID to dedupe by - see Issue 37's
+        notes on the two rejected pre-filter attempts). See
+        `project/plans/story_27_1.md`'s "Enhancement: Node Names +
+        Dropdown Dedup" section for the full design._
 
 - [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
 - [ ] *   **As a** client GUI user,

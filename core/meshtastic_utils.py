@@ -91,12 +91,24 @@ def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
         return []
 
 
-def probe_device_node_id(path: str) -> Optional[str]:
+@dataclass
+class ProbedDevice:
+    """Result of probing a candidate serial port for its Meshtastic
+    identity. Fields are None (never a bare None return from
+    probe_device_identity()) if the path isn't a genuine/reachable
+    Meshtastic device - callers never need a None-check before
+    destructuring."""
+    node_id: Optional[str]
+    name: Optional[str]
+
+
+def probe_device_identity(path: str) -> ProbedDevice:
     """Briefly connect to a candidate serial port to learn its Meshtastic
-    node ID, then disconnect. Returns None (never raises) if the path
-    isn't a genuine Meshtastic device, is already in use, or the
-    connection attempt fails/times out - e.g. a false-positive candidate
-    from scan_meshtastic_devices()'s VID-blacklist filtering, such as the
+    node ID and configured name, then disconnect. Returns
+    ProbedDevice(None, None) (never raises) if the path isn't a genuine
+    Meshtastic device, is already in use, or the connection attempt
+    fails/times out - e.g. a false-positive candidate from
+    scan_meshtastic_devices()'s VID-blacklist filtering, such as the
     Story 26.7 relay board's own serial port, which speaks a completely
     different protocol.
 
@@ -120,21 +132,27 @@ def probe_device_node_id(path: str) -> Optional[str]:
     transport = MeshtasticSerialTransport()
     try:
         transport.connect(path)
-        return transport.local_node_id
+        return ProbedDevice(
+            node_id=transport.local_node_id,
+            name=get_own_node_name(transport._iface),
+        )
     except TransportConnectionError:
-        return None
+        return ProbedDevice(node_id=None, name=None)
     finally:
         transport.disconnect()
 
 
-def format_device_display(path: str, node_id: Optional[str]) -> str:
-    """Format a device path and its (possibly not-yet-known) node ID for
+def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:
+    """Format a device path and its (possibly not-yet-known) identity for
     display in a dropdown.
 
     Returns:
-        'path' alone if node_id isn't known yet/unavailable, else
-        'path (node_id)' - e.g. '/dev/cu.usbserial-0001 (!7c5b4418)'.
+        'path' alone if node_id isn't known yet/unavailable; 'path
+        (node_id)' if only the node_id is known; 'name (node_id)' if
+        both are known - e.g. 'Meshtastic 4418 (!7c5b4418)'.
     """
+    if node_id and name:
+        return f"{name} ({node_id})"
     return f"{path} ({node_id})" if node_id else path
 
 
