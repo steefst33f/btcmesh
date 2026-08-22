@@ -870,9 +870,40 @@ device; Abort had no effect** ✅ FIXED, all 4 fixes real-hw verified
   (an already-wedged device before the test even started, and an
   initially-confusing first-detection delay that turned out to be
   imprecise timestamp tracking, not a bug).
-- **Status**: All 4 fixes implemented (3 merged, 1 pending PR review) and
-  verified on real hardware. See `project/plans/story_28_1.md` for the
-  full epic tracking doc.
+- **Fix 4 superseded 2026-08-23** (not reverted for being wrong - it
+  worked, and was merged and real-hardware verified as described above -
+  but the architecture it was built for changed underneath it): a
+  broader revision decided the client GUI should hold no ambient
+  Meshtastic connection at all while idle, connecting only at the
+  moment Send is actually pressed (see
+  `project/plans/story_27_1.md`'s "Architecture Revision" section).
+  Fix 4's entire premise was periodically pinging an *already-open*
+  idle connection to catch a wedge before Send - with no idle
+  connection left to ping, that premise no longer applies, and the only
+  way to preserve some form of idle liveness-checking would be
+  periodic *reconnect* attempts purely to test liveness - which is the
+  exact rapid-reconnect-cycling pattern this project has independently
+  caught **causing** real wedges (Issue 12, and a Seeed wedge
+  personally reproduced during 2026-08-22's Story 27.2 hardware
+  testing). So idle liveness-checking would work against itself under
+  the new model, not just become redundant.
+  Issue 21's original failure mode (freeze discovered only at Send
+  time, with no way to abort) stays fixed regardless: Fix 1 (the bounded
+  `transport.send()` timeout) is untouched and still the actual
+  guarantee against a hang, and a wedge is now *always* discovered at
+  Send time by construction (there's no other time a connection exists
+  to wedge), with `_connect_with_retry()`'s existing retry loop plus
+  Fix 1's send timeout giving a clear, immediate, actionable error
+  instead of a background maybe-warning. Fix 4's client-side code was
+  removed in the same revision (`btcmesh_client_gui.py`'s
+  `_start_watchdog_thread`/`build_device_watchdog` wiring).
+- **Status**: Fixes 1-3 implemented, merged, and verified on real
+  hardware (Fix 3's server-GUI watchdog is unaffected by the above -
+  the server still holds a genuinely long-lived connection for its
+  whole operating lifetime, so its watchdog's premise still applies).
+  Fix 4 implemented, merged (PR #38), verified on real hardware, then
+  superseded per above. See `project/plans/story_28_1.md` for the full
+  epic tracking doc.
 
 ---
 
@@ -1594,7 +1625,7 @@ still open
 | 23.3  | Generic reassembly errors give client only a silent timeout, no NACK | **Medium-Major (protocol/UX gap)** | **FIXED** |
 | 26.1  | `uhubctl` power-cycling can silently only disconnect data, not real power, on hubs without genuine VBUS switching | **Major (defeats EPIC 5's purpose)** | **FIXED (via 26.7)** |
 | 26.5  | `DeviceWatchdog` recovery cycles can repeatedly re-trigger before a slow-enumerating device finishes rebooting | **Major (defeats automatic recovery)** | **FIXED** |
-| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (4/4, all real-hw verified)** |
+| 28.1  | Unbounded `transport.send()` froze the client GUI completely (Abort ineffective) on an unattended overnight-wedged device | **Critical (requires force-kill)** | **FIXED (1-3 merged; 4 merged then superseded 2026-08-23 by the connect-only-at-Send revision - see note above)** |
 | -     | Server device wedges frequently overnight, root-caused to macOS system sleep disrupting USB (not a code bug) | Informational (environmental) | **EXPLAINED (no code fix)** |
 | 23    | RPC retry logic never actually retries (wrong exception types caught) | **High (silent resilience gap)** | **FIXED** |
 | 24    | Transaction sanity-check module never wired into broadcast path | **High (validation gap)** | **FIXED** |
