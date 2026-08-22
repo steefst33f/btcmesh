@@ -714,6 +714,364 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
 
 # =============================================================================
+# Story 27.2: Node ID Display in the Client GUI's Device Dropdown
+# Tests for probing device node IDs in the background and reflecting them in
+# the device dropdown, without disrupting device selection/connection.
+# =============================================================================
+
+class TestNodeIdDisplayStory272(unittest.TestCase):
+    """Tests for node ID display in the client GUI's device dropdown."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously so tests stay deterministic."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def _drain(self, q):
+        results = []
+        while not q.empty():
+            results.append(q.get_nowait())
+        return results
+
+    def test_devices_found_multiple_builds_devices_list_and_probes(self):
+        """Given multiple devices found, Then self.devices is built with
+        node_id=None/name=None for each, and a background probe is kicked
+        off."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui._probe_device_identities = unittest.mock.MagicMock()
+
+        devices = ['/dev/ttyUSB0', '/dev/ttyACM0']
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', devices))
+
+        self.assertEqual(
+            gui.devices,
+            [
+                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+            ],
+        )
+        gui._probe_device_identities.assert_called_once()
+
+    def test_devices_found_single_sets_active_path_and_skips_probe(self):
+        """Given a single device found, Then it's set as the active device
+        (about to connect) and no background probe is started - its node ID
+        will come from the live connection instead."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+        gui._probe_device_identities = unittest.mock.MagicMock()
+        gui._init_meshtastic = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', ['/dev/ttyUSB0']))
+
+        self.assertEqual(gui._active_device_path, '/dev/ttyUSB0')
+        gui._probe_device_identities.assert_not_called()
+        gui._init_meshtastic.assert_called_once_with(port='/dev/ttyUSB0')
+
+    def test_device_identity_result_updates_matching_device_and_relabels(self):
+        """Given a device_identity probe result, Then the matching device's
+        node_id and name are updated, dedup runs (node_id is truthy), and
+        the spinner labels are refreshed."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
+        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._handle_result(
+            gui, ('device_identity', '/dev/ttyACM0', '!7c5b4418', 'Meshtastic 4418')
+        )
+
+        self.assertIsNone(gui.devices[0]['node_id'])
+        self.assertEqual(gui.devices[1]['node_id'], '!7c5b4418')
+        self.assertEqual(gui.devices[1]['name'], 'Meshtastic 4418')
+        gui._dedupe_devices_by_node_id.assert_called_once_with(keep_path='/dev/ttyACM0')
+        gui._refresh_device_spinner_labels.assert_called_once()
+
+    def test_device_identity_none_when_probe_fails(self):
+        """Given a probe result of node_id=None/name=None (not a real
+        Meshtastic device, or connect failed), Then the device's identity
+        stays None without error, and dedup is skipped (nothing to dedupe
+        against a None node_id)."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
+        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._handle_result(
+            gui, ('device_identity', '/dev/ttyUSB0', None, None)
+        )
+
+        self.assertIsNone(gui.devices[0]['node_id'])
+        self.assertIsNone(gui.devices[0]['name'])
+        gui._dedupe_devices_by_node_id.assert_not_called()
+        gui._refresh_device_spinner_labels.assert_called_once()
+
+    def test_connected_updates_active_device_identity(self):
+        """Given a successful connection to the currently-active device,
+        Then its node_id and name are taken from the live connection (not
+        a separate probe), dedup runs, and the spinner labels are
+        refreshed."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._active_device_path = '/dev/ttyUSB0'
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui._dedupe_devices_by_node_id = unittest.mock.MagicMock()
+        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+
+        mock_iface = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(
+            gui, ('connected', mock_iface, '!7c5b4418', 'TestNode')
+        )
+
+        self.assertEqual(gui.devices[0]['node_id'], '!7c5b4418')
+        self.assertEqual(gui.devices[0]['name'], 'TestNode')
+        gui._dedupe_devices_by_node_id.assert_called_once_with(keep_path='/dev/ttyUSB0')
+        gui._refresh_device_spinner_labels.assert_called_once()
+
+    def test_connected_without_active_device_path_does_not_touch_devices(self):
+        """Given a connection with no tracked active device path (shouldn't
+        normally happen, but must not crash), Then relabeling is skipped."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._active_device_path = None
+        gui.devices = []
+        gui._refresh_device_spinner_labels = unittest.mock.MagicMock()
+        gui.connection_label = unittest.mock.MagicMock()
+        gui.status_log = unittest.mock.MagicMock()
+
+        mock_iface = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(
+            gui, ('connected', mock_iface, '!7c5b4418', 'TestNode')
+        )
+
+        gui._refresh_device_spinner_labels.assert_not_called()
+
+    def test_probe_device_identities_pushes_one_result_per_device(self):
+        """Given self.devices, Then _probe_device_identities() calls
+        probe_device_identity() for each and pushes a device_identity
+        result (path, node_id, name) per device."""
+        import btcmesh_client_gui
+        from core.meshtastic_utils import ProbedDevice
+
+        gui = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.probe_device_identity',
+                 side_effect=[
+                     ProbedDevice(node_id='!11111111', name='Node One'),
+                     ProbedDevice(node_id=None, name=None),
+                 ],
+             ):
+            btcmesh_client_gui.BTCMeshGUI._probe_device_identities(gui)
+
+        results = self._drain(gui.result_queue)
+        self.assertEqual(
+            results,
+            [
+                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
+                ('device_identity', '/dev/ttyACM0', None, None),
+            ],
+        )
+
+    def test_dedupe_devices_by_node_id_removes_earlier_duplicate(self):
+        """Given two paths that resolved to the same node ID and neither
+        is the active device, Then the earlier-resolved one is dropped and
+        keep_path (the one just resolved) survives."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._active_device_path = None
+        gui.devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+
+        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(
+            gui, keep_path='/dev/cu.usbserial-0001'
+        )
+
+        self.assertEqual(len(gui.devices), 1)
+        self.assertEqual(gui.devices[0]['path'], '/dev/cu.usbserial-0001')
+
+    def test_dedupe_devices_by_node_id_never_drops_the_active_device(self):
+        """Given the active/connected device turns out to be the
+        duplicate (it resolved first; keep_path resolved to the same node
+        ID second), Then keep_path is dropped instead - the entry the
+        user is actually connected to is never removed."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._active_device_path = '/dev/cu.SLAB_USBtoUART'
+        gui.devices = [
+            {'path': '/dev/cu.SLAB_USBtoUART', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+            {'path': '/dev/cu.usbserial-0001', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'},
+        ]
+
+        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(
+            gui, keep_path='/dev/cu.usbserial-0001'
+        )
+
+        self.assertEqual(len(gui.devices), 1)
+        self.assertEqual(gui.devices[0]['path'], '/dev/cu.SLAB_USBtoUART')
+
+    def test_dedupe_devices_by_node_id_no_op_when_no_duplicate(self):
+        """Given no other device shares keep_path's node ID, Then nothing
+        is removed."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui._active_device_path = None
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': 'One'},
+            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Two'},
+        ]
+
+        btcmesh_client_gui.BTCMeshGUI._dedupe_devices_by_node_id(gui, keep_path='/dev/ttyUSB0')
+
+        self.assertEqual(len(gui.devices), 2)
+
+    def test_device_path_from_display_resolves_labeled_entry(self):
+        """Given a formatted 'name (node_id)' display string, Then it
+        resolves back to the underlying path."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
+        ]
+
+        result = btcmesh_client_gui.BTCMeshGUI._device_path_from_display(
+            gui, 'Meshtastic 4418 (!7c5b4418)'
+        )
+        self.assertEqual(result, '/dev/ttyUSB0')
+
+    def test_device_path_from_display_falls_back_for_unknown_text(self):
+        """Given text that doesn't match any known device (e.g. a sentinel
+        value like SELECT_DEVICE_TEXT), Then it's returned unchanged."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
+        ]
+
+        result = btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, SELECT_DEVICE_TEXT)
+        self.assertEqual(result, SELECT_DEVICE_TEXT)
+
+    def test_on_device_selected_resolves_labeled_text_to_path(self):
+        """Given a dropdown entry now showing 'name (node_id)', Then
+        selecting it connects to the correct underlying path, not the
+        formatted display string."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
+        ]
+        gui._device_path_from_display = lambda text: (
+            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
+        )
+        gui._disconnect_device = unittest.mock.MagicMock()
+        gui._init_meshtastic = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI.on_device_selected(
+            gui, None, 'Meshtastic 4418 (!7c5b4418)'
+        )
+
+        self.assertEqual(gui._active_device_path, '/dev/ttyUSB0')
+        gui._init_meshtastic.assert_called_once_with(port='/dev/ttyUSB0')
+
+    def test_refresh_device_spinner_labels_preserves_selection(self):
+        """Given the currently selected device gains a node_id, Then the
+        spinner's values are rebuilt and its text updates to the new
+        formatted label for that same device - not silently reset."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': '!22222222', 'name': 'Node Two'},
+        ]
+        gui._device_path_from_display = lambda text: (
+            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
+        )
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = '/dev/ttyACM0'  # selected before it had a label
+
+        btcmesh_client_gui.BTCMeshGUI._refresh_device_spinner_labels(gui)
+
+        self.assertEqual(
+            gui.device_spinner.values,
+            ['/dev/ttyUSB0 (!11111111)', 'Node Two (!22222222)'],
+        )
+        self.assertEqual(gui.device_spinner.text, 'Node Two (!22222222)')
+
+    def test_refresh_device_spinner_labels_unbinds_and_rebinds_selection_handler(self):
+        """Then on_device_selected is unbound/rebound around the mutation,
+        so relabeling never fires a spurious reconnect (Kivy Spinner fires
+        its text event on any value change, including a relabel)."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
+        gui._device_path_from_display = lambda text: (
+            btcmesh_client_gui.BTCMeshGUI._device_path_from_display(gui, text)
+        )
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = '/dev/ttyUSB0'
+
+        btcmesh_client_gui.BTCMeshGUI._refresh_device_spinner_labels(gui)
+
+        gui.device_spinner.unbind.assert_called_once_with(text=gui.on_device_selected)
+        gui.device_spinner.bind.assert_called_once_with(text=gui.on_device_selected)
+
+    def test_disconnect_device_resets_active_device_path(self):
+        """Given a tracked active device path, Then disconnecting clears it
+        so a subsequent connection cycle starts fresh."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.transport = None
+        gui.iface = None
+        gui._watchdog_running = True
+        gui.watchdog = None
+        gui.power_control = None
+        gui._active_device_path = '/dev/ttyUSB0'
+
+        btcmesh_client_gui.BTCMeshGUI._disconnect_device(gui)
+
+        self.assertIsNone(gui._active_device_path)
+
+
+# =============================================================================
 # Story 11.2: Known Nodes Dropdown for Destination
 # Tests for extracting and formatting known nodes from Meshtastic interface
 # =============================================================================

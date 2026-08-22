@@ -1471,21 +1471,60 @@ lora/
         `project/plans/story_27_1.md`'s "Enhancement: Node Names +
         Dropdown Dedup" section for the full design._
 
-- [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
-- [ ] *   **As a** client GUI user,
-- [ ] *   **I want** to see each device's node ID next to its port path,
-- [ ] *   **So that** I don't have to guess or remember which node is on which port.
-    - [ ] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
-        - [ ] *   **Given** the client GUI scans for devices.
-        - [ ] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
-        - [ ] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
-    - [ ] *   **Scenario:** Currently-connected device is not re-probed
-        - [ ] *   **Given** the app already holds an active connection to one of the listed devices.
-        - [ ] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
-    - [ ] *   **Scenario:** Selecting a device still works
-        - [ ] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
-        - [ ] *   **When** the user selects it.
-        - [ ] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+- [x] **Story 27.2: Show node IDs in the client GUI's device dropdown**
+- [x] *   **As a** client GUI user,
+- [x] *   **I want** to see each device's node ID next to its port path,
+- [x] *   **So that** I don't have to guess or remember which node is on which port.
+    - [x] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
+        - [x] *   **Given** the client GUI scans for devices.
+        - [x] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
+        - [x] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
+    - [x] *   **Scenario:** Currently-connected device is not re-probed
+        - [x] *   **Given** the app already holds an active connection to one of the listed devices.
+        - [x] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
+    - [x] *   **Scenario:** Selecting a device still works
+        - [x] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
+        - [x] *   **When** the user selects it.
+        - [x] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+    *   _Note: Implemented per `project/plans/story_27_1.md`'s Story 27.2
+        Implementation Notes. Single-device auto-connect skips the
+        background probe entirely (its node ID arrives via the live
+        `'connected'` result instead); multi-device scans probe
+        sequentially in the background. See PR (story-27-2)._
+    *   _Note: Real-hardware verified 2026-08-22 (Heltec + Seeed + Story
+        26.7 relay board attached, 5 raw scan candidates, see Issue 37).
+        Dropdown showed the "Select a device..." placeholder immediately;
+        `/dev/cu.SLAB_USBtoUART` and `/dev/cu.usbserial-0001` (the
+        Heltec's two path aliases) picked up `(!7c5b4418)` labels within
+        seconds with no clicking. Selecting the labeled
+        `/dev/cu.SLAB_USBtoUART (!7c5b4418)` entry connected successfully
+        (GUI log confirmed 60 known nodes fetched) - proving the reverse
+        lookup resolved the real path rather than passing the formatted
+        display text straight to the connector. Also caught and fixed a
+        real gap in the process: the Seeed's first probe attempt failed
+        instantly despite the device being healthy (see Story 27.1's
+        `PROBE_MAX_ATTEMPTS` fix above, and Issue 37 for the separate
+        duplicate/false-positive scan finding)._
+    *   _Note: Extended 2026-08-22 for Issue 37's node-name work
+        (Story 27.1's `probe_device_identity()`). `self.devices` gains a
+        `name` field; dropdown entries show `Name (!nodeid)` once both
+        are known. New `_dedupe_devices_by_node_id()` collapses two
+        paths that resolve to the same node ID (the Heltec's two
+        aliases) into one entry - the side just authoritatively resolved
+        wins, except the currently active/connected device is never
+        dropped even if it resolved second. See
+        `project/plans/story_27_1.md`'s "Enhancement: Node Names +
+        Dropdown Dedup" section._
+    *   _Note: Real-hardware verified 2026-08-22 (same Heltec + Seeed +
+        relay board setup as above). The 5 raw scan candidates collapsed
+        to 4 visible dropdown entries: the Heltec's two aliases merged
+        into one `Meshtastic 4418 (!7c5b4418)` entry, the Seeed showed
+        `Blind Xnode (!aee5ab3c)`, and the relay board's two ports
+        correctly stayed as bare unlabeled paths (Issue 37's
+        false-positive half, left open by design - dedup only touches
+        entries that resolve to a matching node ID, which the relay
+        board's ports never do). Confirms both the naming and dedup
+        mechanics work end-to-end against real hardware, not just mocks._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
