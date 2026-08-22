@@ -372,6 +372,27 @@ limitation, not a code bug
     confirmed by watching both `TransactionReceiver`'s duplicate-chunk
     handling and the client's stop-and-wait retry logic behave exactly as
     designed throughout.
+- **Retested 2026-08-22 with a different device pair** (Seeed `!aee5ab3c` +
+  Heltec `!7c5b4418`, no ESP32 involved), ahead of a planned demo, to check
+  whether this is specific to the ESP32 or a broader hardware/RF issue. Sent
+  the same real 15-chunk transaction via `btcmesh_client_cli.py`/
+  `btcmesh_server_cli.py` in both directions:
+  - Seeed→Heltec: all 15 chunks delivered and ACKed on first attempt, zero
+    retries.
+  - Heltec→Seeed: all 15 chunks delivered and ACKed on first attempt, zero
+    retries.
+  - Both directions clean, with no sign of the chunk-loss or ACK-loss
+    asymmetry seen with the ESP32. This points toward the ESP32 (or its
+    specific proximity/pairing with the Seeed) as the likely locus of Issue
+    16, rather than a general limitation of this codebase's LoRa link
+    handling. Not conclusive on its own (Issue 12's flakiness shows single
+    clean test runs aren't always reproducible), but a meaningfully positive
+    signal for using the Seeed+Heltec pair at the demo instead of the ESP32.
+  - Separately, this test surfaced an unrelated finding: the Bitcoin RPC
+    broadcast step failed both times (`Connection refused` to the
+    configured `.onion` node - Tor not reachable from this test), so full
+    end-to-end broadcast success wasn't verified. Tracked as a to-do in
+    `todo.txt` ahead of the demo.
 
 ---
 
