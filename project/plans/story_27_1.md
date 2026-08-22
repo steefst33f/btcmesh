@@ -491,3 +491,141 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
   relay board's 2 false-positive ports still present and still
   unlabeled - dedup doesn't touch those), and that the Heltec shows its
   configured name, not a bare path.
+
+---
+
+## Story 27.3 Implementation Notes (server GUI)
+
+**The server GUI's device settings (Story 18.2) work differently enough
+from the client GUI that this isn't a direct copy of Story 27.2's
+pattern** - three real structural differences, found while reading
+`btcmesh_server_gui.py` before writing any code:
+
+1. **No reactive selection handler.** The client GUI's
+   `on_device_selected` has no server-GUI equivalent - the server GUI
+   just reads `self.device_spinner.text` directly at two points:
+   `_on_save_settings()` (writes it into `.env` as
+   `MESHTASTIC_SERIAL_PORT`) and `on_start_pressed()` (passes it
+   straight to `transport.connect()` as the literal port path). Once
+   labels become `"Name (!nodeid)"`, both of these would try to
+   save/connect using a formatted display string instead of a real path
+   - a real breakage, not a cosmetic one - unless both routes through
+   the same reverse-lookup the client GUI uses.
+2. **No live connection during scanning.** The server never
+   auto-connects on scan - only on explicit "Start Server," which
+   disables the device controls first (`_set_meshtastic_settings_enabled(False)`).
+   So there's no "currently active device" to protect during dedup, the
+   way Story 27.2 protects `self._active_device_path` - simpler dedup
+   here, no exemption case needed.
+3. **No "skip probing the single device" shortcut.** The client GUI
+   skips probing when exactly one device is found, since it's about to
+   auto-connect and gets the name for free from the live connection.
+   The server GUI auto-*selects* a lone device but never auto-connects,
+   so that shortcut doesn't apply - worth probing every found device
+   here, including the single-device case.
+
+Also carrying over the log-message fix from Story 27.2 (discussed
+2026-08-22 above): `"Found {len(devices)} devices"` at the equivalent
+`devices_found` handling here has the exact same staleness problem -
+dedup can still reduce that count once probing resolves identities.
+Same fix: drop the number, `"Found device(s)"` / keep the existing
+singular `"Found device: {path}"` message as-is (singular case can't be
+a duplicate on its own).
+
+### Design
+
+**New state** (`__init__` or wherever server GUI instance state is
+set up): `self.devices` (`[{'path', 'node_id', 'name'}, ...]`), rebuilt
+on every scan - no `_active_device_path` needed (see difference #2
+above).
+
+**`_on_scan_devices`**: unchanged (still calls `scan_meshtastic_devices()`
+in a background thread).
+
+**`devices_found` handling**, extended:
+- Build `self.devices` from the raw path list.
+- `self.device_spinner.values = [DEVICE_AUTO_DETECT] + [format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices]`.
+- Single device: still auto-select (`self.device_spinner.text = devices[0]`,
+  unchanged - it's still a raw path at this point, nothing probed yet).
+  Message changes from `f"Found device: {devices[0]}"` to drop
+  redundant info reasoning parity - actually keep as-is, singular case
+  isn't stale (see above).
+- Multiple devices: message changes from `f"Found {len(devices)} devices"`
+  to `"Found device(s)"`, matching Story 27.2's fix.
+- **Always** call `self._probe_device_identities()` when `devices` is
+  non-empty (both single and multi-device cases) - difference #3 above.
+
+**New `_probe_device_identities()`**: same shape as the client GUI's -
+one background thread, sequential, `probe_device_identity()` per
+device, pushes `('device_identity', path, node_id, name)`.
+
+**New `_handle_result` branch for `'device_identity'`**: update the
+matching device's `node_id`/`name`, dedup if `node_id` is truthy, then
+`self._refresh_device_spinner_labels()`.
+
+**New `_dedupe_devices_by_node_id(keep_path)`** - simpler than the
+client GUI's (no active-device exemption, per difference #2):
+```python
+def _dedupe_devices_by_node_id(self, keep_path):
+    keeper = next((d for d in self.devices if d['path'] == keep_path), None)
+    if keeper is None or not keeper['node_id']:
+        return
+    dup_paths = {
+        d['path'] for d in self.devices
+        if d['path'] != keep_path and d['node_id'] == keeper['node_id']
+    }
+    if dup_paths:
+        self.devices = [d for d in self.devices if d['path'] not in dup_paths]
+```
+
+**New `_device_path_from_display(text)`**: same reverse-lookup shape as
+the client GUI's, with the same sentinel-fallback behavior - critically,
+`DEVICE_AUTO_DETECT` (and `DEVICE_SCANNING`/`DEVICE_NO_DEVICES`) are
+never in `self.devices`, so they correctly fall through to "return text
+unchanged," preserving today's `DEVICE_AUTO_DETECT` handling exactly.
+This same fallback is also what keeps `default_device` (loaded from
+`.env` at spinner-creation time, before any scan has populated
+`self.devices`) working unchanged - it's a raw path with no matching
+entry yet, so it round-trips as-is.
+
+**New `_refresh_device_spinner_labels()`**: same shape as the client
+GUI's - no unbind/rebind needed here (no bound handler to protect
+against, per difference #1), just rebuild `.values` and re-set `.text`
+to the (possibly now-labeled) form of whatever's currently selected.
+
+**Fix the two direct-literal-path read sites** (the actual correctness
+requirement, per difference #1):
+```python
+# _on_save_settings(), was: selected_device = self.device_spinner.text
+selected_device = self._device_path_from_display(self.device_spinner.text)
+
+# on_start_pressed(), was: selected_device = self.device_spinner.text
+selected_device = self._device_path_from_display(self.device_spinner.text)
+```
+
+### Critical Files
+
+| File | Change |
+|------|--------|
+| `btcmesh_server_gui.py` | `self.devices` state; `_probe_device_identities()`; `'device_identity'` handling; `_dedupe_devices_by_node_id()` (no active-device case); `_device_path_from_display()`; `_refresh_device_spinner_labels()`; fix `_on_save_settings()` and `on_start_pressed()` to resolve display text back to a real path before using it; drop the stale device count from the multi-device log message |
+| `tests/test_btcmesh_server_gui.py` | Tests mirroring Story 27.2's, plus: `_on_save_settings()` saves the real path (not a formatted label) when a device is labeled; `on_start_pressed()` connects using the real path when a device is labeled; existing `TestMeshtasticDeviceSettingsStory182`/`TestSaveLoadSettingsStory184` tests still pass unchanged where they only exercise path-based behavior |
+| `project/issues.txt` | Update Issue 37 once implemented - server GUI now also gets the duplicate-device fix |
+| `project/tasks.txt` | Mark Story 27.3 done once complete |
+
+### Verification
+
+- **Unit tests**: probe/dedup/relabel behavior mirroring Story 27.2's
+  coverage; `_on_save_settings()` and `on_start_pressed()` both resolve
+  a labeled `"Name (!nodeid)"` selection back to the real underlying
+  path (the actual regression risk this story introduces if missed);
+  `DEVICE_AUTO_DETECT` and the `default_device`-from-`.env` case both
+  still round-trip as literal paths, not labels.
+- **Regression check**: full suite still passes, including existing
+  `TestMeshtasticDeviceSettingsStory182`/`TestSaveLoadSettingsStory184`
+  tests.
+- **Manual**: run the server GUI with the same multi-device real
+  hardware setup as Story 27.2's verification - confirm dedup/naming
+  behaves the same way, then specifically confirm **Start Server**
+  actually connects to the right physical device (not a formatted
+  string) when a labeled entry is selected, and **Save Settings**
+  writes a real path into `.env`, not a label.
