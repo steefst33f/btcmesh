@@ -1515,6 +1515,16 @@ lora/
         dropped even if it resolved second. See
         `project/plans/story_27_1.md`'s "Enhancement: Node Names +
         Dropdown Dedup" section._
+    *   _Note: Real-hardware verified 2026-08-22 (same Heltec + Seeed +
+        relay board setup as above). The 5 raw scan candidates collapsed
+        to 4 visible dropdown entries: the Heltec's two aliases merged
+        into one `Meshtastic 4418 (!7c5b4418)` entry, the Seeed showed
+        `Blind Xnode (!aee5ab3c)`, and the relay board's two ports
+        correctly stayed as bare unlabeled paths (Issue 37's
+        false-positive half, left open by design - dedup only touches
+        entries that resolve to a matching node ID, which the relay
+        board's ports never do). Confirms both the naming and dedup
+        mechanics work end-to-end against real hardware, not just mocks._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
