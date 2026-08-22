@@ -1495,14 +1495,16 @@ them apart until each is individually probed** 🔍 OPEN
 - **Practical effect after Story 27.2**: the same duplicates/false
   positives are now each individually *probed* in the background
   (`probe_device_node_id()`, Story 27.1) - a full multi-second connect
-  handshake per entry on a busy mesh, or a fast-fail-then-retry cycle
-  for the non-Meshtastic ones (see Issue 27.1's `PROBE_MAX_ATTEMPTS` fix,
-  `project/tasks.txt`). Confirmed on real hardware: the Heltec got
+  handshake per entry on a busy mesh, or a ~30s connect-timeout wait for
+  the non-Meshtastic ones. Confirmed on real hardware: the Heltec got
   probed twice (once per alias, each a full handshake), and both relay
-  board ports were probed and correctly failed - visible cost, no
-  incorrect behavior, but wasted time and a confusing-looking dropdown
-  (5 entries for 3 physical devices, 2 of which will never resolve to
-  anything).
+  board ports were probed and correctly failed after their own ~30s
+  timeout each - visible cost, no incorrect behavior, but wasted time and
+  a confusing-looking dropdown (5 entries for 3 physical devices, 2 of
+  which will never resolve to anything). A same-day retry attempt
+  (`PROBE_MAX_ATTEMPTS`) was tried and reverted - see
+  `project/tasks.txt`'s Story 27.1 notes - since it only doubled that
+  wasted wait with no observed benefit; it's not a fix for this issue.
 - Not a Story 27.2 bug - `probe_device_node_id()` and the dropdown
   logic both handled every one of these cases exactly as designed (no
   crash, no hang, no incorrect label). This is a pre-existing gap one
@@ -1520,6 +1522,31 @@ them apart until each is individually probed** 🔍 OPEN
     stage - e.g. by device `description` string, though `scan_*`'s
     existing `DeviceInfo.description` values ("CP2102 USB to UART Bridge
     Controller", "USB Serial") aren't reliably distinctive on their own.
+  - **Also fetch the node's name during the probe, and dedupe the
+    dropdown by node ID once probing completes** (proposed 2026-08-22).
+    `probe_device_node_id()` already opens a full connection per
+    candidate; `core/meshtastic_utils.get_own_node_name(iface)` already
+    exists (used for the live-connection status label) and reads the
+    name straight off the same `iface` the probe already holds via
+    `MeshtasticSerialTransport._iface` - so grabbing the name costs
+    nothing extra once the connection is open. Displaying `Name
+    (!nodeid)` instead of `path (!nodeid)` would match the existing
+    destination-node dropdown's `format_node_display()` convention,
+    which is friendlier than a bare node ID for a user who doesn't have
+    node IDs memorized.
+    More importantly, this **directly fixes the duplicate-physical-
+    device half of this issue** (the Heltec's two aliases) without
+    touching `eliminate_duplicate_port()` at all: once every candidate
+    has been probed, any two paths that resolved to the *same* node ID
+    are provably the same physical device (node ID is a Meshtastic
+    protocol identity, not a USB/OS one) - the dropdown can collapse
+    them into a single `Name (!nodeid)` entry mapped to one canonical
+    path, entirely from data the probe already collects. This does
+    **not** fix the other half (the relay board's two false-positive
+    ports) - those never get a node ID at all, since they don't speak
+    the protocol, so they'd still need the separate VID/description
+    pre-filter above; dedup-by-node-ID and pre-filtering the false
+    positives are complementary, not either/or.
 
 ---
 
