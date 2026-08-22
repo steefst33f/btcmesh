@@ -1463,7 +1463,9 @@ process** 🔍 OPEN
 
 **Issue 37: `scan_meshtastic_devices()` returns multiple OS-level paths for
 one physical device, plus non-Meshtastic candidates, with no way to tell
-them apart until each is individually probed** 🔍 OPEN
+them apart until each is individually probed** 🟡 PARTIALLY FIXED -
+duplicate-device half fixed (client GUI); false-positive-candidate half
+still open
 
 - Found during Story 27.2's real-hardware manual verification
   (2026-08-22), which made an existing-but-invisible gap directly
@@ -1538,31 +1540,36 @@ them apart until each is individually probed** 🔍 OPEN
     false-positive candidates specifically, as opposed to the
     duplicate-physical-device half below) remains open with no accepted
     fix direction.
-  - **Also fetch the node's name during the probe, and dedupe the
-    dropdown by node ID once probing completes** (proposed 2026-08-22).
-    `probe_device_node_id()` already opens a full connection per
-    candidate; `core/meshtastic_utils.get_own_node_name(iface)` already
-    exists (used for the live-connection status label) and reads the
-    name straight off the same `iface` the probe already holds via
-    `MeshtasticSerialTransport._iface` - so grabbing the name costs
-    nothing extra once the connection is open. Displaying `Name
-    (!nodeid)` instead of `path (!nodeid)` would match the existing
-    destination-node dropdown's `format_node_display()` convention,
-    which is friendlier than a bare node ID for a user who doesn't have
-    node IDs memorized.
-    More importantly, this **directly fixes the duplicate-physical-
-    device half of this issue** (the Heltec's two aliases) without
-    touching `eliminate_duplicate_port()` at all: once every candidate
-    has been probed, any two paths that resolved to the *same* node ID
-    are provably the same physical device (node ID is a Meshtastic
-    protocol identity, not a USB/OS one) - the dropdown can collapse
-    them into a single `Name (!nodeid)` entry mapped to one canonical
-    path, entirely from data the probe already collects. This does
-    **not** fix the other half (the relay board's two false-positive
-    ports) - those never get a node ID at all, since they don't speak
-    the protocol, so no amount of dedup touches them. That half stays
-    open (see the rejected pre-filter attempts above) - dedup-by-node-ID
-    is worth doing on its own merits regardless.
+  - ✅ **Also fetch the node's name during the probe, and dedupe the
+    dropdown by node ID once probing completes** (proposed and
+    implemented 2026-08-22, client GUI only so far - **FIXES the
+    duplicate-physical-device half of this issue**). `probe_device_node_id()`
+    became `probe_device_identity()`, now also reading the name off the
+    same `iface` the probe already holds via `MeshtasticSerialTransport._iface`
+    (`core/meshtastic_utils.get_own_node_name()`, free - no extra
+    connection). Dropdown entries show `Name (!nodeid)` once both are
+    known, matching the destination-node dropdown's existing
+    `format_node_display()` convention. Once every candidate has been
+    probed, any two paths that resolved to the *same* node ID are
+    provably the same physical device (node ID is a Meshtastic protocol
+    identity, not a USB/OS one) - `_dedupe_devices_by_node_id()`
+    collapses them into one entry, entirely from data the probe already
+    collects, with no changes to `eliminate_duplicate_port()` needed.
+    Real-hardware verified (2026-08-22, client GUI): the 5 raw
+    candidates from this issue's original repro (Heltec + Seeed + relay
+    board) collapsed to 4 visible dropdown entries - the Heltec's two
+    aliases merged into one `Meshtastic 4418 (!7c5b4418)` entry, the
+    Seeed showed `Blind Xnode (!aee5ab3c)`, relay board ports unaffected
+    (see below). See `project/plans/story_27_1.md`'s "Enhancement: Node
+    Names + Dropdown Dedup" section and `project/tasks.txt`'s Story 27.2
+    notes for the full design and verification.
+    This does **not** fix the other half (the relay board's two
+    false-positive ports) - those never get a node ID at all, since they
+    don't speak the protocol, so no amount of dedup touches them
+    (confirmed: they stayed as bare unlabeled paths in the same
+    real-hardware test). That half stays open (see the rejected
+    pre-filter attempts above). Also not yet applied to the server GUI's
+    device settings dropdown (Story 27.3, not started).
 
 ---
 
@@ -1603,4 +1610,4 @@ them apart until each is individually probed** 🔍 OPEN
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
-| 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **Open** |
+| 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
