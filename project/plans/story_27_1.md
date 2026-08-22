@@ -303,3 +303,181 @@ plan's "no custom timeout/synchronization" stance):
   device is arguably correct, not a bug to route around.
 
 Files touched: `btcmesh_client_gui.py`, `tests/test_btcmesh_client_gui.py`.
+
+---
+
+## Enhancement: Node Names + Dropdown Dedup (2026-08-22)
+
+**Context**: real-hardware testing of Story 27.2 surfaced Issue 37
+(`project/issues.txt`) - the Heltec's two OS-level path aliases both
+show up as separate dropdown entries, since `eliminate_duplicate_port()`
+doesn't recognize them as the same device. Discussed as part of that
+issue: since `probe_device_node_id()` already opens a full connection
+per candidate, it can grab the device's configured *name* at the same
+time for free (`core.meshtastic_utils.get_own_node_name()` already
+exists and reads it off the same `iface`) - and once every candidate's
+node ID is known, any two paths that resolved to the *same* node ID are
+provably the same physical device (node ID is a Meshtastic protocol
+identity, not a USB/OS one), so the dropdown can collapse them into one
+entry without needing to fix `eliminate_duplicate_port()` at all.
+
+**Scope decision**: implement this as more commits on the still-open,
+unmerged `story-27-1`/`story-27-2` branches (PRs #49/#50), not new
+branches - it directly revises the same functions those PRs introduce
+hours earlier the same day, in response to real-hardware findings from
+verifying them. Server GUI (Story 27.3) hasn't started yet, so it
+inherits this improved behavior from day one instead of needing its own
+retrofit later.
+
+**What this fixes vs. doesn't**: this collapses *display* duplicates
+(the Heltec showing twice) using data already collected. It does **not**
+reduce the underlying *probe cost* - every raw candidate path, including
+ones that will turn out to be duplicates, still gets a full probe
+connection each, because there's no way to know two paths are duplicates
+*before* both have been probed and their node IDs compared. It also does
+**not** touch the relay board's false-positive ports (Issue 37's other
+half) - those never get a node ID at all, so nothing to dedupe against;
+that still needs the separate VID/description pre-filter Issue 37
+already proposes.
+
+### Design
+
+**`core/meshtastic_utils.py`**:
+
+```python
+@dataclass
+class ProbedDevice:
+    """Result of probing a candidate serial port: its Meshtastic node ID
+    and, if available, its configured name. Fields are None (never a
+    bare None return) if the path isn't a genuine/reachable Meshtastic
+    device - callers never need a None-check before destructuring."""
+    node_id: Optional[str]
+    name: Optional[str]
+
+
+def probe_device_identity(path: str) -> ProbedDevice:
+    """Replaces probe_device_node_id() - same brief connect/disconnect,
+    now also reading the node's configured name off the same iface
+    before disconnecting (free: get_own_node_name() just reads data
+    already delivered during the same handshake)."""
+    from transport.meshtastic_serial import MeshtasticSerialTransport
+    from transport.base import TransportConnectionError
+
+    transport = MeshtasticSerialTransport()
+    try:
+        transport.connect(path)
+        return ProbedDevice(
+            node_id=transport.local_node_id,
+            name=get_own_node_name(transport._iface),
+        )
+    except TransportConnectionError:
+        return ProbedDevice(node_id=None, name=None)
+    finally:
+        transport.disconnect()
+```
+
+`format_device_display()` gains an optional `name` parameter:
+
+```python
+def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:
+    if node_id and name:
+        return f"{name} ({node_id})"
+    if node_id:
+        return f"{path} ({node_id})"
+    return path
+```
+
+**`btcmesh_client_gui.py`**:
+
+- `self.devices` entries gain a `'name'` key:
+  `{'path': ..., 'node_id': None, 'name': None}`.
+- `_probe_device_node_ids()` → `_probe_device_identities()`, calls
+  `probe_device_identity(path)`, pushes
+  `('device_identity', path, identity.node_id, identity.name)`.
+- New `_handle_result` branch replaces the old `'device_node_id'` one:
+  ```python
+  if result[0] == 'device_identity':
+      path, node_id, name = result[1], result[2], result[3]
+      for device in self.devices:
+          if device['path'] == path:
+              device['node_id'], device['name'] = node_id, name
+              break
+      if node_id:
+          self._dedupe_devices_by_node_id(keep_path=path)
+      self._refresh_device_spinner_labels()
+      return
+  ```
+- The `'connected'` handling block (already storing `node_id` on
+  `self._active_device_path`'s device entry) also stores `name` -
+  already available for free as `result[3]` on the existing `'connected'`
+  result tuple (the same `node_name` `_init_meshtastic()` already sends
+  for the connection-status label), no new lookup needed. Then runs the
+  same dedup call, with `keep_path=self._active_device_path`.
+- New `_dedupe_devices_by_node_id(keep_path)`: removes any *other*
+  device in `self.devices` sharing `keep_path`'s device's node ID.
+  `keep_path` is always the side that just got authoritative
+  information (a probe result, or a live connection) - the rule is
+  "the side that was just resolved wins," **except** the currently
+  active/connected device (`self._active_device_path`) is never removed
+  even if it resolved second - dropping the entry the user is actually
+  connected to would be actively wrong, not just imprecise.
+  ```python
+  def _dedupe_devices_by_node_id(self, keep_path):
+      keeper = next((d for d in self.devices if d['path'] == keep_path), None)
+      if keeper is None or not keeper['node_id']:
+          return
+      self.devices = [
+          d for d in self.devices
+          if d['path'] == keep_path
+          or d['node_id'] != keeper['node_id']
+          or d['path'] == self._active_device_path
+      ]
+  ```
+- `_device_path_from_display()` / `_refresh_device_spinner_labels()`
+  pass `device['name']` through to `format_device_display()` too.
+
+### Critical Files
+
+| File | Change |
+|------|--------|
+| `core/meshtastic_utils.py` | Add `ProbedDevice`, replace `probe_device_node_id()` with `probe_device_identity()`, extend `format_device_display()` with `name` |
+| `btcmesh_client_gui.py` | `self.devices` gains `name`; probe/result handling renamed and extended; new `_dedupe_devices_by_node_id()`; `'connected'` handling stores name too |
+| `tests/test_meshtastic_utils.py` | Tests for `probe_device_identity()` (success with name, success without a set name, failure) and `format_device_display()`'s new `name` branch |
+| `tests/test_btcmesh_client_gui.py` | Tests for dedup (later-resolved duplicate dropped, active device never dropped even if resolved second), name flowing through from both probe and live-connection paths |
+| `project/issues.txt` | Update Issue 37 once implemented - this fixes its duplicate-device half |
+
+### Key Design Decisions
+
+1. **`ProbedDevice` as a null-object, not `Optional[ProbedDevice]`** -
+   callers always get a value with two possibly-`None` fields rather
+   than needing a None-check before destructuring; matches this
+   project's stated preference for dataclasses over ad-hoc `None`/tuple
+   returns.
+2. **Rename rather than keep both functions** - `probe_device_node_id()`
+   has no callers outside this same epic's still-open, unmerged PRs, so
+   there's no compatibility reason to keep it alongside a new function;
+   a clean rename avoids two near-duplicate probe paths.
+3. **Dedup is a display-layer fix, not a probe-cost fix** - explicitly
+   not solving the "every candidate still gets a full probe" cost (see
+   Context above); that's a separate, complementary fix already
+   proposed in Issue 37 (serial-number-based pre-filtering before the
+   probe stage even starts).
+4. **Active device is dedup-exempt** - the one edge case where "newest
+   resolution wins" would be actively wrong, not just a coin-flip
+   between two equally-valid choices.
+
+### Verification
+
+- **Unit tests**: `probe_device_identity()` returns a name alongside the
+  node ID on success, `ProbedDevice(None, None)` on failure (never
+  raises, never returns bare `None`); `format_device_display()`'s three
+  branches (name+id, id-only, neither); dedup removes the later-resolved
+  duplicate but never the active device; name flows through from both
+  the probe path and the live-connection path.
+- **Regression check**: full suite still passes.
+- **Manual**: re-run the same real-hardware scenario that surfaced
+  Issue 37 (Heltec + Seeed + Story 26.7 relay board attached) - confirm
+  the dropdown settles to 3 entries, not 5 (2 real devices with names,
+  relay board's 2 false-positive ports still present and still
+  unlabeled - dedup doesn't touch those), and that the Heltec shows its
+  configured name, not a bare path.
