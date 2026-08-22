@@ -697,3 +697,170 @@ using it as a literal path) stands exactly as planned.
   selected, and no device-related log/behavior regression from
   removing the client's Story 28.4 watchdog (server keeps its own
   watchdog, wired at Start, unchanged).
+
+---
+
+## Client GUI Implementation Notes (2026-08-23)
+
+Written up after implementing (see commit "Client GUI: connect only at
+Send, adopt shared device-selection module") - the "Architecture
+Revision" section above stated intent at the bullet-point level; this
+records what was actually built, since a change this size deserves a
+real record, not just the diff.
+
+### `_connect_with_retry(self, port)` replaces `_init_meshtastic()`
+
+The old `_init_meshtastic()` ran as its own background thread and
+communicated outcomes (`'connected'`, `'connection_failed'`,
+`'connection_error'`, `'connection_initializing'`, `'transport_ready'`)
+purely through `result_queue`, because it was fired from
+`on_device_selected`/`devices_found` - code running on Kivy's main
+thread, which can't block. With connecting now happening *inside* the
+already-background send thread, that indirection is unnecessary: a
+plain synchronous method can block, retry, and either return a
+connected transport or raise.
+
+```python
+def _connect_with_retry(self, port):
+    """Blocking connect-with-retry, called only from the send thread."""
+    self.result_queue.put(('log', f"Connecting to Meshtastic device{f' ({port})' if port else ''}...", logging.INFO))
+    last_error = None
+    for attempt in range(CONNECT_MAX_ATTEMPTS):
+        try:
+            transport = MeshtasticSerialTransport()
+            transport.connect(port)
+            if not transport.local_node_id:
+                transport.disconnect()
+                raise TransportConnectionError("Could not retrieve device info. Ensure device is connected.")
+            return transport
+        except TransportConnectionError as e:
+            last_error = e
+            is_transient = any(x in str(e).lower() for x in ['resource temporarily unavailable', 'busy'])
+            if is_transient and attempt < CONNECT_MAX_ATTEMPTS - 1:
+                self.result_queue.put(('log', "Device is initializing, please wait...", logging.WARNING))
+                time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+                continue
+            break
+    # ... map last_error to a friendlier message, then raise TransportConnectionError
+```
+
+Same retry count/delay and the same transient-vs-permanent distinction
+as the old code; only the *shape* changed (return/raise instead of
+result_queue push-and-return-True/False).
+
+### `_send_transaction_thread(self, dest, tx_hex, dry_run, port)` - the new center of gravity
+
+```python
+def _send_transaction_thread(self, dest, tx_hex, dry_run, port):
+    if dry_run:
+        self._run_preview(tx_hex)
+        return
+    try:
+        transport = self._connect_with_retry(port)
+    except TransportConnectionError as e:
+        self.result_queue.put(('error', str(e)))
+        return
+
+    self.transport = transport
+    self.iface = transport._iface
+    try:
+        node_id = transport.local_node_id
+        node_name = get_own_node_name(self.iface)
+        self.result_queue.put(('connected', self.iface, node_id, node_name))
+
+        if dest.lower() == node_id.lower():
+            self.result_queue.put(('error', "Cannot send to your own node"))
+            return
+
+        sender = TransactionSender(self.transport)
+        self._active_sender = sender
+        # ... on_chunk_sending/on_progress/on_response_received callbacks, unchanged
+        result = sender.send_transaction(tx_hex, dest, ...)
+        self.result_queue.put(('send_result', result))
+    except Exception as e:
+        self.result_queue.put(('error', str(e)))
+    finally:
+        self._active_sender = None
+        self.transport.disconnect()
+        self.transport = None
+        self.iface = None
+        self.result_queue.put(('disconnected',))
+```
+
+Key points:
+- The self-send check (`dest == own node ID`) moved here from
+  `validate_send_inputs()`, since the own node ID genuinely isn't
+  knowable before connecting now - it's discovered, not pre-validated.
+  It still fires as a plain `'error'` result, so it reuses
+  `process_result()`'s existing stop-sending/re-enable-controls path
+  with no changes there.
+- The `finally` block is the only place that disconnects - covers the
+  happy path, the self-send rejection, and any exception from
+  `sender.send_transaction()` uniformly. A new `'disconnected'` result
+  type resets `connection_label` back to "Not connected" once it runs.
+- `on_send_pressed()` resolves `port = device_path_from_display(self.devices, self.device_spinner.text)`
+  on the *main* thread (where the spinner's current selection is safe
+  to read) and passes it as a plain argument into the thread, rather
+  than having the thread re-read `self.device_spinner.text` itself.
+
+### `validate_send_inputs(dest, tx_hex)` - signature shrunk from 5 params to 2
+
+Dropped `has_iface`, `dry_run`, `own_node_id` entirely. The function is
+now pure format validation (destination shape, tx_hex shape) with no
+opinion on connection state at all - `has_iface` no longer makes sense
+to check ahead of time (there's nothing to check - connecting hasn't
+happened yet), and `own_node_id` isn't known yet either (see above).
+
+### `on_refresh_nodes()` / `_update_known_nodes(nodes)` - split into fetch + apply
+
+`_update_known_nodes()` used to read `self.iface` directly and do both
+the fetching and the UI update in one method. Split in two:
+`on_refresh_nodes()` now does its own brief connect → `get_known_nodes()`
+→ disconnect (mirroring `_connect_with_retry`'s shape, but without the
+retry loop - a failed fetch just logs an error, it doesn't need the
+same robustness as the actual send path), pushing
+`('known_nodes_fetched', nodes)`; `_update_known_nodes(nodes)` is now
+the pure UI-update half, taking the already-fetched list as a
+parameter instead of reaching for `self.iface`.
+
+### `_handle_result()` - net changes
+
+- `devices_found`: single-device case no longer calls `_init_meshtastic()`;
+  both branches now unconditionally call the shared
+  `probe_devices_in_background()`.
+- `device_identity`: now calls the shared `dedupe_devices_by_node_id()`/
+  `refresh_device_spinner_labels()` instead of bound-method equivalents.
+- Removed entirely: `transport_ready`, `watchdog_attempt`,
+  `watchdog_recovered`, `watchdog_failed` branches, and the block that
+  updated `self.devices` from a live `'connected'` result (probing
+  already covers identity now - see the "always probe" point above).
+- Added: `known_nodes_fetched` (calls `_update_known_nodes(result[1])`),
+  `disconnected` (resets `connection_label`).
+
+### Dead code removed alongside the above
+
+`process_result()`'s `connection_failed`/`connection_error`/
+`connection_initializing` branches - nothing produces those result
+types anymore, since `_connect_with_retry()` only ever returns a
+transport or raises. Removed rather than left in place, since keeping
+a pure function's branches for inputs nothing ever sends again is
+exactly the kind of unused code this project's coding principles call
+out. The `STATE_CONNECTION_FAILED`/`STATE_CONNECTION_ERROR`
+`ConnectionState` constants went with them (only ever used to build
+those three branches' `connection_text`).
+
+### Critical Files (this implementation)
+
+| File | Change |
+|------|--------|
+| `btcmesh_client_gui.py` | `_connect_with_retry()` replaces `_init_meshtastic()`; `_send_transaction_thread()` does connect+send+disconnect; `validate_send_inputs()` shrunk to 2 params; `on_refresh_nodes()`/`_update_known_nodes()` split into fetch+apply; `_handle_result()` updated per above; dead `process_result()` branches and `STATE_CONNECTION_FAILED`/`STATE_CONNECTION_ERROR` removed |
+| `tests/test_btcmesh_client_gui.py` | `TestSendButtonValidationStory91` rewritten for the 2-param signature; `TestDeviceConnectionRetryAndSelectionFix` rewritten around `_connect_with_retry()`; `TestNodeIdDisplayStory272` rewritten to test this file's wiring only (dedup/lookup/relabel logic itself is covered in `tests/test_gui_common.py`); new `TestConnectAndSendFlow` (5 tests: dry-run skips connecting, full happy path, connect failure, self-send rejection, disconnect-on-exception) and `TestKnownNodesFetchFlow` (4 tests); `TestDeviceWatchdogStory284` deleted entirely |
+
+### Verification (this implementation)
+
+- **Unit tests**: full suite 792/792 passing after this change (from
+  780 before Story 27.x began).
+- **Manual**: not yet done as of this write-up - still needed before
+  trusting the connect-at-Send timing and the self-send check against
+  real hardware (see the parent "Architecture Revision" section's
+  Verification for what to check).
