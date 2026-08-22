@@ -132,6 +132,43 @@ class MockSpinner:
         pass
 
 
+class MockButton:
+    """Mock base class for Button that properly stores per-instance attributes."""
+    def __init__(self, **kwargs):
+        self.text = kwargs.get('text', '')
+        self.disabled = kwargs.get('disabled', False)
+        self.bold = kwargs.get('bold', False)
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.background_normal = kwargs.get('background_normal', '')
+        self.background_down = kwargs.get('background_down', '')
+        self.size_hint_x = kwargs.get('size_hint_x', 1)
+        self.size_hint_y = kwargs.get('size_hint_y', 1)
+        self.width = kwargs.get('width', 100)
+        self.height = kwargs.get('height', 100)
+        self.font_size = kwargs.get('font_size', '15sp')
+        self.color = kwargs.get('color', (1, 1, 1, 1))
+
+    def bind(self, **kwargs):
+        pass
+
+
+class MockPopup:
+    """Mock base class for Popup that properly stores per-instance attributes."""
+    def __init__(self, **kwargs):
+        self.title = kwargs.get('title', '')
+        self.content = kwargs.get('content', None)
+        self.size_hint = kwargs.get('size_hint', (1, 1))
+        self.background_color = kwargs.get('background_color', (1, 1, 1, 1))
+        self.title_color = kwargs.get('title_color', (1, 1, 1, 1))
+        self.separator_color = kwargs.get('separator_color', (1, 1, 1, 1))
+
+    def open(self):
+        pass
+
+    def dismiss(self, *args):
+        pass
+
+
 class MockLabel:
     """Mock base class for Label that properly stores text and parent."""
     def __init__(self, **kwargs):
@@ -183,6 +220,12 @@ spinner_mock.Spinner = MockSpinner
 label_mock = unittest.mock.MagicMock()
 label_mock.Label = MockLabel
 
+button_mock = unittest.mock.MagicMock()
+button_mock.Button = MockButton
+
+popup_mock = unittest.mock.MagicMock()
+popup_mock.Popup = MockPopup
+
 # Properties need to return actual values, not MagicMocks
 properties_mock = unittest.mock.MagicMock()
 properties_mock.StringProperty = lambda default='': default
@@ -194,9 +237,9 @@ sys.modules['kivy.uix'] = kivy_mock
 sys.modules['kivy.uix.boxlayout'] = boxlayout_mock
 sys.modules['kivy.uix.label'] = label_mock
 sys.modules['kivy.uix.textinput'] = textinput_mock
-sys.modules['kivy.uix.button'] = kivy_mock
+sys.modules['kivy.uix.button'] = button_mock
 sys.modules['kivy.uix.scrollview'] = scrollview_mock
-sys.modules['kivy.uix.popup'] = kivy_mock
+sys.modules['kivy.uix.popup'] = popup_mock
 sys.modules['kivy.uix.widget'] = widget_mock
 sys.modules['kivy.uix.togglebutton'] = kivy_mock
 sys.modules['kivy.uix.spinner'] = spinner_mock
