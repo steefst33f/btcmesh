@@ -1426,18 +1426,50 @@ lora/
 
 ### 27. Node ID Display in Device Dropdowns
 
-- [ ] **Story 27.1: Add a shared device-node-ID lookup helper**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** a shared helper that connects briefly to a device path and returns its node ID,
-- [ ] *   **So that** both GUIs can reuse the same logic instead of duplicating it.
-    - [ ] *   **Scenario:** Device responds normally
-        - [ ] *   **Given** a real Meshtastic device at a given serial port path.
-        - [ ] *   **When** the helper is called with that path.
-        - [ ] *   **Then** it connects, retrieves the node ID, disconnects, and returns the node ID.
-    - [ ] *   **Scenario:** Device doesn't respond / isn't a Meshtastic device
-        - [ ] *   **Given** a serial port path that isn't a genuine Meshtastic device (e.g. a false-positive candidate from the VID-blacklist scan, such as the Story 26.7 relay board).
-        - [ ] *   **When** the helper is called with that path.
-        - [ ] *   **Then** it returns `None` rather than raising, once the connection attempt fails or times out.
+- [x] **Story 27.1: Add a shared device-node-ID lookup helper**
+- [x] *   **As a** developer,
+- [x] *   **I want** a shared helper that connects briefly to a device path and returns its node ID,
+- [x] *   **So that** both GUIs can reuse the same logic instead of duplicating it.
+    - [x] *   **Scenario:** Device responds normally
+        - [x] *   **Given** a real Meshtastic device at a given serial port path.
+        - [x] *   **When** the helper is called with that path.
+        - [x] *   **Then** it connects, retrieves the node ID, disconnects, and returns the node ID.
+    - [x] *   **Scenario:** Device doesn't respond / isn't a Meshtastic device
+        - [x] *   **Given** a serial port path that isn't a genuine Meshtastic device (e.g. a false-positive candidate from the VID-blacklist scan, such as the Story 26.7 relay board).
+        - [x] *   **When** the helper is called with that path.
+        - [x] *   **Then** it returns `None` rather than raising, once the connection attempt fails or times out.
+    *   _Note: Implemented as `probe_device_node_id()` + `format_device_display()`
+        in `core/meshtastic_utils.py`, exactly per `project/plans/story_27_1.md`.
+        See PR #49._
+    *   _Note: Real-hardware manual verification of Story 27.2 (2026-08-22)
+        initially looked like it caught a gap - a Seeed device that had
+        connected fine minutes earlier failed on a single probe attempt -
+        so a retry (`PROBE_MAX_ATTEMPTS`/`PROBE_RETRY_DELAY_SECONDS`, 2
+        attempts, 1.5s apart) was added and shipped. Retested afterward
+        (still 2026-08-22) and found the retry didn't actually help: both
+        real failures observed were genuine ~30s connection timeouts (a
+        wedged device, confirmed cleared only by physically power-cycling
+        it - not a quick transient hiccup), so a second attempt on the
+        same timescale never turned a failure into a success. Reverted
+        the retry: it only added cost (doubling the wait for every
+        non-Meshtastic false-positive candidate, e.g. the relay board's
+        own port, which can never succeed regardless of attempt count)
+        with no observed benefit. See Issue 37 in `project/issues.txt`._
+    *   _Note: Extended 2026-08-22 to also fetch the node's configured
+        name during the same probe connection (free - `get_own_node_name()`
+        just reads data already delivered by the handshake).
+        `probe_device_node_id() -> Optional[str]` became
+        `probe_device_identity() -> ProbedDevice` (a `node_id`/`name`
+        dataclass, never a bare `None`); `format_device_display()` gained
+        an optional `name` param, showing `Name (!nodeid)` when both are
+        known. Enables the client GUI (Story 27.2) to dedupe dropdown
+        entries that resolve to the same node ID - fixing Issue 37's
+        duplicate-physical-device half using data the probe already
+        collects, though not its false-positive-candidate half (relay
+        board ports never get a node ID to dedupe by - see Issue 37's
+        notes on the two rejected pre-filter attempts). See
+        `project/plans/story_27_1.md`'s "Enhancement: Node Names +
+        Dropdown Dedup" section for the full design._
 
 - [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
 - [ ] *   **As a** client GUI user,
