@@ -163,7 +163,11 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
             cli.run_server()
 
-        mock_logger.info.assert_any_call("Automatic device-recovery enabled via relay.")
+        mock_logger.info.assert_any_call(
+            "Automatic device-recovery configured via relay "
+            "(RELAY_SERIAL_PORT set) - actual availability isn't "
+            "confirmed until a recovery is attempted."
+        )
 
     def test_logs_disabled_when_power_control_not_configured(self):
         self._patch_successful_startup()

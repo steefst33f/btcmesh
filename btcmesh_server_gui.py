@@ -805,7 +805,19 @@ class BTCMeshServerGUI(BoxLayout):
                 )),
             )
             if power_control:
-                self.result_queue.put(('log', "Automatic device-recovery enabled via relay.", logging.INFO))
+                # "Configured", not "enabled" or "connected" - power_control
+                # is built purely from RELAY_SERIAL_PORT being set in .env
+                # (build_device_watchdog()), with no attempt to actually
+                # reach the relay board. Whether it's really there and
+                # working is only found out if/when a recovery is
+                # attempted (Issue 42).
+                self.result_queue.put((
+                    'log',
+                    "Automatic device-recovery configured via relay "
+                    "(RELAY_SERIAL_PORT set) - actual availability isn't "
+                    "confirmed until a recovery is attempted.",
+                    logging.INFO,
+                ))
             else:
                 self.result_queue.put((
                     'log',
