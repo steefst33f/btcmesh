@@ -14,6 +14,7 @@ from transport.power_control import (
     PowerControlError,
     UhubctlPowerControl,
     SerialRelayPowerControl,
+    probe_is_relay_board,
 )
 
 
@@ -213,6 +214,78 @@ class TestSerialRelayPowerControlErrorHandling(unittest.TestCase):
             with self.assertRaises(PowerControlError) as ctx:
                 power_control.power_cycle()
             self.assertIn("no such device", str(ctx.exception))
+
+
+class TestProbeIsRelayBoard(unittest.TestCase):
+    """Tests for probe_is_relay_board() (Issue 37's false-positive-half
+    fix) - a quick raw-serial check for the relay firmware's known
+    "ERR unknown command" response to any non-CYCLE line."""
+
+    def test_matching_response_returns_true(self):
+        with patch("transport.power_control.serial.Serial") as mock_serial_cls:
+            mock_port = _mock_serial(mock_serial_cls, response=b"ERR unknown command\n")
+
+            result = probe_is_relay_board("/dev/ttyUSB0")
+
+            self.assertTrue(result)
+            mock_port.write.assert_called_once_with(b"\n")
+
+    def test_sends_a_bare_newline_not_a_cycle_command(self):
+        """Must never send anything that could be mistaken for a real
+        CYCLE command - a bare newline is always safely rejected by the
+        firmware (confirmed against the firmware source), never
+        triggering an actual relay toggle."""
+        with patch("transport.power_control.serial.Serial") as mock_serial_cls:
+            mock_port = _mock_serial(mock_serial_cls, response=b"ERR unknown command\n")
+
+            probe_is_relay_board("/dev/ttyUSB0")
+
+            sent = mock_port.write.call_args[0][0]
+            self.assertNotIn(b"CYCLE", sent)
+
+    def test_meshtastic_style_response_returns_false(self):
+        """A real Meshtastic device won't reply with this exact text -
+        must never be misidentified as the relay board."""
+        with patch("transport.power_control.serial.Serial") as mock_serial_cls:
+            _mock_serial(mock_serial_cls, response=b"\x94\xc3\x00\x02garbage")
+
+            result = probe_is_relay_board("/dev/ttyUSB0")
+
+            self.assertFalse(result)
+
+    def test_no_response_returns_false(self):
+        with patch("transport.power_control.serial.Serial") as mock_serial_cls:
+            _mock_serial(mock_serial_cls, response=b"")
+
+            result = probe_is_relay_board("/dev/ttyUSB0")
+
+            self.assertFalse(result)
+
+    def test_serial_exception_returns_false_not_raise(self):
+        with patch(
+            "transport.power_control.serial.Serial",
+            side_effect=serial.SerialException("port busy"),
+        ):
+            result = probe_is_relay_board("/dev/ttyUSB0")
+
+            self.assertFalse(result)
+
+    def test_oserror_returns_false_not_raise(self):
+        with patch(
+            "transport.power_control.serial.Serial",
+            side_effect=OSError("no such device"),
+        ):
+            result = probe_is_relay_board("/dev/ttyUSB0")
+
+            self.assertFalse(result)
+
+    def test_custom_baudrate_and_timeout_are_used(self):
+        with patch("transport.power_control.serial.Serial") as mock_serial_cls:
+            _mock_serial(mock_serial_cls, response=b"ERR unknown command\n")
+
+            probe_is_relay_board("/dev/ttyUSB0", baudrate=9600, timeout=1.5)
+
+            mock_serial_cls.assert_called_once_with("/dev/ttyUSB0", 9600, timeout=1.5)
 
 
 if __name__ == "__main__":

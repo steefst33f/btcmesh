@@ -131,3 +131,34 @@ class SerialRelayPowerControl(BasePowerControl):
             )
         if response != "OK":
             raise PowerControlError(f"Relay board error: {response}")
+
+
+def probe_is_relay_board(port: str, baudrate: int = 115200, timeout: float = 2.0) -> bool:
+    """Quick, non-destructive check for whether `port` is a Story 26.7
+    relay board - not a full connect, just a short raw-serial round trip
+    that exploits the relay firmware's own command grammar (see
+    hardware/power_relay_firmware/src/power_relay.ino): any line that
+    isn't a well-formed "CYCLE <channel> <off_seconds>" command gets a
+    plain "ERR unknown command" reply, with no side effects (confirmed
+    against the firmware source - an empty/unrecognized line never
+    reaches the relay-toggling code path at all).
+
+    This gives a confident, protocol-level positive identification of
+    our own hardware - unlike VID/description-based heuristics (Issue
+    37 in project/issues.txt), which can't distinguish this board's
+    generic WCH CH340 USB-serial chip from any other CH340-based device
+    a user might have plugged in for an unrelated purpose.
+
+    Returns False (never raises) on any failure to open/read, or on any
+    response that doesn't match - the safe default when this can't be
+    confirmed one way or the other is to treat the candidate as an
+    unknown, ordinary probe target exactly as before this function
+    existed, never to assume it's safe to skip.
+    """
+    try:
+        with serial.Serial(port, baudrate, timeout=timeout) as ser:
+            ser.write(b"\n")
+            response = ser.readline().decode("ascii", errors="replace").strip()
+    except (serial.SerialException, OSError):
+        return False
+    return response == "ERR unknown command"

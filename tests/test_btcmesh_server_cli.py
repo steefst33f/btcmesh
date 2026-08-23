@@ -33,6 +33,7 @@ class TestRunServerConnection(unittest.TestCase):
     def test_connection_failure_logs_error_and_returns_2(self):
         with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch("btcmesh_server_cli.probe_is_relay_board", return_value=False), \
                 patch("btcmesh_server_cli.load_app_config"), \
                 patch("btcmesh_server_cli.BitcoinRPCClient") as mock_rpc_cls, \
                 patch("btcmesh_server_cli.build_receiver") as mock_build_receiver, \
@@ -46,6 +47,29 @@ class TestRunServerConnection(unittest.TestCase):
         mock_logger.error.assert_any_call("Failed to connect to Meshtastic device: no device found")
         mock_rpc_cls.assert_not_called()
         mock_build_receiver.assert_not_called()
+
+    def test_relay_board_rejected_without_attempting_connect(self):
+        """Issue 37 follow-up: given the resolved port is confirmed to be
+        the relay board, Then run_server() logs a clear error and returns
+        2 without attempting a Meshtastic connect that could never
+        succeed - and would otherwise cost a full ~30s timeout for
+        nothing."""
+        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyRelay"), \
+                patch("btcmesh_server_cli.probe_is_relay_board", return_value=True) as mock_probe_relay, \
+                patch("btcmesh_server_cli.load_app_config"), \
+                patch("btcmesh_server_cli.BitcoinRPCClient") as mock_rpc_cls, \
+                patch("btcmesh_server_cli.build_receiver") as mock_build_receiver, \
+                patch("btcmesh_server_cli.server_logger") as mock_logger:
+            code = cli.run_server()
+
+        self.assertEqual(code, 2)
+        mock_probe_relay.assert_called_once_with("/dev/ttyRelay")
+        mock_transport_cls.assert_not_called()
+        mock_rpc_cls.assert_not_called()
+        mock_build_receiver.assert_not_called()
+        error_calls = [str(c.args[0]) for c in mock_logger.error.call_args_list]
+        self.assertTrue(any("relay board" in m for m in error_calls))
 
     def _patch_successful_startup(self):
         """Patch everything needed for run_server() to get past connection
@@ -63,6 +87,7 @@ class TestRunServerConnection(unittest.TestCase):
                 "btcmesh_server_cli.build_device_watchdog",
                 return_value=(MagicMock(), None),
             ),
+            patch("btcmesh_server_cli.probe_is_relay_board", return_value=False),
         ]
         for p in patches:
             p.start()
@@ -129,6 +154,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
             patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")),
             patch("btcmesh_server_cli.TransactionHistory"),
             patch("btcmesh_server_cli.build_receiver"),
+            patch("btcmesh_server_cli.probe_is_relay_board", return_value=False),
         ]
         for p in patches:
             p.start()
@@ -269,6 +295,7 @@ class TestRunServerLivenessLog(unittest.TestCase):
             patch("btcmesh_server_cli.BitcoinRPCClient"),
             patch("btcmesh_server_cli.load_reassembly_timeout", return_value=(300, "default")),
             patch("btcmesh_server_cli.TransactionHistory"),
+            patch("btcmesh_server_cli.probe_is_relay_board", return_value=False),
         ]
         for p in patches:
             p.start()
@@ -322,6 +349,7 @@ class TestRunServerRpcFailure(unittest.TestCase):
     def test_rpc_failure_logs_error_and_builds_receiver_with_none_rpc_client(self):
         with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
+                patch("btcmesh_server_cli.probe_is_relay_board", return_value=False), \
                 patch("btcmesh_server_cli.load_app_config"), \
                 patch("btcmesh_server_cli.load_bitcoin_rpc_config", return_value={}), \
                 patch("btcmesh_server_cli.BitcoinRPCClient", side_effect=Exception("connection refused")), \

@@ -72,6 +72,7 @@ from core.meshtastic_utils import (
 # Import transport layer
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
+from transport.power_control import probe_is_relay_board
 
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
@@ -81,6 +82,15 @@ from core.protocol import is_valid_hex, validate_destination
 NO_DEVICES_TEXT = "No devices found"
 SCANNING_TEXT = "Scanning..."
 SELECT_DEVICE_TEXT = "Select a device to connect..."
+
+# Issue 37: shown wherever a candidate is confirmed to be the Story 26.7
+# relay board (probe_is_relay_board()) rather than attempting a Meshtastic
+# connect that could never succeed against it - and would otherwise cost a
+# full ~30s connection timeout for nothing.
+RELAY_BOARD_SELECTED_MESSAGE = (
+    "This is the relay board's control port, not a Meshtastic device - "
+    "select a different device."
+)
 
 # Connection retry settings: a freshly enumerated serial port (or one just
 # released by a prior disconnect) can transiently fail to open for a moment;
@@ -523,6 +533,9 @@ class BTCMeshGUI(BoxLayout):
         Returns the connected MeshtasticSerialTransport.
         Raises TransportConnectionError on final failure.
         """
+        if port and probe_is_relay_board(port):
+            raise TransportConnectionError(RELAY_BOARD_SELECTED_MESSAGE)
+
         self.result_queue.put((
             'log', f"Connecting to Meshtastic device{f' ({port})' if port else ''}...", logging.INFO
         ))
@@ -590,6 +603,9 @@ class BTCMeshGUI(BoxLayout):
         self.status_log.add_message("Fetching device info and known nodes...")
 
         def fetch_thread():
+            if probe_is_relay_board(path):
+                self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
+                return
             try:
                 transport = MeshtasticSerialTransport()
                 transport.connect(path)
@@ -634,6 +650,9 @@ class BTCMeshGUI(BoxLayout):
         self.status_log.add_message("Fetching known nodes...")
 
         def fetch_thread():
+            if probe_is_relay_board(port):
+                self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
+                return
             try:
                 transport = MeshtasticSerialTransport()
                 transport.connect(port)

@@ -1419,6 +1419,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1451,6 +1452,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1482,6 +1484,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1502,6 +1505,42 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     if target_fn:
                         target_fn()
                         mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
+
+    def test_start_pressed_rejects_relay_board_without_attempting_connect(self):
+        """Issue 37 follow-up: given the selected device is confirmed to be
+        the relay board, Then run_server() reports a clear
+        'meshtastic_failed' result instead of attempting a Meshtastic
+        connect that could never succeed - and would otherwise cost a
+        full ~30s timeout for nothing."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(
+                         btcmesh_server_gui, 'probe_is_relay_board', return_value=True
+                     ) as mock_probe_relay, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch('server.run_loop.TransactionReceiver'):
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui._stop_event.is_set.return_value = True
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.device_spinner.text = '/dev/ttyRelay'
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    if target_fn:
+                        target_fn()
+                        mock_probe_relay.assert_called_once_with('/dev/ttyRelay')
+                        mock_transport_cls.assert_not_called()
+                        result = gui.result_queue.get_nowait()
+                        self.assertEqual(result[0], 'meshtastic_failed')
+                        self.assertIn('relay board', result[1])
 
 
 # =============================================================================
