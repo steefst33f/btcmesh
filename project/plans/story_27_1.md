@@ -947,3 +947,48 @@ nodes for no reason.
 Files touched: `btcmesh_client_gui.py` (`on_device_selected()` added
 back, bound in `_build_ui()`; `devices_found`'s single-device branch;
 `refresh_device_spinner_labels()` call site), `tests/test_btcmesh_client_gui.py`.
+
+### Follow-up refinements (found immediately after, same real-hardware session)
+
+1. **Clear known nodes immediately on selection, don't wait for the
+   fetch.** The fix above still leaves the *previous* device's known
+   nodes visible for the few seconds the new fetch takes - not
+   indefinitely stale anymore, but still momentarily wrong. Fix:
+   `on_device_selected()` calls `self._update_known_nodes([])`
+   synchronously, right after the sentinel-text guard and before
+   kicking off the background fetch thread - reuses the existing pure
+   UI-update function rather than duplicating its placeholder logic.
+   The real list then overwrites this placeholder once
+   `known_nodes_fetched` arrives, same as today.
+
+2. **Error message says "connection" when the user never asked to
+   connect.** Selecting a non-Meshtastic candidate (e.g. a false-
+   positive from Issue 37, like the relay board's own port) surfaces
+   the raw `TransportConnectionError` text verbatim - e.g. "Timed out
+   waiting for connection completion" - which reads like a failed Send
+   attempt, not a background info fetch the user didn't explicitly ask
+   for. `_connect_with_retry()` already translates raw errors into
+   friendlier text (`"No Meshtastic device found"`, permission-denied,
+   port-open failures) but that mapping was never shared - both
+   `on_device_selected()` and `on_refresh_nodes()` log the raw
+   exception text unmodified. Fix: extract the mapping into a plain
+   module-level function, add a case for the timeout wording
+   specifically (framed as "didn't respond" rather than "connection
+   failed"), and reuse it in all three places:
+   ```python
+   def _friendly_connect_error(port: str, exc: TransportConnectionError) -> str:
+       msg = str(exc)
+       if "No Meshtastic" in msg or "No serial" in msg:
+           return "No Meshtastic device found"
+       if "Permission denied" in msg:
+           return f"Permission denied accessing {port or 'device'}"
+       if "could not open port" in msg.lower():
+           return f"Could not open port {port or '(auto-detect)'}"
+       if "timed out" in msg.lower() or "timeout" in msg.lower():
+           return f"{port or 'Device'} did not respond - it may not be a Meshtastic device, or isn't responding right now"
+       return msg
+   ```
+   The surrounding log prefix each call site already uses ("Could not
+   fetch device info: ...", "Could not fetch known nodes: ...", "Failed
+   to connect: ...") keeps framing *what* was being attempted; this
+   only fixes *why* it failed reading like an unrelated Send attempt.
