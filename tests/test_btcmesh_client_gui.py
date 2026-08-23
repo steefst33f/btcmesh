@@ -624,11 +624,15 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
         )
         mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
 
-    def test_devices_found_single_auto_selects_and_still_probes(self):
+    def test_devices_found_single_auto_selects_without_separate_probe(self):
         """Given a single device found, Then it's auto-selected but not
-        auto-connected (2026-08-23 revision), and still probed - unlike
-        the old behavior, there's no imminent live connection to get
-        identity from for free anymore."""
+        auto-connected (2026-08-23 revision), and NOT separately probed
+        either (2026-08-23 known-nodes-staleness fix): setting .text
+        fires on_device_selected on a real spinner, whose own brief
+        connect fetches identity for free - probing the same sole device
+        again at the same time would just race itself over one serial
+        port. See TestDeviceSelectedFetchFlow for on_device_selected's
+        own behavior."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
@@ -639,13 +643,16 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
             btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('devices_found', ['/dev/ttyUSB0']))
 
         self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
-        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+        mock_probe.assert_not_called()
 
     def test_device_identity_result_updates_matching_device_and_dedupes(self):
         """Given a device_identity probe result, Then the matching
         device's node_id/name are updated, dedup runs via the shared
         dedupe_devices_by_node_id() (node_id is truthy), and the spinner
-        labels are refreshed via the shared refresh_device_spinner_labels()."""
+        labels are refreshed via the shared refresh_device_spinner_labels()
+        - passing on_device_selected as the selection_handler to protect
+        against a spurious refetch on relabel (2026-08-23 known-nodes-
+        staleness fix)."""
         import btcmesh_client_gui
 
         gui = unittest.mock.MagicMock()
@@ -669,7 +676,9 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
         self.assertEqual(gui.devices[1]['node_id'], '!7c5b4418')
         self.assertEqual(gui.devices[1]['name'], 'Meshtastic 4418')
         mock_dedupe.assert_called_once_with(gui.devices, keep_path='/dev/ttyACM0')
-        mock_refresh.assert_called_once_with(gui.device_spinner, gui.devices)
+        mock_refresh.assert_called_once_with(
+            gui.device_spinner, gui.devices, selection_handler=gui.on_device_selected
+        )
 
     def test_device_identity_none_skips_dedupe(self):
         """Given a probe result of node_id=None/name=None (not a real
@@ -1197,6 +1206,126 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
         btcmesh_client_gui.BTCMeshGUI._update_known_nodes(gui, [])
 
         self.assertEqual(gui.node_spinner.values, [MANUAL_ENTRY_TEXT, NO_NODES_TEXT])
+
+
+# =============================================================================
+# Fix: Known-Nodes Staleness on Device Selection (2026-08-23)
+# Tests for on_device_selected()'s combined identity+known-nodes fetch - see
+# project/plans/story_27_1.md's section of the same name.
+# =============================================================================
+
+class TestDeviceSelectedFetchFlow(unittest.TestCase):
+    """Tests for on_device_selected()'s connect-fetch-disconnect flow."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously so tests stay deterministic."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def _drain(self, q):
+        results = []
+        while not q.empty():
+            results.append(q.get_nowait())
+        return results
+
+    def test_ignores_sentinel_values(self):
+        """Given a sentinel spinner text (no real device selected), Then
+        nothing is fetched - no connection attempt at all."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+
+        for text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
+            with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls:
+                btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, text)
+            mock_transport_cls.assert_not_called()
+
+    def test_selecting_a_device_fetches_identity_and_known_nodes(self):
+        """Given a real device is selected, Then one connection fetches
+        both its identity (pushed as device_identity) and its known nodes
+        (pushed as known_nodes_fetched), then disconnects."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+        mock_nodes = [{'id': '!11111111', 'name': 'Other', 'lastHeard': 0, 'is_recent': False}]
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.get_known_nodes', return_value=mock_nodes
+             ):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        mock_transport.connect.assert_called_once_with('/dev/ttyUSB0')
+        mock_transport.disconnect.assert_called_once()
+        results = self._drain(gui.result_queue)
+        self.assertIn(('device_identity', '/dev/ttyUSB0', '!7c5b4418', 'Meshtastic 4418'), results)
+        self.assertIn(('known_nodes_fetched', mock_nodes), results)
+
+    def test_resolves_labeled_display_text_to_real_path(self):
+        """Given the spinner already shows a labeled 'name (node_id)'
+        entry (e.g. after a background probe resolved it), Then selecting
+        it connects to the real underlying path, not the formatted
+        string."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
+             ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes', return_value=[]):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(
+                gui, None, 'Meshtastic 4418 (!7c5b4418)'
+            )
+
+        mock_transport.connect.assert_called_once_with('/dev/ttyUSB0')
+
+    def test_connect_failure_logs_error_and_pushes_no_results(self):
+        """Given the device fails to connect, Then a log error is pushed
+        and neither device_identity nor known_nodes_fetched are."""
+        import btcmesh_client_gui
+        from transport.base import TransportConnectionError
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        results = self._drain(gui.result_queue)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], 'log')
 
 
 # =============================================================================

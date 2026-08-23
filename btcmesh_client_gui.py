@@ -328,10 +328,11 @@ class BTCMeshGUI(BoxLayout):
 
         device_selection_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
 
-        # Spinner (drop down list) - no bound selection handler (2026-08-23
-        # revision): picking a device no longer connects anything, it just
-        # decides what Send will connect to. Mirrors the server GUI's
-        # device settings spinner, which never had one either.
+        # Spinner (drop down list). Picking a device still doesn't connect
+        # anything for Send's sake (2026-08-23 revision) - but it does
+        # trigger a brief connect to refresh the known-nodes destination
+        # dropdown, since known nodes are per-device and a stale list from
+        # a previously selected device would be actively misleading.
         self.device_spinner = Spinner(
             text=SCANNING_TEXT,
             values=[],
@@ -340,6 +341,7 @@ class BTCMeshGUI(BoxLayout):
             background_normal='',
             color=COLOR_SECONDARY,
         )
+        self.device_spinner.bind(text=self.on_device_selected)
         device_selection_box.add_widget(self.device_spinner)
 
         # Refresh button
@@ -544,6 +546,41 @@ class BTCMeshGUI(BoxLayout):
         """Handle refresh button press to rescan devices."""
         self._scan_devices()
 
+    def on_device_selected(self, spinner, text):
+        """Handle device selection: one brief connect that fetches both
+        the newly-selected device's identity (for labeling/dedup) and its
+        known nodes (for the destination dropdown), then disconnects.
+        Does not hold a persistent connection - Send still does its own
+        separate connect (2026-08-23 revision, see
+        project/plans/story_27_1.md's "Fix: Known-Nodes Staleness on
+        Device Selection" section). Known nodes are per-device, so
+        without this a stale list from a previously selected device would
+        be actively misleading - a node reachable from one physical
+        device isn't necessarily reachable from another."""
+        if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
+            return
+
+        path = device_path_from_display(self.devices, text)
+        self.status_log.add_message("Fetching device info and known nodes...")
+
+        def fetch_thread():
+            try:
+                transport = MeshtasticSerialTransport()
+                transport.connect(path)
+            except TransportConnectionError as e:
+                self.result_queue.put(('log', f"Could not fetch device info: {e}", logging.ERROR))
+                return
+            try:
+                node_id = transport.local_node_id
+                name = get_own_node_name(transport._iface)
+                self.result_queue.put(('device_identity', path, node_id, name))
+                nodes = get_known_nodes(transport._iface)
+                self.result_queue.put(('known_nodes_fetched', nodes))
+            finally:
+                transport.disconnect()
+
+        threading.Thread(target=fetch_thread, daemon=True).start()
+
     def on_node_selected(self, spinner, text):
         """Handle node selection from dropdown."""
         if text == MANUAL_ENTRY_TEXT:
@@ -622,13 +659,22 @@ class BTCMeshGUI(BoxLayout):
                 if len(devices) == 1:
                     # Auto-select (not auto-connect - 2026-08-23 revision,
                     # see project/plans/story_27_1.md's "Architecture
-                    # Revision" section) the lone device.
+                    # Revision" section) the lone device. No separate
+                    # background probe needed here - setting .text fires
+                    # on_device_selected (bound below in _build_ui), whose
+                    # own brief connect fetches identity for free, the
+                    # same role the live Send connection played before
+                    # this revision (see the "Fix: Known-Nodes Staleness"
+                    # section for why probing the same sole device twice
+                    # at once would just race itself).
                     self.device_spinner.text = devices[0]
                     self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
-                    # Multiple devices - no bound selection handler exists
-                    # to worry about triggering, so just show the
-                    # placeholder directly.
+                    # Multiple devices - SELECT_DEVICE_TEXT is a sentinel
+                    # on_device_selected ignores, so setting it here
+                    # doesn't trigger a fetch; probe every candidate in
+                    # the background instead, for labeling. Once the user
+                    # actually picks one, on_device_selected takes over.
                     self.device_spinner.text = SELECT_DEVICE_TEXT
                     # No specific count stated here (unlike the single-
                     # device case above) - the raw scan count can still
@@ -639,10 +685,7 @@ class BTCMeshGUI(BoxLayout):
                     # the real, already-visible source of truth for
                     # "how many."
                     self.status_log.add_message("Device(s) found - select one to connect", COLOR_WARNING)
-                # Always probe now (both single- and multi-device cases) -
-                # no live connection is imminent to get identity for free
-                # from anymore.
-                probe_devices_in_background(self.devices, self.result_queue)
+                    probe_devices_in_background(self.devices, self.result_queue)
             else:
                 self.devices = []
                 self.device_spinner.values = [NO_DEVICES_TEXT]
@@ -660,7 +703,9 @@ class BTCMeshGUI(BoxLayout):
                     break
             if node_id:
                 self.devices, _removed = dedupe_devices_by_node_id(self.devices, keep_path=path)
-            refresh_device_spinner_labels(self.device_spinner, self.devices)
+            refresh_device_spinner_labels(
+                self.device_spinner, self.devices, selection_handler=self.on_device_selected
+            )
             return
 
         if result[0] == 'known_nodes_fetched':
