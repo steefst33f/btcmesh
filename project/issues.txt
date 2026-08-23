@@ -1845,6 +1845,96 @@ both be `.env`-only, or both GUI-configurable?
 
 ---
 
+## Server: "Automatic device-recovery enabled via relay" logs even when no relay is actually connected
+
+**Issue 42: the startup log message claiming relay-based recovery is
+"enabled" is based purely on `RELAY_SERIAL_PORT` being set in `.env` -
+it never checks whether a relay board is actually plugged in and
+responding** ✅ FIXED (2026-08-23)
+
+- Found during real-hardware testing of Issue 41's fix: connected to
+  the Seeed with the Story 26.7 relay board physically unplugged, but
+  `RELAY_SERIAL_PORT` still set from earlier testing sessions. Server
+  startup logged "Automatic device-recovery enabled via relay." anyway.
+- **Root cause**: `core/device_watchdog.py`'s `build_device_watchdog()`
+  sets `power_control = SerialRelayPowerControl(relay_port, ...)`
+  purely from `get_relay_serial_port()` reading `.env` - `SerialRelayPowerControl.__init__`
+  (`transport/power_control.py`) just stores the port/channel/baud
+  strings, with no attempt to open or verify the port. The relay's
+  serial port is only actually opened the first time `power_cycle()`
+  runs - i.e. during a real recovery attempt, potentially much later
+  (or never, if the device never actually wedges). So the message
+  really means "a relay port is configured," not "a relay is present
+  and working," but read like the latter.
+- Also noted: the relay-board firmware
+  (`hardware/power_relay_firmware/src/power_relay.ino`) only implements
+  a `CYCLE` command - no lightweight PING/STATUS command exists to
+  verify presence without actually cutting power, so an "actually
+  verified" version of this message would need a firmware change too
+  big for this fix.
+- **Fix**: reworded the message (both `btcmesh_server_gui.py` and
+  `btcmesh_server_cli.py`, which each log this independently) from "...
+  enabled via relay." to "... configured via relay (RELAY_SERIAL_PORT
+  set) - actual availability isn't confirmed until a recovery is
+  attempted." - accurate about what's actually known at startup,
+  without needing any new verification logic or firmware support.
+- Full suite (812/812) passing after the wording change; corresponding
+  tests in `tests/test_btcmesh_server_gui.py` and
+  `tests/test_btcmesh_server_cli.py` updated to match.
+
+---
+
+## Server: Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check
+
+**Issue 43: pressing Stop Server doesn't interrupt an in-flight
+`DeviceWatchdog` heartbeat check/recovery cycle - if the click happens
+to land while one is running, Stop can take well over a minute to
+actually complete, and may log a "Device appears wedged" / "Device
+recovered" cycle that looks alarming but is often just a transient,
+self-resolving blip** 🔍 OPEN (informational - by-design tradeoff, not
+a defect)
+
+- Found during the same real-hardware session as Issue 42: pressed Stop
+  Server while connected to the Seeed (no relay attached). The GUI
+  logged "Device appears wedged - attempting automatic recovery..."
+  then "Device recovered. Reconnected at ..." and only then "Server
+  stopped." - over a minute after Stop was clicked.
+- **Explained, not a bug**, via `server/run_loop.py`'s
+  `run_polling_loop()` and `core/device_watchdog.py`:
+  - The loop only re-checks `stop_check()` (`_stop_event.is_set`) at
+    the *top* of each iteration - if it's currently inside
+    `watchdog.tick(now)`, Stop has to wait for that call to return.
+  - `tick()` only performs its (potentially slow) liveness check once
+    every `heartbeat_interval_seconds` (60s) - so depending on timing,
+    Stop can land anywhere from 0-60s before the next check even runs.
+  - `check_alive()` (`transport/meshtastic_serial.py`) does a real
+    round-trip admin request with the meshtastic library's own ~20s
+    default timeout - a single slow/lost round-trip is enough to read
+    as "not alive," which is a genuine live-hardware check, not a
+    fabricated result.
+  - If that trips `_recover()`, `_recover_once()` (`core/device_watchdog.py`)
+    **always tries a plain disconnect+reconnect first, before ever
+    considering the relay** (`_try_reconnect_without_power_cycle()`,
+    with the comment "the device may have already come back on its
+    own - power-cycling it again would just interrupt it needlessly").
+    Since the Seeed was never actually wedged, this quick reconnect
+    succeeded immediately and `power_control.power_cycle()` was never
+    even called - **no relay involved at all**, contrary to how the
+    log sequence might read.
+- **Not the same failure mode as Issue 38** (Abort not interrupting a
+  stuck chunk retry) even though the symptom-shape rhymes - this is a
+  different control flow (`DeviceWatchdog.tick()`'s blocking
+  `check_alive()` call), and fixing it would mean either making
+  `check_alive()` interruptible mid-call or checking `stop_check()`
+  from inside `tick()` itself - a real design change to a component
+  whose whole contract is "runs on a single caller-controlled thread,
+  can block up to ~20s" (see the class docstring).
+- Not scoped or fixed here - logged so the (correct, expected, if
+  alarming-looking) behavior is documented rather than mistaken for a
+  bug on the next repeat sighting.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1886,4 +1976,6 @@ both be `.env`-only, or both GUI-configurable?
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
-| 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | Open |
+| 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | Open (PR #52) |
+| 42    | "Automatic device-recovery enabled via relay" logs even when no relay is connected - based on config presence, not actual reachability | Minor (misleading log message) | **FIXED** |
+| 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
