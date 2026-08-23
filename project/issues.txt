@@ -1609,7 +1609,7 @@ still open
 **Issue 38: `TransactionSender.abort()` is only checked after a chunk
 gets ACKed, not while one is timing out and retrying - pressing Abort
 during a stuck retry has no effect until retries are exhausted on
-their own** 🔍 OPEN
+their own** ✅ FIXED (2026-08-23)
 
 - Found during real-hardware verification of the client GUI's
   connect-only-at-Send revision (2026-08-23, see
@@ -1654,10 +1654,30 @@ their own** 🔍 OPEN
   to abort - a chunk that's genuinely not getting through - Abort
   doesn't work. It only works in the comparatively rare case where an
   ACK happens to arrive at the same moment.
-- Proposed fix (not scoped/decided yet): check `self._abort_event.is_set()`
-  right after the `else` (timeout) branch's retry-budget check, mirroring
-  the existing check in the ACK-received branch - same "Aborted by
-  user" outcome, just reachable from both paths instead of one.
+- **Fix** (branch `issue-38`): added the exact check proposed above -
+  `self._abort_event.is_set()` right after the `else` (timeout)
+  branch's retry-budget check (only reached when more retries remain;
+  a genuine retry-exhaustion on the same iteration still reports its
+  own timeout error, same as before). Same "Aborted by user" outcome
+  as the ACK-received branch, just now reachable from both paths.
+- **Residual limitation, by design**: this makes Abort effective
+  *between* retry attempts, not instantly mid-wait - `_wait_for_chunk_ack()`'s
+  blocking `event.wait(timeout=...)` call still has to return before the
+  new check runs, so Abort can still take up to one full
+  `timeout_seconds` (default 30s) to take effect, not immediately. Full
+  mid-wait interruption would need restructuring the wait itself (short
+  polling intervals instead of one blocking call) - a larger change not
+  scoped here; this fix closes the actual reported gap (Abort having
+  *no effect at all* during retries, requiring the full retry budget to
+  exhaust - up to `max_retries` cycles, not just one).
+- **Verified**: new regression test
+  (`test_abort_stops_a_chunk_stuck_retrying_on_timeout` in
+  `tests/test_client_sender.py`) - a 1-chunk send with no ACK ever
+  delivered, `abort()` called mid-wait, asserts the send stops with
+  "Aborted by user" after roughly one timeout cycle instead of
+  exhausting all retries. Full suite (814/814) passing, including the
+  existing `test_max_retries_exhausted`/`test_retry_then_success` tests
+  confirming normal (non-aborted) retry behavior is unaffected.
 - Per this project's one-issue-one-branch convention, scoped as its own
   fix rather than folded into the Story 27.x work that was running
   when this was found.
@@ -1975,7 +1995,7 @@ a defect)
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
 | 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
-| 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
+| 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **FIXED** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
 | 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | **FIXED** |
