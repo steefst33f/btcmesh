@@ -95,6 +95,19 @@ class MeshtasticSerialTransport(BaseTransport):
             else:
                 # Auto-detect device if no path provided
                 iface = meshtastic.serial_interface.SerialInterface(connectNow=False)
+        except SystemExit as exc:
+            # meshtastic.util.findPorts()-based auto-detect (devPath=None)
+            # calls meshtastic.util.our_exit() - print() + sys.exit() -
+            # when more than one candidate serial port is found, rather
+            # than raising a catchable exception. SystemExit is a
+            # BaseException, not an Exception, so it would otherwise skip
+            # the `except Exception` below entirely and silently kill
+            # whatever thread called connect() (Issue 41). Only reachable
+            # from the auto-detect branch above.
+            raise TransportConnectionError(
+                "Multiple Meshtastic devices detected - please select a "
+                "specific device instead of Auto-detect"
+            ) from exc
         except Exception as exc:
             err_type = type(exc).__name__
             if (

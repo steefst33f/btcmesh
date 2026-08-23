@@ -1758,7 +1758,7 @@ a protocol bug)
 `SystemExit` from inside the meshtastic library when more than one serial
 port candidate is present - uncaught by our `except Exception`, it
 silently kills whatever thread called `connect()`, with no error ever
-surfaced to the caller** 🔍 OPEN (real bug, not a hang)
+surfaced to the caller** ✅ FIXED (2026-08-23)
 
 - Found live during real-hardware testing of Story 27.3's server GUI
   device dropdown (2026-08-23): selected "Auto-detect" from the
@@ -1802,19 +1802,21 @@ surfaced to the caller** 🔍 OPEN (real bug, not a hang)
   `btcmesh_client_cli.py` if invoked without `-p`/`.env`'s
   `MESHTASTIC_SERIAL_PORT` set. Found via the server GUI simply because
   that's what was being tested at the time.
-- **Not fixed here** - per this project's one-issue-one-branch
-  convention (matches how Issue 38 was handled: log and keep testing).
-  Proposed fix (not scoped yet): broaden `connect()`'s except clause in
-  `transport/meshtastic_serial.py` to also catch `SystemExit` from the
-  `SerialInterface(...)` constructor call specifically, converting it to
-  a clear `TransportConnectionError` (e.g. "Multiple Meshtastic devices
-  detected - please select one instead of Auto-detect") so it surfaces
-  as a normal, catchable connection failure instead of silently killing
-  the calling thread.
-- **Immediate workaround**: select a specific device from the dropdown
-  instead of Auto-detect - that path calls
-  `SerialInterface(devPath=..., ...)` directly and never reaches this
-  codepath at all.
+- **Fix** (branch `issue-41`): `connect()` in `transport/meshtastic_serial.py`
+  now has a dedicated `except SystemExit as exc:` clause around the
+  `SerialInterface(...)` constructor call, placed before the existing
+  `except Exception`, converting it to
+  `TransportConnectionError("Multiple Meshtastic devices detected - please
+  select a specific device instead of Auto-detect")` - a normal,
+  catchable connection failure instead of a silently killed thread.
+- **Verified two ways**: a new regression test
+  (`test_connect_raises_clear_error_on_system_exit` in
+  `tests/test_meshtastic_serial_transport.py`, mocking
+  `SerialInterface`'s side effect as `SystemExit(1)`); and live against
+  the real installed meshtastic library with 5 actual serial candidates
+  attached (Seeed, Heltec, relay board ports) - `transport.connect(None)`
+  now returns the clean error instantly instead of hanging. Full suite
+  813/813 passing.
 
 ---
 
@@ -1886,4 +1888,4 @@ both be `.env`-only, or both GUI-configurable?
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
-| 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | Open |
+| 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | **FIXED** |
