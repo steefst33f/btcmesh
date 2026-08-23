@@ -864,3 +864,86 @@ those three branches' `connection_text`).
   trusting the connect-at-Send timing and the self-send check against
   real hardware (see the parent "Architecture Revision" section's
   Verification for what to check).
+
+---
+
+## Fix: Known-Nodes Staleness on Device Selection (2026-08-23)
+
+**Found during real-hardware verification** of the Architecture
+Revision above: known nodes are per-device (each physical Meshtastic
+device has its own NodeDB of nodes it's heard from), but nothing
+re-fetches them when the *device selection* changes - only Send
+connects now, which is too late for populating the destination picker
+while the user is still composing the transaction. Result: switching
+devices left the destination dropdown either empty or showing the
+*previous* device's known nodes, silently wrong (a node reachable from
+device A isn't necessarily reachable from device B).
+
+**Fix**: bring back a bound `on_device_selected` handler - but scoped
+narrowly. Its only job is a single brief connect that fetches *both*
+the newly-selected device's identity (node_id/name, for
+labeling/dedup) and its known nodes (for the destination dropdown) in
+one connection, then disconnects. It does **not** hold a persistent
+connection - Send still does its own separate connect, unchanged.
+
+```python
+def on_device_selected(self, spinner, text):
+    if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
+        return
+    path = device_path_from_display(self.devices, text)
+    self.status_log.add_message("Fetching device info and known nodes...")
+
+    def fetch_thread():
+        try:
+            transport = MeshtasticSerialTransport()
+            transport.connect(path)
+        except TransportConnectionError as e:
+            self.result_queue.put(('log', f"Could not fetch device info: {e}", logging.ERROR))
+            return
+        try:
+            node_id = transport.local_node_id
+            name = get_own_node_name(transport._iface)
+            self.result_queue.put(('device_identity', path, node_id, name))
+            nodes = get_known_nodes(transport._iface)
+            self.result_queue.put(('known_nodes_fetched', nodes))
+        finally:
+            transport.disconnect()
+
+    threading.Thread(target=fetch_thread, daemon=True).start()
+```
+
+Reuses the *existing* `device_identity` and `known_nodes_fetched`
+result handling in `_handle_result()` unchanged - this just adds a new
+place that pushes those same result types.
+
+**Why fetch identity here too, not just known nodes**: doing both in
+one connection avoids a real collision. The single-device auto-select
+case sets `device_spinner.text = devices[0]` immediately, which now
+fires `on_device_selected` - if that only fetched known nodes while a
+*separate* background probe (`probe_devices_in_background`) also tried
+to connect to the same sole device for identity, both would race for
+the same serial port. Folding identity into this same connection
+avoids the race entirely for that case, rather than adding
+synchronization to prevent it.
+
+**Consequence for `devices_found`'s single-device branch**: stop
+calling `probe_devices_in_background()` there (revert to the original
+Story 27.2 skip-probe-for-single-device behavior) - identity now
+arrives for free from `on_device_selected`'s fetch instead, the same
+role the live Send connection played before this revision. The
+multi-device branch is unaffected: it still probes every candidate in
+the background for labeling, and still races on-select the same
+already-accepted way Story 27.2 documented ("probe/selection race...
+no lock/cancellation added") - not a new tradeoff, just extended to
+now include the known-nodes fetch too.
+
+**`refresh_device_spinner_labels()` call sites**: now pass
+`selection_handler=self.on_device_selected` again (was `None`),
+restoring the unbind/rebind protection - otherwise a label-only
+update (e.g. a background probe resolving a *different* device's
+name) would spuriously re-fire `on_device_selected` and refetch known
+nodes for no reason.
+
+Files touched: `btcmesh_client_gui.py` (`on_device_selected()` added
+back, bound in `_build_ui()`; `devices_found`'s single-device branch;
+`refresh_device_spinner_labels()` call site), `tests/test_btcmesh_client_gui.py`.
