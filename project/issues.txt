@@ -1664,6 +1664,34 @@ their own** 🔍 OPEN
 
 ---
 
+## Client GUI: no loading indicator during device probe/connect
+
+**Issue 39: device-info fetch, known-nodes fetch, and Send's connect
+step all block silently with no spinner/progress indicator** 🔍 OPEN
+(enhancement, not a regression)
+
+- Noted during real-hardware verification of the "clear known nodes
+  immediately on selection" and "friendlier connect-error wording"
+  follow-up fixes (2026-08-23, see `project/plans/story_27_1.md`'s
+  "Follow-up refinements" section) - both fixes work correctly, but
+  while a background connect/probe is in flight (typically a few
+  seconds, longer if it times out) there's no visual cue that
+  something is happening - only the "Fetching device info and known
+  nodes..." log line, easy to miss since it scrolls with everything
+  else in the status log.
+- Not a new problem - this GUI has never had a busy/loading indicator
+  for any background operation (device scan, probe, connect, send).
+  Explicitly called out by the user as a nice-to-have, not a bug:
+  low priority, no functional impact.
+- Would apply equally to: device dropdown probing, `on_device_selected`'s
+  identity+known-nodes fetch, `on_refresh_nodes`, and the Send button's
+  `_connect_with_retry()` - i.e. every brief background connect this
+  session's `_friendly_connect_error()` (Issue-adjacent, same call
+  sites) already unified the error-wording for.
+- Not scoped or fixed here - left as a future enhancement.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1703,3 +1731,4 @@ their own** 🔍 OPEN
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
 | 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
+| 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
