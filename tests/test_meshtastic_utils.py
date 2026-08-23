@@ -181,6 +181,130 @@ class TestScanMeshtasticDevicesDetailed(unittest.TestCase):
             self.assertEqual(result, [])
 
 
+class TestProbeDeviceIdentity(unittest.TestCase):
+    """Tests for probe_device_identity (Story 27.1, extended to also
+    fetch the node's configured name - see Issue 37 in
+    project/issues.txt)."""
+
+    def test_probe_device_identity_exists(self):
+        from core.meshtastic_utils import probe_device_identity
+        self.assertTrue(callable(probe_device_identity))
+
+    def test_returns_node_id_and_name_on_successful_connect(self):
+        """Given a transport that connects successfully, Then returns a
+        ProbedDevice with both node_id and name, and disconnects
+        afterward."""
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch(
+            'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
+        ) as mock_get_name:
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-0001')
+
+        self.assertEqual(result.node_id, '!7c5b4418')
+        self.assertEqual(result.name, 'Meshtastic 4418')
+        mock_transport.connect.assert_called_once_with('/dev/cu.usbserial-0001')
+        mock_transport.disconnect.assert_called_once()
+        mock_get_name.assert_called_once_with(mock_transport._iface)
+
+    def test_returns_node_id_with_no_name_when_device_has_none_set(self):
+        """Given a device with no configured name (get_own_node_name
+        returns None), Then the ProbedDevice still carries the node_id."""
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch(
+            'core.meshtastic_utils.get_own_node_name', return_value=None
+        ):
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-0001')
+
+        self.assertEqual(result.node_id, '!7c5b4418')
+        self.assertIsNone(result.name)
+
+    def test_returns_empty_identity_when_connect_fails(self):
+        """Given connect() raises TransportConnectionError (e.g. not a real
+        Meshtastic device, already in use, or timed out), Then returns
+        ProbedDevice(None, None) without raising, and still disconnects
+        (safe no-op)."""
+        from transport.base import TransportConnectionError
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ):
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-relay')
+
+        self.assertIsNone(result.node_id)
+        self.assertIsNone(result.name)
+        mock_transport.disconnect.assert_called_once()
+
+
+class TestFormatDeviceDisplay(unittest.TestCase):
+    """Tests for format_device_display (Story 27.1)."""
+
+    def test_format_device_display_exists(self):
+        from core.meshtastic_utils import format_device_display
+        self.assertTrue(callable(format_device_display))
+
+    def test_path_only_when_node_id_none(self):
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display('/dev/cu.usbserial-0001', None)
+        self.assertEqual(result, '/dev/cu.usbserial-0001')
+
+    def test_path_and_node_id_when_known(self):
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display('/dev/cu.usbserial-0001', '!7c5b4418')
+        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
+
+    def test_name_and_node_id_when_both_known(self):
+        """Given both a node_id and a name, Then the name is shown instead
+        of the raw path - e.g. 'Meshtastic 4418 (!7c5b4418)'."""
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418'
+        )
+        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418)')
+
+    def test_path_and_node_id_when_name_is_none(self):
+        """Given a node_id but no name (device has none configured), Then
+        falls back to path (node_id) rather than showing nothing."""
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', '!7c5b4418', name=None
+        )
+        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
+
+    def test_path_only_when_name_known_but_node_id_none(self):
+        """Given a name but no node_id (shouldn't normally happen - name
+        only comes from a successful probe, which always yields a
+        node_id too - but must not crash), Then still falls back to the
+        bare path, since 'name' alone without a node_id would look like a
+        wire-format node ID mismatch."""
+        from core.meshtastic_utils import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', None, name='Meshtastic 4418'
+        )
+        self.assertEqual(result, '/dev/cu.usbserial-0001')
+
+
 class TestGetOwnNodeId(unittest.TestCase):
     """Tests for get_own_node_id function."""
 
