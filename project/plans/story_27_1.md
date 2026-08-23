@@ -992,3 +992,17 @@ back, bound in `_build_ui()`; `devices_found`'s single-device branch;
    fetch device info: ...", "Could not fetch known nodes: ...", "Failed
    to connect: ...") keeps framing *what* was being attempted; this
    only fixes *why* it failed reading like an unrelated Send attempt.
+
+**Status: implemented and real-hardware verified (2026-08-23).** Test
+coverage added in `tests/test_btcmesh_client_gui.py`
+(`TestDeviceSelectedFetchFlow.test_clears_known_nodes_immediately_before_fetch_completes`,
+`TestFriendlyConnectError`) - full suite (85 client-GUI tests, 803
+project-wide) green. Verified live with the Seeed/Heltec/relay-board
+setup: switching devices blanks the known-nodes list immediately
+instead of showing the previous device's stale entries; selecting a
+non-Meshtastic port now reads "...did not respond - it may not be a
+Meshtastic device..." instead of "Waiting for connection completion".
+User confirmed both work as intended; also flagged a (pre-existing,
+never-had-one) missing loading/busy indicator during these background
+probes as a nice-to-have for later - logged as Issue 39, not fixed
+here.
