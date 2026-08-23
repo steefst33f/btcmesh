@@ -1525,6 +1525,27 @@ lora/
         entries that resolve to a matching node ID, which the relay
         board's ports never do). Confirms both the naming and dedup
         mechanics work end-to-end against real hardware, not just mocks._
+    *   _Note: **Superseded in part, 2026-08-23** - the "Currently-
+        connected device is not re-probed" scenario above no longer
+        applies as written. A broader architecture revision (discussed
+        while scoping Story 27.3, see `project/plans/story_27_1.md`'s
+        "Architecture Revision" section) redesigned the client GUI to
+        hold no ambient Meshtastic connection at all while idle -
+        selecting a device now only decides what Send will connect to,
+        it never connects anything itself. There is no longer an
+        "active/connected device during scan" case to exempt from
+        probing at all: every scanned device is always probed now
+        (single or multiple), and `_active_device_path` was removed.
+        The rest of Story 27.2 (background probing, dedup, relabeling,
+        reverse-lookup on selection) is unaffected and still works
+        exactly as scoped above - only the live-connection shortcut and
+        its dedup exemption went away, along with the Story 28.4 idle
+        watchdog (see that story's note and Issue 21 in
+        `project/issues.txt`). Real connection logic moved into
+        `on_send_pressed()`/`_send_transaction_thread()`, mirroring
+        `btcmesh_client_cli.py`'s `run_send()`. Full suite 792/792
+        passing; real-hardware re-verification of this specific change
+        still pending as of this note._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
@@ -1579,7 +1600,7 @@ lora/
         - [ ] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
         - [ ] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
 
-- [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI**
+- [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI** — **Superseded 2026-08-23** (see project/plans/story_27_1.md's "Architecture Revision" section)
 - [x] *   **As a** client GUI user,
 - [x] *   **I want** the app to notice when its device has gone unresponsive during idle time,
 - [x] *   **So that** a wedge is caught and shown before I try to send, not discovered by a frozen send.
@@ -1590,6 +1611,25 @@ lora/
         - [x] *   **Given** no `RELAY_SERIAL_PORT` is configured (the common client case).
         - [x] *   **Then** the reported message clearly reflects "device unresponsive, please reconnect" rather than implying an automatic recovery was attempted and failed.
     *   _Note: Revives Story 26.6 (previously decided against - see `project/plans/story_26_6.md`) in a smaller, detection-only form. `build_device_watchdog()` already degrades gracefully with `power_control=None` when no relay is configured, so this reuses the same infrastructure rather than needing something new. Dedicated background thread (not `Clock.schedule_interval`, which would freeze the GUI's main thread during a blocking `tick()` call), gated on `self._active_sender` so it never races an in-progress send. See `project/plans/story_28_4.md`._
+    *   _Note: Superseded 2026-08-23, not for being wrong - it was
+        implemented correctly and real-hardware verified exactly as
+        scoped above - but the client GUI was redesigned (Story 27.2's
+        follow-up architecture revision) to hold no ambient Meshtastic
+        connection at all while idle, connecting only at the moment
+        Send is pressed. This story's entire premise (periodically ping
+        an already-open idle connection) stops applying with no idle
+        connection left to ping; the only way to preserve idle
+        liveness-checking would be periodic reconnect attempts purely
+        to test liveness, which is the exact rapid-reconnect-cycling
+        pattern this project has independently caught causing real
+        wedges (Issue 12). A wedge is now always discovered at Send
+        time by construction instead, backstopped by the unaffected
+        Story 28.1 send timeout. The `_start_watchdog_thread`/
+        `build_device_watchdog` client wiring this story added was
+        removed in the same revision. See Issue 21 in
+        `project/issues.txt` for the full writeup and
+        `project/plans/story_27_1.md`'s "Architecture Revision" section
+        for the design this was superseded by._
 
 ---
 
