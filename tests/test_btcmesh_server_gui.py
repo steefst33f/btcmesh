@@ -1325,7 +1325,8 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('devices_found', ['/dev/ttyUSB0', '/dev/ttyACM0']))
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background'):
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0', '/dev/ttyACM0']))
         self.assertIn(btcmesh_server_gui.DEVICE_AUTO_DETECT, gui.device_spinner.values)
         self.assertIn('/dev/ttyUSB0', gui.device_spinner.values)
         self.assertIn('/dev/ttyACM0', gui.device_spinner.values)
@@ -1336,7 +1337,8 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background'):
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
         self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
 
     def test_devices_found_no_devices_shows_auto_detect(self):
@@ -1406,7 +1408,8 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             gui = btcmesh_server_gui.BTCMeshServerGUI()
             gui.scan_btn.disabled = True
-            gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background'):
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
         self.assertFalse(gui.scan_btn.disabled)
 
     def test_auto_detect_passes_none_to_server(self):
@@ -1467,6 +1470,170 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     if target_fn:
                         target_fn()
                         mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
+
+    def test_labeled_device_selection_resolves_to_real_path(self):
+        """Story 27.3: once probing has labeled a device "Name (!nodeid)",
+        the spinner shows that formatted label, not a raw path. Given the
+        spinner is showing such a label, Then on_start_pressed() must
+        still connect using the real underlying path - not the label
+        itself as a literal (bogus) port string."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
+                     unittest.mock.patch('server.run_loop.TransactionReceiver'):
+                    gui = btcmesh_server_gui.BTCMeshServerGUI()
+                    gui._stop_event.is_set.return_value = True
+                    gui.rpc_host_input.text = 'localhost'
+                    gui.rpc_port_input.text = '8332'
+                    gui.rpc_user_input.text = 'user'
+                    gui.rpc_password_input.text = 'password'
+                    gui.devices = [
+                        {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
+                    ]
+                    gui.device_spinner.text = 'Meshtastic 4418 (!7c5b4418)'
+
+                    gui.on_start_pressed(None)
+                    thread_call = mock_threading.Thread.call_args
+                    target_fn = thread_call.kwargs.get('target') or thread_call[1].get('target')
+
+                    if target_fn:
+                        target_fn()
+                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
+
+
+# =============================================================================
+# Story 27.3: Node ID Display in the Server GUI's Device Dropdown
+# Tests for the server GUI's use of gui.gui_common's shared device-selection
+# functions - the shared functions' own logic (dedup rules, reverse lookup,
+# relabeling) is tested independently in tests/test_gui_common.py. These
+# tests only verify this file wires them up correctly, per
+# project/plans/story_27_1.md's Story 27.3 notes.
+# =============================================================================
+
+class TestNodeIdDisplayStory273(unittest.TestCase):
+    """Server-GUI counterpart to the client GUI's TestNodeIdDisplayStory272.
+    Two real differences from the client: the server always probes every
+    found device (including the single-device case - it never auto-connects
+    on selection, so background probing is the only way it learns
+    identities), and refresh_device_spinner_labels() is called with no
+    selection_handler (the server's spinner has no bound handler to
+    protect against a spurious relabel-triggered refetch)."""
+
+    def test_devices_found_multiple_builds_devices_list_and_probes(self):
+        """Given multiple devices found, Then self.devices is built with
+        node_id=None/name=None for each, and probing is kicked off via the
+        shared probe_devices_in_background()."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background') as mock_probe:
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0', '/dev/ttyACM0']))
+
+        self.assertEqual(
+            gui.devices,
+            [
+                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+            ],
+        )
+        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+
+    def test_devices_found_single_device_still_probes(self):
+        """Given a single device found, Then it's auto-selected AND still
+        probed - unlike the client GUI, the server has no on-selection
+        connect to fetch identity for free, so this background probe is
+        the only path to ever learning that device's identity."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background') as mock_probe:
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+
+        self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
+        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+
+    def test_device_identity_result_updates_matching_device_and_dedupes(self):
+        """Given a device_identity probe result, Then the matching
+        device's node_id/name are updated, dedup runs via the shared
+        dedupe_devices_by_node_id() (node_id is truthy), and labels are
+        refreshed via the shared refresh_device_spinner_labels() with no
+        selection_handler."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.devices = [
+                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+            ]
+
+            with unittest.mock.patch(
+                'btcmesh_server_gui.dedupe_devices_by_node_id',
+                return_value=(gui.devices, None),
+            ) as mock_dedupe, unittest.mock.patch(
+                'btcmesh_server_gui.refresh_device_spinner_labels'
+            ) as mock_refresh:
+                gui._handle_result(
+                    ('device_identity', '/dev/ttyACM0', '!7c5b4418', 'Meshtastic 4418')
+                )
+
+        self.assertIsNone(gui.devices[0]['node_id'])
+        self.assertEqual(gui.devices[1]['node_id'], '!7c5b4418')
+        self.assertEqual(gui.devices[1]['name'], 'Meshtastic 4418')
+        mock_dedupe.assert_called_once_with(gui.devices, keep_path='/dev/ttyACM0')
+        mock_refresh.assert_called_once_with(
+            gui.device_spinner, gui.devices,
+            extra_values=[btcmesh_server_gui.DEVICE_AUTO_DETECT],
+        )
+
+    def test_device_identity_none_skips_dedupe(self):
+        """Given a probe result of node_id=None/name=None (not a real
+        Meshtastic device, or connect failed), Then dedup is skipped, but
+        labels still refresh."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+            with unittest.mock.patch(
+                'btcmesh_server_gui.dedupe_devices_by_node_id'
+            ) as mock_dedupe, unittest.mock.patch(
+                'btcmesh_server_gui.refresh_device_spinner_labels'
+            ) as mock_refresh:
+                gui._handle_result(('device_identity', '/dev/ttyUSB0', None, None))
+
+        mock_dedupe.assert_not_called()
+        mock_refresh.assert_called_once_with(
+            gui.device_spinner, gui.devices,
+            extra_values=[btcmesh_server_gui.DEVICE_AUTO_DETECT],
+        )
+
+    def test_device_identity_result_keeps_auto_detect_in_dropdown(self):
+        """Regression test (found via real-hardware testing, 2026-08-23):
+        refresh_device_spinner_labels() used to rebuild spinner.values
+        purely from the probed devices list, silently dropping
+        "Auto-detect" the moment the first identity-probe result landed -
+        happens on every scan now that the server always probes, including
+        the single-device case. Given a device_identity result (using the
+        real, unmocked shared function this time), Then Auto-detect is
+        still present in spinner.values afterward."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+            gui.device_spinner.values = [btcmesh_server_gui.DEVICE_AUTO_DETECT, '/dev/ttyUSB0']
+            gui.device_spinner.text = '/dev/ttyUSB0'
+
+            gui._handle_result(('device_identity', '/dev/ttyUSB0', '!7c5b4418', 'Meshtastic 4418'))
+
+        self.assertIn(btcmesh_server_gui.DEVICE_AUTO_DETECT, gui.device_spinner.values)
 
 
 class TestServerDeviceWatchdogStory283(unittest.TestCase):
@@ -2104,6 +2271,42 @@ class TestSaveLoadSettingsStory184(unittest.TestCase):
 
                 # Verify success message was shown
                 gui.status_log.add_message.assert_called()
+            finally:
+                os.unlink(temp_path)
+
+    def test_save_settings_resolves_labeled_device_to_real_path(self):
+        """Story 27.3: given the spinner shows a probed "Name (!nodeid)"
+        label rather than a raw path, Then _on_save_settings() persists
+        the real underlying path to .env, not the label text."""
+        import btcmesh_server_gui
+        import tempfile
+        import os
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            gui = btcmesh_server_gui.BTCMeshServerGUI()
+            gui.rpc_host_input.text = 'testhost.local'
+            gui.rpc_port_input.text = '18332'
+            gui.rpc_user_input.text = 'testuser'
+            gui.rpc_password_input.text = 'testpass'
+            gui.timeout_input.text = '120'
+            gui.devices = [
+                {'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}
+            ]
+            gui.device_spinner.text = 'Meshtastic 4418 (!7c5b4418)'
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                with unittest.mock.patch.object(btcmesh_server_gui, 'DOTENV_PATH', temp_path):
+                    gui.status_log.add_message = unittest.mock.MagicMock()
+                    gui._on_save_settings(None)
+
+                with open(temp_path, 'r') as f:
+                    content = f.read()
+
+                self.assertIn('MESHTASTIC_SERIAL_PORT=/dev/ttyUSB0', content)
+                self.assertNotIn('Meshtastic 4418', content)
             finally:
                 os.unlink(temp_path)
 
