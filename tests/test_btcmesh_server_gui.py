@@ -1706,7 +1706,10 @@ class TestServerDeviceWatchdogStory283(unittest.TestCase):
     def test_logs_enabled_when_power_control_configured(self):
         _, _, gui, _ = self._run_server(power_control=unittest.mock.MagicMock())
         self.assertIn(
-            "Automatic device-recovery enabled via relay.", self._logged_messages(gui)
+            "Automatic device-recovery configured via relay "
+            "(RELAY_SERIAL_PORT set) - actual availability isn't "
+            "confirmed until a recovery is attempted.",
+            self._logged_messages(gui),
         )
 
     def test_logs_disabled_when_power_control_not_configured(self):

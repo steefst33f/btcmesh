@@ -82,7 +82,16 @@ def run_server(port=None) -> int:
         ),
     )
     if power_control:
-        server_logger.info("Automatic device-recovery enabled via relay.")
+        # "Configured", not "enabled" or "connected" - power_control is
+        # built purely from RELAY_SERIAL_PORT being set in .env
+        # (build_device_watchdog()), with no attempt to actually reach the
+        # relay board. Whether it's really there and working is only found
+        # out if/when a recovery is attempted (Issue 42).
+        server_logger.info(
+            "Automatic device-recovery configured via relay "
+            "(RELAY_SERIAL_PORT set) - actual availability isn't "
+            "confirmed until a recovery is attempted."
+        )
     else:
         server_logger.info(
             "RELAY_SERIAL_PORT not configured - automatic device-wedge "
