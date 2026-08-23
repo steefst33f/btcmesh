@@ -201,6 +201,8 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
         ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value=None
+        ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
         ) as mock_get_name:
             from core.meshtastic_utils import probe_device_identity
@@ -221,6 +223,8 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         with unittest.mock.patch(
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
+        ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value=None
         ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value=None
         ):
@@ -243,6 +247,8 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         with unittest.mock.patch(
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
+        ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value=None
         ):
             from core.meshtastic_utils import probe_device_identity
             result = probe_device_identity('/dev/cu.usbserial-relay')
@@ -250,6 +256,34 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         self.assertIsNone(result.node_id)
         self.assertIsNone(result.name)
         mock_transport.disconnect.assert_called_once()
+
+    def test_returns_relay_board_identity_without_attempting_meshtastic_connect(self):
+        """Issue 37 follow-up: given the candidate is confirmed to be the
+        Story 26.7 relay board (its firmware reports a real
+        hardware-derived unique ID), Then probe_device_identity() returns
+        immediately with node_id set to that ID (prefixed '#', never
+        confused with a real Meshtastic '!' node ID) - WITHOUT ever
+        attempting the slow Meshtastic connect. Carrying a real node_id
+        lets this piggyback on the existing dedupe_devices_by_node_id()
+        mechanism, correctly collapsing one board's two OS-level aliases
+        while keeping two *different* physical relay boards distinct."""
+        from core.meshtastic_utils import RELAY_BOARD_NAME
+
+        mock_transport = unittest.mock.MagicMock()
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value='246F28AECB34'
+        ) as mock_probe_relay:
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-112440')
+
+        mock_probe_relay.assert_called_once_with('/dev/cu.usbserial-112440')
+        self.assertEqual(result.node_id, '#246F28AECB34')
+        self.assertEqual(result.name, RELAY_BOARD_NAME)
+        mock_transport.connect.assert_not_called()
 
 
 class TestFormatDeviceDisplay(unittest.TestCase):
@@ -291,18 +325,19 @@ class TestFormatDeviceDisplay(unittest.TestCase):
         )
         self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
 
-    def test_path_only_when_name_known_but_node_id_none(self):
-        """Given a name but no node_id (shouldn't normally happen - name
-        only comes from a successful probe, which always yields a
-        node_id too - but must not crash), Then still falls back to the
-        bare path, since 'name' alone without a node_id would look like a
-        wire-format node ID mismatch."""
+    def test_name_only_when_node_id_none(self):
+        """Given a name but no node_id, Then shows the name alone rather
+        than falling back to the bare path. This is a real, meaningful
+        case (not just an edge case to tolerate): probe_device_identity()'s
+        Issue 37 relay-board result has a descriptive name
+        ('Relay board (not a Meshtastic device)') but no Meshtastic
+        protocol identity to pair it with."""
         from core.meshtastic_utils import format_device_display
 
         result = format_device_display(
-            '/dev/cu.usbserial-0001', None, name='Meshtastic 4418'
+            '/dev/cu.usbserial-0001', None, name='Relay board (not a Meshtastic device)'
         )
-        self.assertEqual(result, '/dev/cu.usbserial-0001')
+        self.assertEqual(result, 'Relay board (not a Meshtastic device)')
 
 
 class TestGetOwnNodeId(unittest.TestCase):

@@ -102,32 +102,51 @@ class ProbedDevice:
     name: Optional[str]
 
 
+RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"
+
+
 def probe_device_identity(path: str) -> ProbedDevice:
     """Briefly connect to a candidate serial port to learn its Meshtastic
     node ID and configured name, then disconnect. Returns
     ProbedDevice(None, None) (never raises) if the path isn't a genuine
     Meshtastic device, is already in use, or the connection attempt
     fails/times out - e.g. a false-positive candidate from
-    scan_meshtastic_devices()'s VID-blacklist filtering, such as the
-    Story 26.7 relay board's own serial port, which speaks a completely
-    different protocol.
+    scan_meshtastic_devices()'s VID-blacklist filtering.
 
-    Deliberately single-attempt, no retry: a real-hardware test during
-    Story 27.2's manual verification (2026-08-22) tried adding a retry
-    after what looked like a fast transient failure, but both actual
-    failures observed were genuine ~30s connection timeouts (a wedged
-    device, cleared only by a physical power cycle) - a second attempt on
-    the same timescale never once turned a failure into a success, while
-    doubling the wait for every non-Meshtastic false-positive candidate
-    (e.g. the relay board's own port), which can never succeed no matter
-    how many attempts. See Issue 37 in project/issues.txt.
+    First does a quick check for whether the candidate is specifically
+    the Story 26.7 relay board (probe_relay_board_id(), Issue 37's
+    false-positive-half fix) - if so, returns immediately instead of
+    attempting the full Meshtastic connect at all, which could never
+    succeed against it anyway (a completely different protocol) and
+    previously cost a full ~30s connection timeout for nothing. The
+    relay firmware's real hardware-derived unique ID is carried as
+    node_id (prefixed `#` rather than Meshtastic's `!`, so it's never
+    confused with a real node ID at a glance) - this piggybacks on the
+    exact same dedupe_devices_by_node_id() mechanism already built for
+    Meshtastic devices, correctly collapsing one physical relay board's
+    two OS-level aliases while still keeping two *different* physical
+    relay boards as separate entries (their chip IDs differ).
 
-    Lazy-imports MeshtasticSerialTransport (matching this module's
-    existing dependency style) to avoid a hard import-time dependency
-    from core/ on transport/.
+    Deliberately single-attempt on the Meshtastic connect itself, no
+    retry: a real-hardware test during Story 27.2's manual verification
+    (2026-08-22) tried adding a retry after what looked like a fast
+    transient failure, but both actual failures observed were genuine
+    ~30s connection timeouts (a wedged device, cleared only by a
+    physical power cycle) - a second attempt on the same timescale never
+    once turned a failure into a success. See Issue 37 in
+    project/issues.txt.
+
+    Lazy-imports MeshtasticSerialTransport/probe_relay_board_id (matching
+    this module's existing dependency style) to avoid a hard import-time
+    dependency from core/ on transport/.
     """
     from transport.meshtastic_serial import MeshtasticSerialTransport
     from transport.base import TransportConnectionError
+    from transport.power_control import probe_relay_board_id
+
+    relay_id = probe_relay_board_id(path)
+    if relay_id:
+        return ProbedDevice(node_id=f"#{relay_id}", name=RELAY_BOARD_NAME)
 
     transport = MeshtasticSerialTransport()
     try:
@@ -147,13 +166,20 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
     display in a dropdown.
 
     Returns:
-        'path' alone if node_id isn't known yet/unavailable; 'path
-        (node_id)' if only the node_id is known; 'name (node_id)' if
-        both are known - e.g. 'Meshtastic 4418 (!7c5b4418)'.
+        'path' alone if neither is known yet; 'path (node_id)' if only
+        the node_id is known; 'name (node_id)' if both are known - e.g.
+        'Meshtastic 4418 (!7c5b4418)'; 'name' alone if only a name is
+        known with no node_id - e.g. probe_device_identity()'s Issue 37
+        relay-board result ('Relay board (not a Meshtastic device)'),
+        which has no Meshtastic protocol identity to show.
     """
     if node_id and name:
         return f"{name} ({node_id})"
-    return f"{path} ({node_id})" if node_id else path
+    if node_id:
+        return f"{path} ({node_id})"
+    if name:
+        return name
+    return path
 
 
 def get_own_node_id(iface) -> Optional[str]:
