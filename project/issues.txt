@@ -1670,7 +1670,14 @@ board specifically, via protocol-level detection)
       `dedupe_devices_by_node_id()` correctly collapsing the two entries
       to one. Live in the client GUI dropdown: exactly one relay-board
       entry plus the two real Meshtastic devices - no duplicates,
-      matching physical device count exactly.
+      matching physical device count exactly. Also confirmed live on
+      the **server GUI**: same deduped dropdown, and selecting the
+      relay-board entry + clicking "Start Server" correctly shows the
+      immediate rejection message instead of hanging - the raw
+      meshtastic-protocol debug log showed zero traffic for the relay
+      board's paths at all (expected: `probe_relay_board_id()` uses
+      plain pyserial, never reaching the meshtastic library's connect
+      path), confirming the fast intercept works the same way there.
     - **Follow-up found via real-hardware testing (still applies)**: the
       background scan-time probe fix alone wasn't enough -
       `btcmesh_client_gui.py`'s `on_device_selected()` (known-nodes
