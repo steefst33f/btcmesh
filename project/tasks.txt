@@ -1471,21 +1471,81 @@ lora/
         `project/plans/story_27_1.md`'s "Enhancement: Node Names +
         Dropdown Dedup" section for the full design._
 
-- [ ] **Story 27.2: Show node IDs in the client GUI's device dropdown**
-- [ ] *   **As a** client GUI user,
-- [ ] *   **I want** to see each device's node ID next to its port path,
-- [ ] *   **So that** I don't have to guess or remember which node is on which port.
-    - [ ] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
-        - [ ] *   **Given** the client GUI scans for devices.
-        - [ ] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
-        - [ ] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
-    - [ ] *   **Scenario:** Currently-connected device is not re-probed
-        - [ ] *   **Given** the app already holds an active connection to one of the listed devices.
-        - [ ] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
-    - [ ] *   **Scenario:** Selecting a device still works
-        - [ ] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
-        - [ ] *   **When** the user selects it.
-        - [ ] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+- [x] **Story 27.2: Show node IDs in the client GUI's device dropdown**
+- [x] *   **As a** client GUI user,
+- [x] *   **I want** to see each device's node ID next to its port path,
+- [x] *   **So that** I don't have to guess or remember which node is on which port.
+    - [x] *   **Scenario:** Dropdown appears immediately, labels fill in afterward
+        - [x] *   **Given** the client GUI scans for devices.
+        - [x] *   **Then** the dropdown is populated immediately with port paths (no slowdown to the scan itself).
+        - [x] *   **And** each entry's label updates automatically to include its node ID (e.g. `/dev/cu.usbserial-0001 (!7c5b4418)`) as background lookups complete, with no extra user action needed.
+    - [x] *   **Scenario:** Currently-connected device is not re-probed
+        - [x] *   **Given** the app already holds an active connection to one of the listed devices.
+        - [x] *   **Then** that device's node ID is taken directly from the live connection, not from a redundant background probe.
+    - [x] *   **Scenario:** Selecting a device still works
+        - [x] *   **Given** a dropdown entry now shows `path (node_id)` instead of just `path`.
+        - [x] *   **When** the user selects it.
+        - [x] *   **Then** the app connects to the correct underlying path (looked up from the display text, not parsed out of it).
+    *   _Note: Implemented per `project/plans/story_27_1.md`'s Story 27.2
+        Implementation Notes. Single-device auto-connect skips the
+        background probe entirely (its node ID arrives via the live
+        `'connected'` result instead); multi-device scans probe
+        sequentially in the background. See PR (story-27-2)._
+    *   _Note: Real-hardware verified 2026-08-22 (Heltec + Seeed + Story
+        26.7 relay board attached, 5 raw scan candidates, see Issue 37).
+        Dropdown showed the "Select a device..." placeholder immediately;
+        `/dev/cu.SLAB_USBtoUART` and `/dev/cu.usbserial-0001` (the
+        Heltec's two path aliases) picked up `(!7c5b4418)` labels within
+        seconds with no clicking. Selecting the labeled
+        `/dev/cu.SLAB_USBtoUART (!7c5b4418)` entry connected successfully
+        (GUI log confirmed 60 known nodes fetched) - proving the reverse
+        lookup resolved the real path rather than passing the formatted
+        display text straight to the connector. Also caught and fixed a
+        real gap in the process: the Seeed's first probe attempt failed
+        instantly despite the device being healthy (see Story 27.1's
+        `PROBE_MAX_ATTEMPTS` fix above, and Issue 37 for the separate
+        duplicate/false-positive scan finding)._
+    *   _Note: Extended 2026-08-22 for Issue 37's node-name work
+        (Story 27.1's `probe_device_identity()`). `self.devices` gains a
+        `name` field; dropdown entries show `Name (!nodeid)` once both
+        are known. New `_dedupe_devices_by_node_id()` collapses two
+        paths that resolve to the same node ID (the Heltec's two
+        aliases) into one entry - the side just authoritatively resolved
+        wins, except the currently active/connected device is never
+        dropped even if it resolved second. See
+        `project/plans/story_27_1.md`'s "Enhancement: Node Names +
+        Dropdown Dedup" section._
+    *   _Note: Real-hardware verified 2026-08-22 (same Heltec + Seeed +
+        relay board setup as above). The 5 raw scan candidates collapsed
+        to 4 visible dropdown entries: the Heltec's two aliases merged
+        into one `Meshtastic 4418 (!7c5b4418)` entry, the Seeed showed
+        `Blind Xnode (!aee5ab3c)`, and the relay board's two ports
+        correctly stayed as bare unlabeled paths (Issue 37's
+        false-positive half, left open by design - dedup only touches
+        entries that resolve to a matching node ID, which the relay
+        board's ports never do). Confirms both the naming and dedup
+        mechanics work end-to-end against real hardware, not just mocks._
+    *   _Note: **Superseded in part, 2026-08-23** - the "Currently-
+        connected device is not re-probed" scenario above no longer
+        applies as written. A broader architecture revision (discussed
+        while scoping Story 27.3, see `project/plans/story_27_1.md`'s
+        "Architecture Revision" section) redesigned the client GUI to
+        hold no ambient Meshtastic connection at all while idle -
+        selecting a device now only decides what Send will connect to,
+        it never connects anything itself. There is no longer an
+        "active/connected device during scan" case to exempt from
+        probing at all: every scanned device is always probed now
+        (single or multiple), and `_active_device_path` was removed.
+        The rest of Story 27.2 (background probing, dedup, relabeling,
+        reverse-lookup on selection) is unaffected and still works
+        exactly as scoped above - only the live-connection shortcut and
+        its dedup exemption went away, along with the Story 28.4 idle
+        watchdog (see that story's note and Issue 21 in
+        `project/issues.txt`). Real connection logic moved into
+        `on_send_pressed()`/`_send_transaction_thread()`, mirroring
+        `btcmesh_client_cli.py`'s `run_send()`. Full suite 792/792
+        passing; real-hardware re-verification of this specific change
+        still pending as of this note._
 
 - [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
 - [ ] *   **As a** relay operator,
@@ -1540,7 +1600,7 @@ lora/
         - [ ] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
         - [ ] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
 
-- [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI**
+- [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI** — **Superseded 2026-08-23** (see project/plans/story_27_1.md's "Architecture Revision" section)
 - [x] *   **As a** client GUI user,
 - [x] *   **I want** the app to notice when its device has gone unresponsive during idle time,
 - [x] *   **So that** a wedge is caught and shown before I try to send, not discovered by a frozen send.
@@ -1551,6 +1611,25 @@ lora/
         - [x] *   **Given** no `RELAY_SERIAL_PORT` is configured (the common client case).
         - [x] *   **Then** the reported message clearly reflects "device unresponsive, please reconnect" rather than implying an automatic recovery was attempted and failed.
     *   _Note: Revives Story 26.6 (previously decided against - see `project/plans/story_26_6.md`) in a smaller, detection-only form. `build_device_watchdog()` already degrades gracefully with `power_control=None` when no relay is configured, so this reuses the same infrastructure rather than needing something new. Dedicated background thread (not `Clock.schedule_interval`, which would freeze the GUI's main thread during a blocking `tick()` call), gated on `self._active_sender` so it never races an in-progress send. See `project/plans/story_28_4.md`._
+    *   _Note: Superseded 2026-08-23, not for being wrong - it was
+        implemented correctly and real-hardware verified exactly as
+        scoped above - but the client GUI was redesigned (Story 27.2's
+        follow-up architecture revision) to hold no ambient Meshtastic
+        connection at all while idle, connecting only at the moment
+        Send is pressed. This story's entire premise (periodically ping
+        an already-open idle connection) stops applying with no idle
+        connection left to ping; the only way to preserve idle
+        liveness-checking would be periodic reconnect attempts purely
+        to test liveness, which is the exact rapid-reconnect-cycling
+        pattern this project has independently caught causing real
+        wedges (Issue 12). A wedge is now always discovered at Send
+        time by construction instead, backstopped by the unaffected
+        Story 28.1 send timeout. The `_start_watchdog_thread`/
+        `build_device_watchdog` client wiring this story added was
+        removed in the same revision. See Issue 21 in
+        `project/issues.txt` for the full writeup and
+        `project/plans/story_27_1.md`'s "Architecture Revision" section
+        for the design this was superseded by._
 
 ---
 
