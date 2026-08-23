@@ -150,6 +150,21 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
             transport.connect()
         self.assertIn("Failed to connect", str(ctx.exception))
 
+    def test_connect_raises_clear_error_on_system_exit(self):
+        """Regression test for Issue 41: when auto-detect (device_path=None)
+        finds multiple serial candidates, the meshtastic library calls
+        meshtastic.util.our_exit(), which does sys.exit() rather than
+        raising a normal exception. SystemExit is a BaseException, not an
+        Exception - uncaught, it would silently kill whatever thread
+        called connect() instead of surfacing a clear connection failure.
+        """
+        self.mock_meshtastic.serial_interface.SerialInterface.side_effect = SystemExit(1)
+
+        transport = MeshtasticSerialTransport()
+        with self.assertRaises(TransportConnectionError) as ctx:
+            transport.connect(None)
+        self.assertIn("Multiple Meshtastic devices detected", str(ctx.exception))
+
     def test_connect_closes_iface_when_handshake_times_out(self):
         """Test that a failure during the handshake (connect()/waitForConfig(),
         which runs after the serial port is already open) still closes the
