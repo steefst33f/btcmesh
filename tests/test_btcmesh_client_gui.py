@@ -1326,6 +1326,123 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         results = self._drain(gui.result_queue)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0][0], 'log')
+        self.assertIn('No Meshtastic device found', results[0][1])
+
+    def test_connect_failure_uses_friendly_error_wording(self):
+        """Given a raw timeout exception, Then the logged message uses
+        _friendly_connect_error()'s wording, not the raw "waiting for
+        connection completion" text - which reads like a failed Send
+        attempt the user never asked for (2026-08-23 follow-up fix)."""
+        import btcmesh_client_gui
+        from transport.base import TransportConnectionError
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.connect.side_effect = TransportConnectionError(
+            "Failed to connect: Timed out waiting for connection completion"
+        )
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        results = self._drain(gui.result_queue)
+        self.assertNotIn('waiting for connection completion', results[0][1])
+        self.assertIn('did not respond', results[0][1])
+
+    def test_clears_known_nodes_immediately_before_fetch_completes(self):
+        """Given a device is selected, Then _update_known_nodes([]) is
+        called synchronously right away, before the background fetch even
+        starts - so the previous device's known nodes don't stay visible
+        even briefly (2026-08-23 follow-up fix)."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        call_order = []
+        gui._update_known_nodes = unittest.mock.MagicMock(
+            side_effect=lambda nodes: call_order.append(('clear', nodes))
+        )
+
+        with unittest.mock.patch(
+            'btcmesh_client_gui.threading.Thread',
+            side_effect=lambda target, daemon: call_order.append(('thread_started',)) or self._ImmediateThread(target, daemon),
+        ), unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport'):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        gui._update_known_nodes.assert_any_call([])
+        self.assertEqual(call_order[0], ('clear', []))
+
+
+# =============================================================================
+# Pure helper: _friendly_connect_error()
+# =============================================================================
+
+class TestFriendlyConnectError(unittest.TestCase):
+    """Tests for _friendly_connect_error(), shared by every brief
+    background connect (Send, device-info fetch, known-nodes fetch) so
+    error wording reads consistently regardless of which one failed."""
+
+    def test_no_meshtastic_device_found(self):
+        from btcmesh_client_gui import _friendly_connect_error
+        from transport.base import TransportConnectionError
+
+        result = _friendly_connect_error(
+            '/dev/ttyUSB0', TransportConnectionError("No Meshtastic device found")
+        )
+        self.assertEqual(result, "No Meshtastic device found")
+
+    def test_permission_denied(self):
+        from btcmesh_client_gui import _friendly_connect_error
+        from transport.base import TransportConnectionError
+
+        result = _friendly_connect_error(
+            '/dev/ttyUSB0', TransportConnectionError("Permission denied opening port")
+        )
+        self.assertEqual(result, "Permission denied accessing /dev/ttyUSB0")
+
+    def test_could_not_open_port(self):
+        from btcmesh_client_gui import _friendly_connect_error
+        from transport.base import TransportConnectionError
+
+        result = _friendly_connect_error(
+            '/dev/ttyUSB0', TransportConnectionError("Failed to connect: could not open port")
+        )
+        self.assertEqual(result, "Could not open port /dev/ttyUSB0")
+
+    def test_timeout_reframed_as_did_not_respond_not_connection_failure(self):
+        """The wording change this fix is actually about: a timeout no
+        longer reads as a failed connection attempt the user asked for."""
+        from btcmesh_client_gui import _friendly_connect_error
+        from transport.base import TransportConnectionError
+
+        result = _friendly_connect_error(
+            '/dev/ttyUSB0',
+            TransportConnectionError("Failed to connect: Timed out waiting for connection completion"),
+        )
+        self.assertNotIn('waiting for connection completion', result)
+        self.assertIn('did not respond', result)
+        self.assertIn('/dev/ttyUSB0', result)
+
+    def test_unrecognized_message_passed_through(self):
+        """Given an error that doesn't match any known pattern, Then the
+        original message is returned unchanged rather than losing detail."""
+        from btcmesh_client_gui import _friendly_connect_error
+        from transport.base import TransportConnectionError
+
+        result = _friendly_connect_error(
+            '/dev/ttyUSB0', TransportConnectionError("Something unusual happened")
+        )
+        self.assertEqual(result, "Something unusual happened")
 
 
 # =============================================================================

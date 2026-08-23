@@ -280,6 +280,32 @@ def validate_send_inputs(dest: str, tx_hex: str) -> Optional[str]:
     return None
 
 
+def _friendly_connect_error(port: Optional[str], exc: Exception) -> str:
+    """Map a raw connect-failure exception into clearer text, shared by
+    every brief background connect this file makes (the real Send
+    connection, and the lighter-weight device-info/known-nodes fetches
+    triggered by device selection) so they all read the same way. The
+    raw text (e.g. "Timed out waiting for connection completion") reads
+    like a failed Send attempt even when the user never asked to connect
+    - they just selected a device - so the timeout case specifically is
+    reframed as "didn't respond" rather than "connection failed"; the
+    caller's own log prefix ("Could not fetch device info: ...", etc.)
+    is what actually says *what* was being attempted."""
+    msg = str(exc)
+    if "No Meshtastic" in msg or "No serial" in msg:
+        return "No Meshtastic device found"
+    if "Permission denied" in msg:
+        return f"Permission denied accessing {port or 'device'}"
+    if "could not open port" in msg.lower():
+        return f"Could not open port {port or '(auto-detect)'}"
+    if "timed out" in msg.lower() or "timeout" in msg.lower():
+        return (
+            f"{port or 'Device'} did not respond - it may not be a "
+            "Meshtastic device, or isn't responding right now"
+        )
+    return msg
+
+
 class BTCMeshGUI(BoxLayout):
     """Main GUI widget."""
 
@@ -533,14 +559,9 @@ class BTCMeshGUI(BoxLayout):
                     continue
                 break
 
-        error_msg = str(last_error)
-        if "No Meshtastic" in error_msg or "No serial" in error_msg:
-            error_msg = "No Meshtastic device found"
-        elif "Permission denied" in error_msg:
-            error_msg = f"Permission denied accessing {port or 'device'}"
-        elif "could not open port" in error_msg.lower():
-            error_msg = f"Could not open port {port or '(auto-detect)'}"
-        raise TransportConnectionError(error_msg) from last_error
+        raise TransportConnectionError(
+            _friendly_connect_error(port, last_error)
+        ) from last_error
 
     def on_refresh_devices(self, instance):
         """Handle refresh button press to rescan devices."""
@@ -560,6 +581,11 @@ class BTCMeshGUI(BoxLayout):
         if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
             return
 
+        # Clear immediately rather than waiting for the fetch to finish -
+        # otherwise the previous device's known nodes stay visible (still
+        # wrong, just briefly) until the new list arrives.
+        self._update_known_nodes([])
+
         path = device_path_from_display(self.devices, text)
         self.status_log.add_message("Fetching device info and known nodes...")
 
@@ -568,7 +594,9 @@ class BTCMeshGUI(BoxLayout):
                 transport = MeshtasticSerialTransport()
                 transport.connect(path)
             except TransportConnectionError as e:
-                self.result_queue.put(('log', f"Could not fetch device info: {e}", logging.ERROR))
+                self.result_queue.put((
+                    'log', f"Could not fetch device info: {_friendly_connect_error(path, e)}", logging.ERROR
+                ))
                 return
             try:
                 node_id = transport.local_node_id
@@ -610,7 +638,9 @@ class BTCMeshGUI(BoxLayout):
                 transport = MeshtasticSerialTransport()
                 transport.connect(port)
             except TransportConnectionError as e:
-                self.result_queue.put(('log', f"Could not fetch known nodes: {e}", logging.ERROR))
+                self.result_queue.put((
+                    'log', f"Could not fetch known nodes: {_friendly_connect_error(port, e)}", logging.ERROR
+                ))
                 return
             try:
                 nodes = get_known_nodes(transport._iface)
