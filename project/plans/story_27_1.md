@@ -1028,3 +1028,77 @@ end-to-end on real hardware** - device selection, brief identity/
 known-nodes probes, and the full connect→send-all-chunks→disconnect
 flow all behave correctly for a complete transaction, not just the
 individual pieces tested earlier in this session.
+
+## Story 27.3 Implementation Notes (server GUI) - Final
+
+Implemented on branch `story-27-3` (stacked on `story-27-2`), following
+the design already specified in this doc's "Architecture Revision"
+section's `btcmesh_server_gui.py` changes subsection above - the server
+GUI now imports `probe_devices_in_background()`,
+`dedupe_devices_by_node_id()`, `device_path_from_display()`,
+`refresh_device_spinner_labels()` from `gui/gui_common.py` rather than
+reimplementing them, matching the client GUI. Concretely:
+
+- New `self.devices` state, rebuilt on every scan.
+- `devices_found` handling builds `self.devices`, formats spinner
+  labels via `format_device_display()`, and **always** probes every
+  found device (including the single-device case) - the server never
+  auto-connects on selection, so this background probe is its only path
+  to ever learning identities (difference #3 from the original Story
+  27.3 notes still holds, see "why are these differences still true"
+  discussion above).
+- New `device_identity` result branch mirrors the client's, but with no
+  `selection_handler` passed to `refresh_device_spinner_labels()` - the
+  server spinner has no bound handler to protect (difference #1).
+- Fixed two real, pre-existing bugs: `_on_save_settings()` and
+  `on_start_pressed()` both read `self.device_spinner.text` as a
+  literal path - broken once labels became `"Name (!nodeid)"`. Both now
+  resolve through `device_path_from_display()` first.
+
+### Two issues found via real-hardware testing (both fixed except one deferred)
+
+1. **Auto-detect disappeared from the dropdown after the first scan**
+   (fixed here). `refresh_device_spinner_labels()` rebuilt
+   `spinner.values` purely from the probed `devices` list, with no way
+   to keep a sentinel like `DEVICE_AUTO_DETECT` (which isn't in
+   `devices`) in the list - the client GUI has no such sentinel so this
+   never surfaced there. Added an `extra_values` parameter (default
+   `()`, so the client's call site and behavior are completely
+   unchanged) that the server passes `[DEVICE_AUTO_DETECT]` to.
+2. **No auto-scan on startup** (fixed here, user-requested parity fix).
+   The server dropdown used to start with just "Auto-detect" until Scan
+   was clicked manually - inconsistent with the client GUI's 1s-after-
+   launch auto-scan, and felt off once both GUIs share the same
+   device-selection model. Added the same
+   `Clock.schedule_once(lambda dt: self._on_scan_devices(None), 1)`
+   call to `__init__`.
+3. **Auto-detect + Start Server silently "hangs" with multiple devices
+   attached** (found, NOT fixed here - logged as Issue 41). Traced
+   through the installed meshtastic library: `SerialInterface(devPath=None)`
+   calls `meshtastic.util.our_exit()` (`sys.exit()`) when more than one
+   serial candidate exists, raising `SystemExit` - a `BaseException` our
+   `transport/meshtastic_serial.py`'s `except Exception` doesn't catch,
+   so it silently kills the connecting thread instead of surfacing a
+   normal `TransportConnectionError`. Not GUI- or Story-27.3-specific
+   (any `connect(None)` caller with multiple devices hits this); deferred
+   to its own branch per the one-issue-one-branch convention, matching
+   how Issue 38 was handled. Workaround: select an explicit device
+   instead of Auto-detect.
+
+### Verification
+
+- **Unit tests**: `TestNodeIdDisplayStory273` (4 tests, mirroring the
+  client's `TestNodeIdDisplayStory272` with the "always probe"/"no
+  selection_handler" differences), plus regression tests for both
+  path-resolution fixes (`_on_save_settings`, `on_start_pressed`) and
+  the Auto-detect-persistence fix (`gui/gui_common.py`'s
+  `extra_values` param, tested directly in `tests/test_gui_common.py`
+  and via a real-call regression test in `tests/test_btcmesh_server_gui.py`).
+  Full suite: 812/812 passing.
+- **Real hardware**: server GUI restarted with all fixes; confirmed live
+  that the dropdown auto-populates ~1s after launch (no manual Scan
+  needed), and that Auto-detect stays present in the dropdown after a
+  scan/probe cycle completes. User confirmed both work as expected.
+  Auto-detect + Start Server (Issue 41) intentionally not retested here
+  - explicit-device selection is the only supported path until that's
+  fixed.

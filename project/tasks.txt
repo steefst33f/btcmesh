@@ -1547,13 +1547,38 @@ lora/
         passing; real-hardware re-verification of this specific change
         still pending as of this note._
 
-- [ ] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** the same node-ID-labeled dropdown in the server GUI's device settings,
-- [ ] *   **So that** I can identify the right device when configuring the relay server, the same way as the client.
-    - [ ] *   **Scenario:** Same behavior as Story 27.2, applied to the server GUI's device settings spinner
-        - [ ] *   **Given** the server GUI's "Scan" button is used (Story 18.2).
-        - [ ] *   **Then** the dropdown behaves identically to the client GUI's (immediate path-only list, node IDs filled in afterward, correct path resolved on selection/start).
+- [x] **Story 27.3: Show node IDs in the server GUI's device settings dropdown**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** the same node-ID-labeled dropdown in the server GUI's device settings,
+- [x] *   **So that** I can identify the right device when configuring the relay server, the same way as the client.
+    - [x] *   **Scenario:** Same behavior as Story 27.2, applied to the server GUI's device settings spinner
+        - [x] *   **Given** the server GUI's "Scan" button is used (Story 18.2).
+        - [x] *   **Then** the dropdown behaves identically to the client GUI's (immediate path-only list, node IDs filled in afterward, correct path resolved on selection/start).
+    *   _Implemented 2026-08-23 on branch `story-27-3` (stacked on
+        `story-27-2`) per `project/plans/story_27_1.md`'s "Story 27.3
+        Implementation Notes (server GUI) - Final" section: the server
+        GUI now imports the four shared functions
+        (`probe_devices_in_background`, `dedupe_devices_by_node_id`,
+        `device_path_from_display`, `refresh_device_spinner_labels`)
+        from `gui/gui_common.py` rather than reimplementing them, plus
+        fixed two real bugs where `_on_save_settings()`/`on_start_pressed()`
+        read the spinner's formatted `"Name (!nodeid)"` label as a
+        literal serial path._
+    *   _Real-hardware testing (same session) surfaced two more issues:
+        `refresh_device_spinner_labels()` was silently dropping the
+        server's "Auto-detect" sentinel from the dropdown on the first
+        identity-probe result (fixed - added an `extra_values` param,
+        default empty so the client GUI is unaffected); and the server
+        had no auto-scan-on-startup unlike the client, which felt
+        inconsistent once both GUIs share this model (fixed - added the
+        same 1s-after-launch `Clock.schedule_once` scan). A third,
+        unrelated transport-layer bug (Auto-detect + Start Server
+        silently kills its thread via an uncaught `SystemExit` when
+        multiple serial devices are attached) was also found but left
+        open as Issue 41 per the one-issue-one-branch convention - not
+        specific to this story. Full suite 812/812 passing; user
+        confirmed both fixes live (auto-populated dropdown, Auto-detect
+        surviving a scan)._
 
 ---
 
