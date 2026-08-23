@@ -1963,6 +1963,36 @@ a protocol bug)
   way - only the *reason chunk 9 got stuck in the first place* is
   corrected here, from "RF loss" to "the server-side USB link was
   faulting."
+- **Targeted live-reproduction attempts for the specific scenario this
+  issue names in its title (2026-08-23/24)**: to directly test whether
+  the client correctly handles a reassembly-timeout NACK arriving
+  *while it is still retrying*, rather than after it has already given
+  up, `REASSEMBLY_TIMEOUT_SECONDS` was temporarily lowered to 20s (well
+  under the client's own worst-case ~120s retry budget) and two full
+  15-chunk sends were run end-to-end with both GUIs live and logs
+  captured (session `7e55f`, then `46dde`). Both completed cleanly
+  through all 15 chunks with no stall, retry, or reassembly timeout on
+  either run - each ended in the expected
+  `BTC_ACK|...|ALL_CHUNKS_RECEIVED` followed by
+  `BTC_NACK|...|Bitcoin RPC not connected` (no Bitcoin Core reachable
+  in this dev environment, an unrelated pre-existing limitation). The
+  stuck-chunk condition this issue and Issue 44 describe is itself
+  intermittent (USB pipe-stall bursts), so it didn't recur to order on
+  either attempt.
+- **Code-level correctness confirmed instead via a targeted unit test**:
+  added `test_nack_arriving_during_a_retry_wait_is_handled_correctly`
+  to `tests/test_client_sender.py` (`TestTransactionSenderErrorHandling`),
+  which forces a real retry (no ACK on attempt 1) before delivering the
+  NACK on attempt 2 - proving `client/sender.py`'s existing
+  `_handle_nack()` (which signals every chunk's response event
+  regardless of which is currently in flight) already handles a NACK
+  arriving mid-retry correctly, with no code change needed. Combined
+  with the two clean live sends above, this is considered sufficient
+  verification for this issue; no further live-reproduction attempts
+  are planned.
+- `REASSEMBLY_TIMEOUT_SECONDS` should be restored from `20` back to its
+  normal value once this `.env` change is no longer needed for other
+  testing (left to the user - `.env` is not directly editable here).
 
 ---
 
