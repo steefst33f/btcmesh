@@ -651,6 +651,40 @@ class TestTransactionSenderAbort(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.error, "Aborted by user")
 
+    def test_abort_stops_a_chunk_stuck_retrying_on_timeout(self):
+        """Regression test for Issue 38: previously, _abort_event was only
+        checked in the ACK-received branch of _send_all_chunks() - pressing
+        Abort while a chunk was stuck waiting for/retrying an ACK that
+        never arrives had no effect until the retry budget ran out on its
+        own (up to max_retries full timeout_seconds cycles later). Given
+        no ACK is ever delivered and abort() is called during the first
+        wait, Then the send stops with "Aborted by user" after (at most)
+        one timeout cycle, not after exhausting all retries."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
+
+        tx_hex = "deadbeef" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result_holder.append(sender.send_transaction(tx_hex, "!dest1234"))
+
+        thread = threading.Thread(target=send_in_thread, daemon=False)
+        thread.start()
+        time.sleep(0.05)  # still inside the first ACK wait
+
+        sender.abort()
+
+        # No handler ever fires an ACK - if the fix didn't work, this would
+        # take ~4 timeout cycles (0.8s+) and fail with a timeout error
+        # instead of stopping after roughly one cycle.
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "Aborted by user")
+
     def test_abort_before_any_send_does_not_raise(self):
         transport = Mock(spec=BaseTransport)
         sender = TransactionSender(transport)

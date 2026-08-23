@@ -392,6 +392,15 @@ class TransactionSender:
                             send_session.error = f"Chunk {chunk_num}: timeout after {self.max_retries} retries"
                             send_session.failed = True
                             return
+                        # Check for abort request before retrying (Issue 38):
+                        # previously only checked in the ACK-received branch
+                        # above, so aborting while a chunk was stuck waiting
+                        # for/retrying an ACK had no effect until the retry
+                        # budget ran out on its own.
+                        if self._abort_event.is_set():
+                            send_session.error = "Aborted by user"
+                            send_session.failed = True
+                            return
 
                 except Exception as e:
                     send_session.error = f"Chunk {chunk_num}: {str(e)}"
