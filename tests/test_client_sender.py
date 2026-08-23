@@ -460,6 +460,52 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("insufficient funds", result.error)
 
+    def test_nack_arriving_during_a_retry_wait_is_handled_correctly(self):
+        """Regression/confirmation test for Issue 40's follow-up question:
+        does the client correctly handle a NACK it wasn't specifically
+        expecting at that point (e.g. a server-side reassembly-timeout
+        NACK) if it arrives while a chunk is already on a *retry*
+        attempt, not just during the very first wait?
+
+        _handle_nack() signals every chunk's response event, regardless
+        of which one is currently in flight - so this should unblock the
+        retry's event.wait() immediately and propagate the NACK's real
+        reason, the same as it does for the first-attempt case already
+        covered by test_nack_message_fails_transaction(). This test
+        forces an actual retry first (no ACK on attempt 1) before
+        sending the NACK on attempt 2, to prove that specifically."""
+        transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
+
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "dead" * 50  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result_holder.append(sender.send_transaction(tx_hex, "!dest1234"))
+
+        thread = threading.Thread(target=send_in_thread, daemon=False)
+        thread.start()
+
+        # Let the first attempt time out on its own (no ACK) - forces a
+        # real retry, so the NACK below arrives during attempt 2, not
+        # attempt 1.
+        time.sleep(0.3)
+        self.assertEqual(transport.send.call_count, 2, "expected a retry to have happened by now")
+
+        first_msg = transport.send.call_args_list[0][0][0]
+        session_id = first_msg.split("|")[1]
+
+        handler(f"BTC_NACK|{session_id}|Reassembly timeout", "!server")
+
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "Reassembly timeout")
+
 
 class TestTransactionSenderMessageFiltering(unittest.TestCase):
     """Tests for message filtering (wrong session, malformed)."""

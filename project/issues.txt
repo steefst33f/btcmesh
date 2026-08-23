@@ -959,6 +959,91 @@ EXPLAINED, no code fix needed
 
 ---
 
+## Server: Seeed (ESP32-S3 native USB) exhibits recurring real USB pipe-stalls, unrelated to Issue 22's sleep/wake cause
+
+**Issue 44: found while investigating Issue 40 - the Seeed's own
+native-USB firmware (not a UART bridge chip) genuinely, repeatedly
+stalls at the USB protocol level, independent of macOS sleep/wake or
+screen lock** 🔍 OPEN (informational/environmental, no code fix)
+
+- Found 2026-08-23 while re-investigating Issue 40 on real hardware
+  (server on Seeed, client on Heltec): user reported the server's
+  watchdog cycling through wedged/recovered/wedged repeatedly right
+  after starting a send, receiving no chunks at all - a more severe
+  failure than Issue 40's original scenario (chunks 1-8 succeeding,
+  only chunk 9 affected). User's own hypothesis: the server itself may
+  have actually wedged, its watchdog catching this too late.
+- **First ruled out Issue 22's mechanism** (macOS system sleep
+  disrupting USB) via the same `pmset -g log` method as that
+  investigation: found a `PreventUserIdleSystemSleep "Powerd - Prevent
+  sleep while display is on"` assertion held continuously throughout
+  the test window with no reset, and zero Sleep/Wake/DarkWake
+  transition entries at all - unlike Issue 22's clear repeated Idle
+  Sleep cycles. The system never actually slept; screen lock alone
+  didn't trigger it this time.
+- **Root-caused instead via `/usr/bin/log show`** (macOS unified
+  system log - note zsh has its own builtin `log` command that shadows
+  `/usr/bin/log`; the full path is required) filtered to the test
+  window and the device name:
+  ```
+  kernel: (IOUSBHostFamily) AppleUSBIORequest::complete: device 5
+  (seeed-xiao-s3@01123000) endpoint 0x00: status 0xe0005000
+  (pipe stalled): 0 bytes transferred
+  kernel: (IOUSBHostFamily) AppleUSBXHCIPipe: IOUSBHostPipe::abortGated:
+  device 5 (seeed-xiao-s3@01123000) endpoint 0x84: aborting 16 requests
+  ```
+  Real, recurring bursts of these (dozens to 75+ events per burst) at
+  22:20:54, 22:22:00, and 22:22:51, tapering to smaller bursts through
+  22:25 - a genuine, repeated USB protocol-level fault (control
+  endpoint 0x00 stalling, forcing the OS to abort pending bulk-endpoint
+  requests too), not a false-positive watchdog reading and not a
+  macOS-power-management artifact.
+- **Also very likely explains Issue 40's original incident, same day**:
+  checked the exact same way against Issue 40's original `14:53:16`
+  reassembly-timeout timestamp - found the identical pattern, including
+  a hard `abortGated` abort on the Seeed's receive endpoint (0x84) at
+  `14:53:12`, 4 seconds before the server's own timeout fired. Issue
+  40's "asymmetric RF loss" framing has been corrected there to point
+  here instead - this single hardware quirk plausibly explains both
+  incidents.
+- **Why this is a different mechanism from Issue 22**: the Seeed
+  (`seeed-xiao-s3`, VID `0x2886`) enumerates as a native-USB CDC device
+  via its ESP32-S3's own USB peripheral (TinyUSB-based firmware stack) -
+  unlike the Heltec/other boards in this project's test fleet, which
+  use a dedicated UART-bridge chip (CP2102/CH340) for USB-serial.
+  Native-USB microcontroller stacks are known to be less mature/robust
+  than dedicated bridge ICs; this looks like a firmware-level bug or
+  timing issue in the Seeed's own USB stack, not anything triggered by
+  the host OS.
+- **This explains the observed symptom precisely**: `DeviceWatchdog`
+  (`core/device_watchdog.py`) was working exactly as designed -
+  correctly detecting each real stall via `check_alive()` and
+  correctly recovering (`_try_reconnect_without_power_cycle()`)
+  each time the device came back - but the stalls recurred faster
+  than a full Meshtastic chunk-relay handshake could reliably complete
+  in the windows between them, so the send never made progress despite
+  the watchdog "working."
+- **Not a bug in this project's code** - `DeviceWatchdog`, the transport
+  layer, and the connect-retry logic all behaved correctly given a
+  device that was genuinely, repeatedly faulting at the USB layer. No
+  application-level fix is implied; matches Issue 22's precedent
+  (environmental/hardware root cause, watchdog recovery working as
+  intended, no code change).
+- **Practical implication**: this is real-world evidence for *why*
+  Story 26.7's relay-board automatic power-cycling exists at all - a
+  device that repeatedly USB-pipe-stalls at the firmware level, rather
+  than cleanly disconnecting, is exactly the kind of fault a full power
+  cut (not just a reconnect attempt) is most likely to actually clear,
+  which this incident didn't get to test (`RELAY_SERIAL_PORT` wasn't
+  configured for this session, and `_try_reconnect_without_power_cycle()`
+  kept "succeeding" often enough that the watchdog's cooldown/backoff
+  never escalated to an actual power-cycle attempt).
+- Not scoped or fixed here - logged as a documented, understood
+  hardware quirk specific to this Seeed board's native-USB
+  implementation, distinct from Issue 22.
+
+---
+
 ## Code Review Findings (2026-08-20)
 
 The following issues (23-35) were found via a full-codebase senior-engineer
@@ -1857,6 +1942,27 @@ a protocol bug)
   it could be).
 - Not scoped or fixed here - left open as a documented, understood
   behavior rather than an active defect.
+- **Correction (2026-08-23, found while re-investigating this issue)**:
+  the "asymmetric RF loss on chunk 9's ACK reply" framing above is very
+  likely **wrong, or at least incomplete**. Checking `/usr/bin/log show`
+  (macOS unified log) for this exact session's timeframe found the
+  Seeed exhibiting the same massive USB pipe-stall pattern documented
+  in Issue 44 - including a hard `IOUSBHostPipe::abortGated` abort on
+  its receive endpoint (0x84) at `14:53:12`, just **4 seconds** before
+  the server's own `14:53:16` reassembly-timeout log line. That's not
+  circumstantial - the server's transport link to its own radio was
+  actively failing at the USB level at essentially the same moment the
+  higher-level protocol gave up. The far more likely explanation:
+  chunk 9's ACK reply (and everything after it) was lost because the
+  **server's own USB connection to the Seeed was faulting**, not
+  because of mesh/RF propagation loss on the reply path as originally
+  assumed. See Issue 44 for the full root-cause investigation
+  (confirmed independently via a fresh reproduction the same day).
+  The rest of this issue's analysis (NACK-on-timeout mechanism working
+  correctly, client disconnecting before it arrives) still holds either
+  way - only the *reason chunk 9 got stuck in the first place* is
+  corrected here, from "RF loss" to "the server-side USB link was
+  faulting."
 
 ---
 
@@ -2089,3 +2195,4 @@ a defect)
 | 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | **FIXED** |
 | 42    | "Automatic device-recovery enabled via relay" logs even when no relay is connected - based on config presence, not actual reachability | Minor (misleading log message) | **FIXED** |
 | 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
+| 44    | Seeed's native-USB firmware exhibits recurring real pipe-stalls, unrelated to Issue 22's sleep/wake cause | Informational (hardware/firmware quirk) | Open |
