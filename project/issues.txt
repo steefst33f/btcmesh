@@ -1494,9 +1494,10 @@ process** 🔍 OPEN
 
 **Issue 37: `scan_meshtastic_devices()` returns multiple OS-level paths for
 one physical device, plus non-Meshtastic candidates, with no way to tell
-them apart until each is individually probed** 🟡 PARTIALLY FIXED -
-duplicate-device half fixed (client GUI); false-positive-candidate half
-still open
+them apart until each is individually probed** ✅ FIXED (2026-08-23) -
+both halves resolved: duplicate-device half (client + server GUI, via
+Story 27.3's shared dedup) and false-positive-candidate half (relay
+board specifically, via protocol-level detection)
 
 - Found during Story 27.2's real-hardware manual verification
   (2026-08-22), which made an existing-but-invisible gap directly
@@ -1599,8 +1600,54 @@ still open
     don't speak the protocol, so no amount of dedup touches them
     (confirmed: they stayed as bare unlabeled paths in the same
     real-hardware test). That half stays open (see the rejected
-    pre-filter attempts above). Also not yet applied to the server GUI's
-    device settings dropdown (Story 27.3, not started).
+    pre-filter attempts above).
+    *Update 2026-08-23: this dedup fix now also applies to the server
+    GUI's device settings dropdown* - Story 27.3 adopted the same shared
+    `gui/gui_common.py` functions (`dedupe_devices_by_node_id()` etc.)
+    the client GUI uses, so both GUIs get this fix identically. The
+    "not yet applied to the server GUI" note above is now stale.
+  - ✅ **False-positive half FIXED (2026-08-23): protocol-level relay-board
+    detection, not an OS-enumeration heuristic.** Both prior attempts
+    (description-string blacklist, `RELAY_SERIAL_PORT`-config exclusion)
+    were rejected because they could hide a genuine Meshtastic device -
+    checked again before starting this fix: the relay board's two
+    aliases both report VID `0x1a86`/PID `0x7523` (WCH CH340, confirmed
+    via `serial.tools.list_ports`), a common, non-unique chip some
+    budget Meshtastic-compatible boards also use, so blacklisting that
+    VID would carry the exact same risk. Instead, since the relay
+    board's own firmware (`hardware/power_relay_firmware/src/power_relay.ino`)
+    speaks a known, project-owned text protocol - any line that isn't a
+    well-formed `CYCLE <channel> <off_seconds>` command gets a plain
+    `"ERR unknown command"` reply, confirmed against the firmware source
+    to have no side effects - a new `probe_is_relay_board()`
+    (`transport/power_control.py`) does a quick (~2s timeout) raw-serial
+    round trip sending a bare `\n` and checking for that exact response.
+    This is a **positive, protocol-level identification**, not a guess:
+    it can only ever match our own relay firmware, never misidentify a
+    real Meshtastic device (verified live against 3 real Meshtastic
+    ports - all correctly returned `False`, each after the full ~2s
+    timeout since they don't speak this protocol at all).
+    `probe_device_identity()` (`core/meshtastic_utils.py`) now calls
+    this first, short-circuiting to `ProbedDevice(None, RELAY_BOARD_NAME)`
+    ("Relay board (not a Meshtastic device)") without ever attempting
+    the slow Meshtastic connect when it matches - verified live: went
+    from a ~30s wasted timeout to ~0.02s. `format_device_display()`
+    extended to show a name alone when there's no node_id (previously
+    always fell back to the bare path in that case).
+    **Follow-up found via real-hardware testing**: the background probe
+    fix alone wasn't enough - `btcmesh_client_gui.py`'s
+    `on_device_selected()` (known-nodes fetch on selection),
+    `on_refresh_nodes()`, and `_connect_with_retry()` (Send), plus
+    `btcmesh_server_gui.py`'s and `btcmesh_server_cli.py`'s
+    `on_start_pressed()`/`run_server()`, all did their own *separate*
+    direct `transport.connect()` calls that bypassed the fast check
+    entirely - selecting/starting against the relay board still hung
+    for the full ~30s in each of those paths even after the scan-time
+    probe fix. Added the same `probe_is_relay_board()` guard to all five
+    call sites. Full suite (827/827) passing; real-hardware verified
+    live in the client GUI dropdown (relay board entries now labeled
+    "Relay board (not a Meshtastic device)" almost instantly instead of
+    sitting unlabeled for ~30s each per port).
 
 ---
 
@@ -1994,7 +2041,7 @@ a defect)
 | 34    | Server orchestration/wiring logic duplicated between CLI and GUI | Minor (maintainability) | **FIXED** |
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
-| 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
+| 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **FIXED** |
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **FIXED** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
