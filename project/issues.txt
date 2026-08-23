@@ -1818,6 +1818,33 @@ surfaced to the caller** 🔍 OPEN (real bug, not a hang)
 
 ---
 
+## Discussion: relay port (.env-only) vs Meshtastic device port (GUI-configurable) asymmetry
+
+**Not a bug or a decided plan - a design question raised (2026-08-23)
+while testing Story 27.3's server GUI dropdown**: the Story 26.7 relay
+board's port (`RELAY_SERIAL_PORT`) is configured only via `.env`, while
+the Meshtastic device's own port is interactively selectable in the GUI
+(scan, dropdown, Auto-detect). Raised as feeling inconsistent - should
+both be `.env`-only, or both GUI-configurable?
+
+- Discussed, not resolved. Leaning toward **keeping the asymmetry as-is**:
+  the Meshtastic device's port genuinely varies session-to-session
+  (devices swapped, USB ports changed, multiple candidates tested), so
+  interactive scan/select earns its UI complexity there. The relay board
+  is an optional, niche add-on (the user's own assessment: "using a
+  relay in between is not going to be a very widely used solution"),
+  typically wired to one fixed port as part of a semi-permanent
+  power-cycling rig - a one-time `.env` entry is a reasonable cost for
+  something this static and rare, and a dedicated scan/dropdown/dedup UI
+  for it doesn't seem worth the surface area for a feature few people
+  will use.
+- Logged here purely so the discussion isn't lost - no action taken, no
+  branch/story scoped. Revisit if relay-board usage turns out to be more
+  common than expected, or if `RELAY_SERIAL_PORT` misconfiguration turns
+  out to be a frequent support/debugging pain point.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
