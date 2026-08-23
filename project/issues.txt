@@ -1692,6 +1692,66 @@ step all block silently with no spinner/progress indicator** 🔍 OPEN
 
 ---
 
+## Client: gives up and disconnects before the server's slower reassembly-timeout NACK can arrive
+
+**Issue 40: client's per-chunk retry budget expires (and the client
+disconnects) well before the server's own reassembly-session timeout
+fires, so the client app never sees the server's authoritative
+`BTC_NACK|...|Reassembly timeout`** 🔍 OPEN (informational/UX gap, not
+a protocol bug)
+
+- Found during real-hardware end-to-end send verification (2026-08-23,
+  server GUI + client GUI both live, Seeed + Heltec pair, see
+  `project/plans/story_27_1.md`). Session `4dcfb`: server received and
+  ACKed chunks 1-9 cleanly; the client's chunk-9 retransmissions
+  (4 attempts total) never got their `BTC_CHUNK_ACK` reply back - the
+  server had already re-ACKed the duplicate each time, but none of
+  those ACK replies made it back over the mesh to the client. The
+  client exhausted its own per-chunk retry budget, reported a timeout,
+  and disconnected its serial transport (per the connect-only-at-Send
+  `finally` block).
+- Confirmed via log evidence (not just inference) that the underlying
+  NACK-on-reassembly-timeout mechanism (Issue 23.3) worked exactly as
+  designed on the server side:
+  ```
+  14:53:16 WARNING [Sender: !7c5b4418, Session: 4dcfb] Reassembly
+  timeout after 120s. Received 9/15 chunks. Discarding.
+  14:53:16 INFO    Identified 1 stale reassembly sessions for cleanup
+  and NACK.
+  [DEBUG] [Sending packet] to: 2086355992 ... payload:
+  "BTC_NACK|4dcfb|Reassembly timeout"
+  ```
+  (120s here is this `.env`'s `REASSEMBLY_TIMEOUT_SECONDS` override,
+  not the 300s default.) The client's own chunk-level timeout (several
+  ACK_TIMEOUT=30s retry cycles on one chunk) is comfortably shorter
+  than the server's whole-session 120s timeout, so the client always
+  gives up and walks away first.
+- **User confirmed via physical evidence, not just logs**: the client's
+  own Meshtastic device (Heltec) audibly beeped and showed the
+  incoming `BTC_NACK` on its onboard display - proving the radio
+  itself received the server's NACK over LoRA on its own firmware,
+  independent of whatever the host app's USB/serial connection state
+  was at that moment. The client *app*, however, had already closed
+  its serial connection by then and so never read or displayed it -
+  the user only ever saw the app's own generic "chunk timeout" failure,
+  not the server's more specific/authoritative explanation.
+- **Not a protocol bug** - each side's timeout is independently correct
+  given its own budget; this is a natural consequence of two
+  independently-timed processes over a lossy link, not a logic error.
+  A fix would mean the client either waiting significantly longer
+  after its own retries are exhausted (eating into airtime/duty-cycle
+  budget for a low-probability payoff - see this project's general
+  lean-conservative stance on LoRA timing budgets) or staying connected
+  passively post-failure just to listen for a NACK that may never come.
+  Neither is obviously worth the complexity for a low-severity UX
+  polish item (the end failure state is correct either way - the send
+  did fail - it's only the displayed *reason* that's less specific than
+  it could be).
+- Not scoped or fixed here - left open as a documented, understood
+  behavior rather than an active defect.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1732,3 +1792,4 @@ step all block silently with no spinner/progress indicator** 🔍 OPEN
 | 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
+| 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
