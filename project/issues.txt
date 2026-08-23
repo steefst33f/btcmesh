@@ -1604,6 +1604,66 @@ still open
 
 ---
 
+## Client: Abort button doesn't interrupt a chunk stuck retrying on timeout
+
+**Issue 38: `TransactionSender.abort()` is only checked after a chunk
+gets ACKed, not while one is timing out and retrying - pressing Abort
+during a stuck retry has no effect until retries are exhausted on
+their own** 🔍 OPEN
+
+- Found during real-hardware verification of the client GUI's
+  connect-only-at-Send revision (2026-08-23, see
+  `project/plans/story_27_1.md`'s "Architecture Revision" section) -
+  not caused by that revision, and not in a file it touched.
+  `client/sender.py` hasn't been modified all session; this is a
+  pre-existing gap independently surfaced by hands-on testing.
+- Pressing Abort while a chunk is actively being retried (no ACK
+  arriving) logs "Abort requested..." but has no real effect - the
+  retry loop keeps going and the send eventually fails with a timeout
+  error ("Chunk N: timeout after N retries") that looks unrelated to
+  the abort that was actually requested, rather than stopping
+  immediately with "Aborted by user".
+- **Root cause**: `client/sender.py`'s `TransactionSender._send_all_chunks()`
+  only checks `self._abort_event.is_set()` inside the branch where
+  `_wait_for_chunk_ack()` returns `True` (an ACK actually arrived):
+  ```python
+  if self._wait_for_chunk_ack(send_session, chunk_num):
+      # ACK received
+      if self._abort_event.is_set():        # <- only checked here
+          send_session.error = "Aborted by user"
+          send_session.failed = True
+          return
+      ...
+      break
+  else:
+      # Timeout, no ACK - retry
+      max_attempts -= 1
+      send_session.increment_retry(chunk_num)
+      if max_attempts == 0:
+          send_session.error = f"Chunk {chunk_num}: timeout after {self.max_retries} retries"
+          send_session.failed = True
+          return
+      # <- no abort check at all in this branch - loops straight back
+  ```
+  The outer `while max_attempts > 0:` loop's only pre-iteration check
+  is `if send_session.failed: return` - `_abort_event` itself is never
+  consulted in the timeout/retry path, so aborting while stuck waiting
+  for (or between retries of) an ACK that never comes is silently
+  ineffective until the retry budget runs out on its own.
+- **Practical effect**: in the common case a user would actually want
+  to abort - a chunk that's genuinely not getting through - Abort
+  doesn't work. It only works in the comparatively rare case where an
+  ACK happens to arrive at the same moment.
+- Proposed fix (not scoped/decided yet): check `self._abort_event.is_set()`
+  right after the `else` (timeout) branch's retry-budget check, mirroring
+  the existing check in the ACK-received branch - same "Aborted by
+  user" outcome, just reachable from both paths instead of one.
+- Per this project's one-issue-one-branch convention, scoped as its own
+  fix rather than folded into the Story 27.x work that was running
+  when this was found.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1642,3 +1702,4 @@ still open
 | 35    | Misc code-quality findings from code review (grouped) | Minor (cleanup) | **FIXED** |
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
 | 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **PARTIAL** (duplicate-device half fixed, client GUI; false-positive half open) |
+| 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
