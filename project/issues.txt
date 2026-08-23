@@ -1607,47 +1607,81 @@ board specifically, via protocol-level detection)
     the client GUI uses, so both GUIs get this fix identically. The
     "not yet applied to the server GUI" note above is now stale.
   - ✅ **False-positive half FIXED (2026-08-23): protocol-level relay-board
-    detection, not an OS-enumeration heuristic.** Both prior attempts
-    (description-string blacklist, `RELAY_SERIAL_PORT`-config exclusion)
-    were rejected because they could hide a genuine Meshtastic device -
-    checked again before starting this fix: the relay board's two
-    aliases both report VID `0x1a86`/PID `0x7523` (WCH CH340, confirmed
-    via `serial.tools.list_ports`), a common, non-unique chip some
-    budget Meshtastic-compatible boards also use, so blacklisting that
-    VID would carry the exact same risk. Instead, since the relay
-    board's own firmware (`hardware/power_relay_firmware/src/power_relay.ino`)
-    speaks a known, project-owned text protocol - any line that isn't a
-    well-formed `CYCLE <channel> <off_seconds>` command gets a plain
-    `"ERR unknown command"` reply, confirmed against the firmware source
-    to have no side effects - a new `probe_is_relay_board()`
-    (`transport/power_control.py`) does a quick (~2s timeout) raw-serial
-    round trip sending a bare `\n` and checking for that exact response.
-    This is a **positive, protocol-level identification**, not a guess:
-    it can only ever match our own relay firmware, never misidentify a
-    real Meshtastic device (verified live against 3 real Meshtastic
-    ports - all correctly returned `False`, each after the full ~2s
-    timeout since they don't speak this protocol at all).
-    `probe_device_identity()` (`core/meshtastic_utils.py`) now calls
-    this first, short-circuiting to `ProbedDevice(None, RELAY_BOARD_NAME)`
-    ("Relay board (not a Meshtastic device)") without ever attempting
-    the slow Meshtastic connect when it matches - verified live: went
-    from a ~30s wasted timeout to ~0.02s. `format_device_display()`
-    extended to show a name alone when there's no node_id (previously
-    always fell back to the bare path in that case).
-    **Follow-up found via real-hardware testing**: the background probe
-    fix alone wasn't enough - `btcmesh_client_gui.py`'s
-    `on_device_selected()` (known-nodes fetch on selection),
-    `on_refresh_nodes()`, and `_connect_with_retry()` (Send), plus
-    `btcmesh_server_gui.py`'s and `btcmesh_server_cli.py`'s
-    `on_start_pressed()`/`run_server()`, all did their own *separate*
-    direct `transport.connect()` calls that bypassed the fast check
-    entirely - selecting/starting against the relay board still hung
-    for the full ~30s in each of those paths even after the scan-time
-    probe fix. Added the same `probe_is_relay_board()` guard to all five
-    call sites. Full suite (827/827) passing; real-hardware verified
-    live in the client GUI dropdown (relay board entries now labeled
-    "Relay board (not a Meshtastic device)" almost instantly instead of
-    sitting unlabeled for ~30s each per port).
+    detection with a real per-board hardware ID, not an OS-enumeration
+    heuristic.** Both prior filter attempts (description-string
+    blacklist, `RELAY_SERIAL_PORT`-config exclusion) were rejected
+    because they could hide a genuine Meshtastic device - checked again
+    before starting this fix: the relay board's two aliases both report
+    VID `0x1a86`/PID `0x7523` (WCH CH340, confirmed via
+    `serial.tools.list_ports`), a common, non-unique chip some budget
+    Meshtastic-compatible boards also use, so blacklisting that VID
+    would carry the exact same risk.
+    - **Design, iterated live with the user across three passes**: v1
+      sent a bare `\n` and checked for the relay firmware's generic
+      `"ERR unknown command"` reply to any unrecognized line - functional,
+      but really just a coincidence-resistant heuristic (a hobbyist
+      "unknown command" style reply isn't inherently unique to this
+      firmware), and gave no way to tell two *different* physical relay
+      boards apart. v2 added a dedicated `ID` command to the firmware
+      (`hardware/power_relay_firmware/src/power_relay.ino`) replying
+      `"BTCMESH-RELAY <chip_id>"` with a real hardware-derived unique ID
+      (`ESP.getEfuseMac()`/`getChipId()`, factory-programmed, stable
+      across reboots, no WiFi peripheral needed) - a positive identity
+      response instead of a repurposed error string, plus backward
+      compatibility for boards not yet reflashed (old firmware's
+      still-generic `"ERR unknown command"` reply to the unrecognized
+      `"ID"` command treated as a confirmed-but-not-unique match). v3
+      (final, per explicit user direction) **dropped the legacy-firmware
+      fallback entirely** - this project has exactly one physical relay
+      board, always reflashed alongside the host-side code that depends
+      on it, so there's no real device the fallback would ever need to
+      cover; simpler to just require the `ID` response.
+    - **Final shape**: `probe_relay_board_id()` (`transport/power_control.py`)
+      sends `"ID\n"` (never anything `CYCLE`-shaped - confirmed safe
+      against the firmware source, no side effects) and returns the
+      chip ID string on a `"BTCMESH-RELAY <id>"` match, else `None`.
+      `probe_device_identity()` (`core/meshtastic_utils.py`) calls this
+      first, short-circuiting to `ProbedDevice(node_id=f"#{id}", name=RELAY_BOARD_NAME)`
+      without ever attempting the slow Meshtastic connect - `#` prefix
+      (vs. Meshtastic's `!`) keeps it visually distinct from a real node
+      ID at a glance. Carrying a *real* node_id means this **piggybacks
+      on the existing `dedupe_devices_by_node_id()` mechanism for free**:
+      one physical board's two OS-level aliases (same chip ID) correctly
+      collapse to one dropdown entry, while two *different* physical
+      relay boards (different chip IDs) correctly stay as separate
+      entries - no new dedup code needed. `format_device_display()`
+      extended to show a name alone when there's no node_id (a
+      defensive fallback for an unconfirmed/no-ID case; no longer
+      normally reachable now that a confirmed match always carries an ID).
+    - **This is a positive, protocol-level identification, not a guess**:
+      it can only be produced by this exact firmware's `ID` command,
+      not a real Meshtastic device (verified live against 3 real
+      Meshtastic ports - all correctly returned `None`) and not any
+      other unrelated serial device by coincidence, unlike the v1
+      generic-error-text approach.
+    - **Not yet re-verified against real hardware with the new firmware
+      as of this writing** - the physical board is still running the
+      pre-`ID`-command firmware, so `probe_relay_board_id()` correctly
+      returns `None` for it right now (confirmed live, no crash/regression -
+      it just falls through to the normal, slower probe path exactly as
+      an unconfirmed candidate always did). Needs the board actually
+      reflashed via Arduino IDE (a manual hardware step) before the fast
+      detection/dedup can be verified end-to-end; the v1 bare-newline
+      behavior (confirmed working live) was superseded before merge, so
+      there's a real gap between "code merged" and "physically verified
+      with final firmware" here - flag if picked up again before that
+      catches up.
+    - **Follow-up found via real-hardware testing (still applies)**: the
+      background scan-time probe fix alone wasn't enough -
+      `btcmesh_client_gui.py`'s `on_device_selected()` (known-nodes
+      fetch on selection), `on_refresh_nodes()`, and `_connect_with_retry()`
+      (Send), plus `btcmesh_server_gui.py`'s and `btcmesh_server_cli.py`'s
+      `on_start_pressed()`/`run_server()`, all did their own *separate*
+      direct `transport.connect()` calls that bypassed the fast check
+      entirely - selecting/starting against the relay board still hung
+      for the full ~30s in each of those paths even after the scan-time
+      probe fix. Added the same `probe_relay_board_id()` guard to all
+      five call sites. Full suite (827/827) passing.
 
 ---
 
