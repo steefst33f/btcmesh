@@ -1006,3 +1006,25 @@ User confirmed both work as intended; also flagged a (pre-existing,
 never-had-one) missing loading/busy indicator during these background
 probes as a nice-to-have for later - logged as Issue 39, not fixed
 here.
+
+### Full end-to-end mesh verification (2026-08-23)
+
+With both GUIs live (client on Heltec `!7c5b4418`, server on Seeed
+`!aee5ab3c`), ran a full 15-chunk send start to finish under the
+connect-only-at-Send model. First attempt (session `4dcfb`) hit
+asymmetric RF loss on chunk 9's ACK reply - client exhausted its retry
+budget and disconnected before the server's own (slower) reassembly
+timeout fired and NACKed; see Issue 40 for the full analysis (confirms
+Issue 23.3's NACK-on-timeout mechanism worked correctly - the gap is
+just that the client isn't listening anymore by the time it arrives).
+Second attempt (session `318db`) completed cleanly: all 15 chunks
+ACKed on first transmission, server confirmed `ALL_CHUNKS_RECEIVED`.
+Broadcast itself NACKed with `Bitcoin RPC not connected` - expected,
+no Bitcoin Core node was running in this environment; out of scope for
+this verification, not investigated further.
+
+**This confirms the connect-only-at-Send architecture revision works
+end-to-end on real hardware** - device selection, brief identity/
+known-nodes probes, and the full connect→send-all-chunks→disconnect
+flow all behave correctly for a complete transaction, not just the
+individual pieces tested earlier in this session.
