@@ -806,6 +806,38 @@ class TestRefreshDeviceSpinnerLabels(unittest.TestCase):
         spinner.unbind.assert_not_called()
         spinner.bind.assert_not_called()
 
+    def test_extra_values_stay_in_dropdown_across_relabel(self):
+        """Given extra_values (e.g. the server GUI's "Auto-detect"
+        sentinel, which isn't in `devices`), Then they're prepended to
+        spinner.values on every rebuild - not silently dropped the moment
+        an identity-probe result lands (2026-08-23 regression, found via
+        real-hardware testing of Story 27.3)."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
+        spinner = unittest.mock.MagicMock()
+        spinner.text = '/dev/ttyUSB0'
+
+        gui_common.refresh_device_spinner_labels(
+            spinner, devices, extra_values=['Auto-detect']
+        )
+
+        self.assertEqual(spinner.values, ['Auto-detect', '/dev/ttyUSB0 (!11111111)'])
+
+    def test_extra_values_defaults_to_empty_and_leaves_client_behavior_unchanged(self):
+        """Given extra_values is omitted (the client GUI's case - no
+        sentinel values), Then spinner.values contains only formatted
+        devices, exactly as before this parameter was added."""
+        from gui import gui_common
+
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': '!11111111', 'name': None}]
+        spinner = unittest.mock.MagicMock()
+        spinner.text = '/dev/ttyUSB0'
+
+        gui_common.refresh_device_spinner_labels(spinner, devices)
+
+        self.assertEqual(spinner.values, ['/dev/ttyUSB0 (!11111111)'])
+
 
 if __name__ == '__main__':
     unittest.main()

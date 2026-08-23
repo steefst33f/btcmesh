@@ -57,11 +57,16 @@ from gui.gui_common import (
     create_refresh_button,
     create_popup_button,
     create_popup_inline_button,
+    # Device selection (Story 27.3)
+    probe_devices_in_background,
+    dedupe_devices_by_node_id,
+    device_path_from_display,
+    refresh_device_spinner_labels,
 )
 
 from core.config_loader import load_app_config
 from core.device_watchdog import build_device_watchdog
-from core.meshtastic_utils import get_own_node_name
+from core.meshtastic_utils import get_own_node_name, format_device_display
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from transport.meshtastic_serial import MeshtasticSerialTransport
@@ -108,6 +113,10 @@ class BTCMeshServerGUI(BoxLayout):
         self._stop_event = threading.Event()
         self._server_thread = None
 
+        # Device selection state (Story 27.3) - [{'path', 'node_id', 'name'}, ...],
+        # rebuilt on every scan
+        self.devices = []
+
         # Thread-safe result queue for communication
         self.result_queue = queue.Queue()
 
@@ -121,6 +130,13 @@ class BTCMeshServerGUI(BoxLayout):
 
         # Start polling for results from background threads
         Clock.schedule_interval(self._process_results, 0.1)
+
+        # Auto-scan for devices shortly after launch, matching the client
+        # GUI's behavior (Story 27.3 follow-up, 2026-08-23) - the dropdown
+        # used to start with just "Auto-detect" until Scan was clicked
+        # manually, which felt inconsistent once both GUIs shared the same
+        # device-selection model.
+        Clock.schedule_once(lambda dt: self._on_scan_devices(None), 1)
 
     def _update_rect(self, *args):
         """Update background rectangle on resize."""
@@ -629,8 +645,10 @@ class BTCMeshServerGUI(BoxLayout):
             'REASSEMBLY_TIMEOUT_SECONDS': self.timeout_input.text.strip(),
         }
 
-        # Handle Meshtastic device - only save if not Auto-detect
-        selected_device = self.device_spinner.text
+        # Handle Meshtastic device - only save if not Auto-detect. Resolve
+        # through device_path_from_display() first since the spinner may be
+        # showing a "Name (!nodeid)" label rather than a raw path (Story 27.3).
+        selected_device = device_path_from_display(self.devices, self.device_spinner.text)
         if selected_device and selected_device not in (DEVICE_AUTO_DETECT, DEVICE_SCANNING, DEVICE_NO_DEVICES):
             settings['MESHTASTIC_SERIAL_PORT'] = selected_device
         else:
@@ -743,8 +761,10 @@ class BTCMeshServerGUI(BoxLayout):
         self._set_meshtastic_settings_enabled(False)
         self._set_timeout_settings_enabled(False)
 
-        # Get selected device (None for auto-detect)
-        selected_device = self.device_spinner.text
+        # Get selected device (None for auto-detect). Resolve through
+        # device_path_from_display() first since the spinner may be showing
+        # a "Name (!nodeid)" label rather than a raw path (Story 27.3).
+        selected_device = device_path_from_display(self.devices, self.device_spinner.text)
         serial_port = None if selected_device == DEVICE_AUTO_DETECT else selected_device
 
         # Reset stop event
@@ -928,23 +948,55 @@ class BTCMeshServerGUI(BoxLayout):
             devices = data
             self.scan_btn.disabled = False
             if devices:
+                self.devices = [{'path': p, 'node_id': None, 'name': None} for p in devices]
                 # Add Auto-detect as first option, then found devices
-                self.device_spinner.values = [DEVICE_AUTO_DETECT] + devices
+                self.device_spinner.values = [DEVICE_AUTO_DETECT] + [
+                    format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
+                ]
                 if len(devices) == 1:
                     # Exactly one real device found - auto-select it so the
                     # operator doesn't have to open the dropdown manually.
+                    # Still a raw path at this point (nothing probed yet).
                     self.device_spinner.text = devices[0]
                     self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
-                    # Multiple devices - keep current selection or show first
+                    # Multiple devices - keep current selection or show first.
+                    # No count stated (unlike the single-device case above) -
+                    # the raw scan count can still drop once probing resolves
+                    # identities and dedup collapses aliases of the same
+                    # physical device (Issue 37); "device(s)" stays accurate
+                    # either way, and the dropdown is the real source of
+                    # truth for "how many."
                     if self.device_spinner.text == DEVICE_SCANNING:
                         self.device_spinner.text = DEVICE_AUTO_DETECT
-                    self.status_log.add_message(
-                        f"Found {len(devices)} devices", COLOR_SUCCESS)
+                    self.status_log.add_message("Found device(s)", COLOR_SUCCESS)
+                # Always probe every found device's identity, including the
+                # single-device case - unlike the client GUI, the server
+                # never auto-connects on selection, so this background probe
+                # is the only way it ever learns a device's identity (see
+                # project/plans/story_27_1.md's Story 27.3 notes).
+                probe_devices_in_background(self.devices, self.result_queue)
             else:
+                self.devices = []
                 self.device_spinner.values = [DEVICE_AUTO_DETECT]
                 self.device_spinner.text = DEVICE_AUTO_DETECT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
+
+        elif result_type == 'device_identity':
+            # Background identity-probe result for one device (Story 27.3,
+            # mirroring the client GUI's Story 27.2/Issue 37 handling). No
+            # selection_handler to protect here - the server's device
+            # spinner has no bound selection handler at all.
+            path, node_id, name = result[1], result[2], result[3]
+            for device in self.devices:
+                if device['path'] == path:
+                    device['node_id'], device['name'] = node_id, name
+                    break
+            if node_id:
+                self.devices, _removed = dedupe_devices_by_node_id(self.devices, keep_path=path)
+            refresh_device_spinner_labels(
+                self.device_spinner, self.devices, extra_values=[DEVICE_AUTO_DETECT]
+            )
 
         elif result_type == 'active_sessions':
             # Update the active sessions display

@@ -607,19 +607,25 @@ def device_path_from_display(devices: List[dict], text: str) -> str:
     return text
 
 
-def refresh_device_spinner_labels(spinner, devices: List[dict], selection_handler=None) -> None:
+def refresh_device_spinner_labels(spinner, devices: List[dict], selection_handler=None,
+                                   extra_values=()) -> None:
     """Rebuild spinner.values from devices as identities resolve,
     preserving the currently selected device across the relabel.
     Unbinds/rebinds selection_handler around the mutation if given, so
     relabeling never fires a spurious selection event - Kivy Spinner fires
     its bound text handler on any value change, including a relabel-only
     one. Omit selection_handler for a spinner with no bound handler to
-    protect (e.g. the server GUI's, which has none at all)."""
+    protect (e.g. the server GUI's, which has none at all).
+
+    extra_values are sentinel entries (e.g. "Auto-detect") that aren't in
+    `devices` but must stay in the dropdown regardless - without this, the
+    first identity-probe result to land would silently wipe them out, since
+    spinner.values is otherwise rebuilt purely from `devices`."""
     selected_path = device_path_from_display(devices, spinner.text)
 
     if selection_handler is not None:
         spinner.unbind(text=selection_handler)
-    spinner.values = [
+    spinner.values = list(extra_values) + [
         format_device_display(d['path'], d['node_id'], d['name']) for d in devices
     ]
     for device in devices:
