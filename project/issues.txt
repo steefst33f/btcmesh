@@ -1659,18 +1659,18 @@ board specifically, via protocol-level detection)
       Meshtastic ports - all correctly returned `None`) and not any
       other unrelated serial device by coincidence, unlike the v1
       generic-error-text approach.
-    - **Not yet re-verified against real hardware with the new firmware
-      as of this writing** - the physical board is still running the
-      pre-`ID`-command firmware, so `probe_relay_board_id()` correctly
-      returns `None` for it right now (confirmed live, no crash/regression -
-      it just falls through to the normal, slower probe path exactly as
-      an unconfirmed candidate always did). Needs the board actually
-      reflashed via Arduino IDE (a manual hardware step) before the fast
-      detection/dedup can be verified end-to-end; the v1 bare-newline
-      behavior (confirmed working live) was superseded before merge, so
-      there's a real gap between "code merged" and "physically verified
-      with final firmware" here - flag if picked up again before that
-      catches up.
+    - **Verified end-to-end against the reflashed board (2026-08-23)**:
+      user flashed the updated firmware via PlatformIO (VS Code, not
+      Arduino IDE - `hardware/power_relay_firmware/platformio.ini`,
+      `nodemcuv2`/ESP8266 env). Both OS-level aliases now return the
+      identical chip ID (`000E55D8`), confirmed live at every layer -
+      `probe_relay_board_id()` directly, `probe_device_identity()`'s
+      `node_id='#000E55D8'`, `format_device_display()`'s
+      `"Relay board (not a Meshtastic device) (#000E55D8)"`, and
+      `dedupe_devices_by_node_id()` correctly collapsing the two entries
+      to one. Live in the client GUI dropdown: exactly one relay-board
+      entry plus the two real Meshtastic devices - no duplicates,
+      matching physical device count exactly.
     - **Follow-up found via real-hardware testing (still applies)**: the
       background scan-time probe fix alone wasn't enough -
       `btcmesh_client_gui.py`'s `on_device_selected()` (known-nodes
