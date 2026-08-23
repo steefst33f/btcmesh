@@ -539,7 +539,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         transports = [failing_transport, succeeding_transport]
 
         with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', side_effect=transports), \
-             unittest.mock.patch('btcmesh_client_gui.probe_is_relay_board', return_value=False), \
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None), \
              unittest.mock.patch('btcmesh_client_gui.time.sleep'):
             result = btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyFake')
 
@@ -564,7 +564,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         )
 
         with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
-             unittest.mock.patch('btcmesh_client_gui.probe_is_relay_board', return_value=False), \
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None), \
              unittest.mock.patch('btcmesh_client_gui.time.sleep'):
             with self.assertRaises(TransportConnectionError):
                 btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyFake')
@@ -584,7 +584,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
         gui.result_queue = queue.Queue()
 
         with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
-             unittest.mock.patch('btcmesh_client_gui.probe_is_relay_board', return_value=True) as mock_probe_relay:
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value='246F28AECB34') as mock_probe_relay:
             with self.assertRaises(TransportConnectionError) as ctx:
                 btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyRelay')
 
@@ -1158,7 +1158,7 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
                  'btcmesh_client_gui.get_known_nodes', return_value=mock_nodes
              ) as mock_get_nodes:
@@ -1193,7 +1193,7 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes') as mock_get_nodes:
             btcmesh_client_gui.BTCMeshGUI.on_refresh_nodes(gui, None)
 
@@ -1222,7 +1222,7 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
              unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=True
+                 'btcmesh_client_gui.probe_relay_board_id', return_value='246F28AECB34'
              ) as mock_probe_relay, \
              unittest.mock.patch('btcmesh_client_gui.get_known_nodes') as mock_get_nodes:
             btcmesh_client_gui.BTCMeshGUI.on_refresh_nodes(gui, None)
@@ -1324,7 +1324,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
                  'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
              ), unittest.mock.patch(
@@ -1357,7 +1357,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
                  'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
              ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes', return_value=[]):
@@ -1385,7 +1385,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ):
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
 
@@ -1416,7 +1416,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
              unittest.mock.patch(
                  'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
              ), unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=False
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ):
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
 
@@ -1445,7 +1445,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
             'btcmesh_client_gui.threading.Thread',
             side_effect=lambda target, daemon: call_order.append(('thread_started',)) or self._ImmediateThread(target, daemon),
         ), unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport'), \
-             unittest.mock.patch('btcmesh_client_gui.probe_is_relay_board', return_value=False):
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None):
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
 
         gui._update_known_nodes.assert_any_call([])
@@ -1466,7 +1466,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
              unittest.mock.patch(
-                 'btcmesh_client_gui.probe_is_relay_board', return_value=True
+                 'btcmesh_client_gui.probe_relay_board_id', return_value='246F28AECB34'
              ) as mock_probe_relay:
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(
                 gui, None, 'Relay board (not a Meshtastic device)'

@@ -8,6 +8,7 @@ import sys
 import unittest
 import unittest.mock
 
+
 # Mock Kivy modules before importing btcmesh_server_gui
 # This is necessary because Python loads the entire module (including Kivy imports)
 # before extracting the specific functions we want to test.
@@ -1419,7 +1420,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1452,7 +1453,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1484,7 +1485,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
-                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_is_relay_board', return_value=False), \
+                     unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
                     gui = btcmesh_server_gui.BTCMeshServerGUI()
@@ -1518,7 +1519,8 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
                 with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
                      unittest.mock.patch.object(
-                         btcmesh_server_gui, 'probe_is_relay_board', return_value=True
+                         btcmesh_server_gui, 'probe_relay_board_id',
+                         return_value='246F28AECB34',
                      ) as mock_probe_relay, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):

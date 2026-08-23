@@ -114,12 +114,18 @@ def probe_device_identity(path: str) -> ProbedDevice:
     scan_meshtastic_devices()'s VID-blacklist filtering.
 
     First does a quick check for whether the candidate is specifically
-    the Story 26.7 relay board (probe_is_relay_board(), Issue 37's
-    false-positive-half fix) - if so, returns immediately with
-    ProbedDevice(None, RELAY_BOARD_NAME) instead of attempting the full
-    Meshtastic connect at all, which could never succeed against it
-    anyway (a completely different protocol) and previously cost a full
-    ~30s connection timeout for nothing.
+    the Story 26.7 relay board (probe_relay_board_id(), Issue 37's
+    false-positive-half fix) - if so, returns immediately instead of
+    attempting the full Meshtastic connect at all, which could never
+    succeed against it anyway (a completely different protocol) and
+    previously cost a full ~30s connection timeout for nothing. The
+    relay firmware's real hardware-derived unique ID is carried as
+    node_id (prefixed `#` rather than Meshtastic's `!`, so it's never
+    confused with a real node ID at a glance) - this piggybacks on the
+    exact same dedupe_devices_by_node_id() mechanism already built for
+    Meshtastic devices, correctly collapsing one physical relay board's
+    two OS-level aliases while still keeping two *different* physical
+    relay boards as separate entries (their chip IDs differ).
 
     Deliberately single-attempt on the Meshtastic connect itself, no
     retry: a real-hardware test during Story 27.2's manual verification
@@ -130,16 +136,17 @@ def probe_device_identity(path: str) -> ProbedDevice:
     once turned a failure into a success. See Issue 37 in
     project/issues.txt.
 
-    Lazy-imports MeshtasticSerialTransport/probe_is_relay_board (matching
+    Lazy-imports MeshtasticSerialTransport/probe_relay_board_id (matching
     this module's existing dependency style) to avoid a hard import-time
     dependency from core/ on transport/.
     """
     from transport.meshtastic_serial import MeshtasticSerialTransport
     from transport.base import TransportConnectionError
-    from transport.power_control import probe_is_relay_board
+    from transport.power_control import probe_relay_board_id
 
-    if probe_is_relay_board(path):
-        return ProbedDevice(node_id=None, name=RELAY_BOARD_NAME)
+    relay_id = probe_relay_board_id(path)
+    if relay_id:
+        return ProbedDevice(node_id=f"#{relay_id}", name=RELAY_BOARD_NAME)
 
     transport = MeshtasticSerialTransport()
     try:

@@ -17,6 +17,19 @@
  *   board -> host:  OK\n                               on success
  *                   ERR <reason>\n                      on bad input
  *
+ *   host -> board:  ID\n
+ *   board -> host:  BTCMESH-RELAY <chip_id>\n           <chip_id> is a
+ *                                                        hardware-derived
+ *                                                        ID, stable across
+ *                                                        reboots, unique
+ *                                                        per physical board
+ *
+ * The ID command (Issue 37 follow-up, project/issues.txt) lets the host
+ * positively identify this specific board - not just "a relay board of
+ * some kind" - via a proper identity response instead of repurposing the
+ * generic unknown-command error text. See transport/power_control.py's
+ * probe_relay_board_id() for the host side.
+ *
  * See transport/power_control.py's SerialRelayPowerControl for the host
  * side, and project/plans/story_26_7.md for the full design.
  */
@@ -72,8 +85,33 @@ int pinForChannel(int channel) {
   return -1;
 }
 
+// Hardware-derived, factory-programmed per-chip ID - stable across
+// reboots/re-flashes, genuinely unique per physical board, and needs no
+// WiFi peripheral initialization (ESP.getEfuseMac()/getChipId() read
+// eFuse/OTP storage directly), keeping this firmware's "plain Arduino
+// core APIs only" footprint intact.
+String getBoardId() {
+#if defined(ARDUINO_ARCH_ESP32)
+  uint64_t chipid = ESP.getEfuseMac();
+  char buf[13];
+  snprintf(buf, sizeof(buf), "%04X%08X",
+           (uint16_t)(chipid >> 32), (uint32_t)chipid);
+  return String(buf);
+#elif defined(ARDUINO_ARCH_ESP8266)
+  char buf[9];
+  snprintf(buf, sizeof(buf), "%08X", ESP.getChipId());
+  return String(buf);
+#endif
+}
+
 void handleLine(String line) {
   line.trim();
+
+  if (line == "ID") {
+    Serial.print("BTCMESH-RELAY ");
+    Serial.println(getBoardId());
+    return;
+  }
 
   int firstSpace = line.indexOf(' ');
   if (firstSpace == -1 || line.substring(0, firstSpace) != "CYCLE") {

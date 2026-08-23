@@ -201,7 +201,7 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
         ), unittest.mock.patch(
-            'transport.power_control.probe_is_relay_board', return_value=False
+            'transport.power_control.probe_relay_board_id', return_value=None
         ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
         ) as mock_get_name:
@@ -224,7 +224,7 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
         ), unittest.mock.patch(
-            'transport.power_control.probe_is_relay_board', return_value=False
+            'transport.power_control.probe_relay_board_id', return_value=None
         ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value=None
         ):
@@ -248,7 +248,7 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
         ), unittest.mock.patch(
-            'transport.power_control.probe_is_relay_board', return_value=False
+            'transport.power_control.probe_relay_board_id', return_value=None
         ):
             from core.meshtastic_utils import probe_device_identity
             result = probe_device_identity('/dev/cu.usbserial-relay')
@@ -258,12 +258,15 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         mock_transport.disconnect.assert_called_once()
 
     def test_returns_relay_board_identity_without_attempting_meshtastic_connect(self):
-        """Issue 37 (false-positive half): given the candidate is
-        confirmed to be the Story 26.7 relay board (probe_is_relay_board()
-        returns True), Then probe_device_identity() returns immediately
-        with the relay-board marker, WITHOUT ever attempting the slow
-        Meshtastic connect - which could never succeed against it anyway,
-        and previously cost a full ~30s timeout for nothing."""
+        """Issue 37 follow-up: given the candidate is confirmed to be the
+        Story 26.7 relay board (its firmware reports a real
+        hardware-derived unique ID), Then probe_device_identity() returns
+        immediately with node_id set to that ID (prefixed '#', never
+        confused with a real Meshtastic '!' node ID) - WITHOUT ever
+        attempting the slow Meshtastic connect. Carrying a real node_id
+        lets this piggyback on the existing dedupe_devices_by_node_id()
+        mechanism, correctly collapsing one board's two OS-level aliases
+        while keeping two *different* physical relay boards distinct."""
         from core.meshtastic_utils import RELAY_BOARD_NAME
 
         mock_transport = unittest.mock.MagicMock()
@@ -272,13 +275,13 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.meshtastic_serial.MeshtasticSerialTransport',
             return_value=mock_transport,
         ), unittest.mock.patch(
-            'transport.power_control.probe_is_relay_board', return_value=True
+            'transport.power_control.probe_relay_board_id', return_value='246F28AECB34'
         ) as mock_probe_relay:
             from core.meshtastic_utils import probe_device_identity
             result = probe_device_identity('/dev/cu.usbserial-112440')
 
         mock_probe_relay.assert_called_once_with('/dev/cu.usbserial-112440')
-        self.assertIsNone(result.node_id)
+        self.assertEqual(result.node_id, '#246F28AECB34')
         self.assertEqual(result.name, RELAY_BOARD_NAME)
         mock_transport.connect.assert_not_called()
 

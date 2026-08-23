@@ -71,7 +71,7 @@ from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
-from transport.power_control import probe_is_relay_board
+from transport.power_control import probe_relay_board_id
 from server.run_loop import build_receiver, run_polling_loop
 
 
@@ -773,7 +773,7 @@ class BTCMeshServerGUI(BoxLayout):
 
         # Start server in background thread
         def run_server():
-            if serial_port and probe_is_relay_board(serial_port):
+            if serial_port and probe_relay_board_id(serial_port):
                 self.result_queue.put((
                     'meshtastic_failed',
                     "This is the relay board's control port, not a "

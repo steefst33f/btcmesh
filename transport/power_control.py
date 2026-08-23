@@ -133,32 +133,35 @@ class SerialRelayPowerControl(BasePowerControl):
             raise PowerControlError(f"Relay board error: {response}")
 
 
-def probe_is_relay_board(port: str, baudrate: int = 115200, timeout: float = 2.0) -> bool:
+def probe_relay_board_id(port: str, baudrate: int = 115200, timeout: float = 2.0) -> Optional[str]:
     """Quick, non-destructive check for whether `port` is a Story 26.7
     relay board - not a full connect, just a short raw-serial round trip
-    that exploits the relay firmware's own command grammar (see
-    hardware/power_relay_firmware/src/power_relay.ino): any line that
-    isn't a well-formed "CYCLE <channel> <off_seconds>" command gets a
-    plain "ERR unknown command" reply, with no side effects (confirmed
-    against the firmware source - an empty/unrecognized line never
-    reaches the relay-toggling code path at all).
+    against the relay firmware's own command grammar (see
+    hardware/power_relay_firmware/src/power_relay.ino).
 
-    This gives a confident, protocol-level positive identification of
-    our own hardware - unlike VID/description-based heuristics (Issue
-    37 in project/issues.txt), which can't distinguish this board's
-    generic WCH CH340 USB-serial chip from any other CH340-based device
-    a user might have plugged in for an unrelated purpose.
+    Sends "ID\\n" and checks for "BTCMESH-RELAY <chip_id>" - a real
+    identity response the firmware sends deliberately, giving a
+    positively unique per-board ID (a hardware-derived chip ID, stable
+    across reboots) rather than just a coincidence-resistant guess.
+    Unlike VID/description-based heuristics (Issue 37 in
+    project/issues.txt), which can't even distinguish this board's
+    generic WCH CH340 USB-serial chip from any other CH340-based device,
+    this can't be produced by anything other than this exact firmware.
 
-    Returns False (never raises) on any failure to open/read, or on any
-    response that doesn't match - the safe default when this can't be
-    confirmed one way or the other is to treat the candidate as an
-    unknown, ordinary probe target exactly as before this function
-    existed, never to assume it's safe to skip.
+    Returns the board's unique ID string if confirmed, or None (never
+    raises) on any failure to open/read, or on any response that doesn't
+    match - the safe default when this can't be confirmed is to treat
+    the candidate as an unknown, ordinary probe target, never to assume
+    it's safe to skip.
     """
     try:
         with serial.Serial(port, baudrate, timeout=timeout) as ser:
-            ser.write(b"\n")
+            ser.write(b"ID\n")
             response = ser.readline().decode("ascii", errors="replace").strip()
     except (serial.SerialException, OSError):
-        return False
-    return response == "ERR unknown command"
+        return None
+
+    prefix = "BTCMESH-RELAY "
+    if response.startswith(prefix):
+        return response[len(prefix):] or None
+    return None

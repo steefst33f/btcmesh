@@ -72,7 +72,7 @@ from core.meshtastic_utils import (
 # Import transport layer
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
-from transport.power_control import probe_is_relay_board
+from transport.power_control import probe_relay_board_id
 
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
@@ -84,9 +84,9 @@ SCANNING_TEXT = "Scanning..."
 SELECT_DEVICE_TEXT = "Select a device to connect..."
 
 # Issue 37: shown wherever a candidate is confirmed to be the Story 26.7
-# relay board (probe_is_relay_board()) rather than attempting a Meshtastic
-# connect that could never succeed against it - and would otherwise cost a
-# full ~30s connection timeout for nothing.
+# relay board (probe_relay_board_id()) rather than attempting a
+# Meshtastic connect that could never succeed against it - and would
+# otherwise cost a full ~30s connection timeout for nothing.
 RELAY_BOARD_SELECTED_MESSAGE = (
     "This is the relay board's control port, not a Meshtastic device - "
     "select a different device."
@@ -533,7 +533,7 @@ class BTCMeshGUI(BoxLayout):
         Returns the connected MeshtasticSerialTransport.
         Raises TransportConnectionError on final failure.
         """
-        if port and probe_is_relay_board(port):
+        if port and probe_relay_board_id(port):
             raise TransportConnectionError(RELAY_BOARD_SELECTED_MESSAGE)
 
         self.result_queue.put((
@@ -603,7 +603,7 @@ class BTCMeshGUI(BoxLayout):
         self.status_log.add_message("Fetching device info and known nodes...")
 
         def fetch_thread():
-            if probe_is_relay_board(path):
+            if probe_relay_board_id(path):
                 self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
                 return
             try:
@@ -650,7 +650,7 @@ class BTCMeshGUI(BoxLayout):
         self.status_log.add_message("Fetching known nodes...")
 
         def fetch_thread():
-            if probe_is_relay_board(port):
+            if probe_relay_board_id(port):
                 self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
                 return
             try:

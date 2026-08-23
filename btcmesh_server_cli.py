@@ -21,7 +21,7 @@ from core.transaction_history import TransactionHistory
 from server.run_loop import build_receiver, run_polling_loop
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
-from transport.power_control import probe_is_relay_board
+from transport.power_control import probe_relay_board_id
 
 
 def _log(message: str, level: int, highlight: bool = False) -> None:
@@ -51,7 +51,7 @@ def run_server(port=None) -> int:
     load_app_config()
 
     resolved_port = port or get_meshtastic_serial_port()
-    if resolved_port and probe_is_relay_board(resolved_port):
+    if resolved_port and probe_relay_board_id(resolved_port):
         server_logger.error(
             f"{resolved_port} is the relay board's control port, not a "
             "Meshtastic device - select a different device."
