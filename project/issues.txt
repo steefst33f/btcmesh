@@ -1752,6 +1752,72 @@ a protocol bug)
 
 ---
 
+## Transport: Auto-detect silently kills the connecting thread when multiple serial candidates exist
+
+**Issue 41: `MeshtasticSerialTransport.connect(None)` (Auto-detect) raises
+`SystemExit` from inside the meshtastic library when more than one serial
+port candidate is present - uncaught by our `except Exception`, it
+silently kills whatever thread called `connect()`, with no error ever
+surfaced to the caller** 🔍 OPEN (real bug, not a hang)
+
+- Found live during real-hardware testing of Story 27.3's server GUI
+  device dropdown (2026-08-23): selected "Auto-detect" from the
+  dropdown, clicked Start Server, and the GUI sat on "Starting
+  server..." indefinitely (2+ minutes, would never resolve) with the
+  Start/Save/device controls stuck disabled. Looked like a hang; it
+  wasn't - the background thread had already died almost instantly.
+  `lsof` on the live process confirmed no serial file descriptor was
+  ever opened, and `sample`'s thread listing showed nothing blocked in
+  serial I/O - the thread was simply gone.
+- **Root cause**, traced through the actual installed meshtastic
+  library source (`meshtastic.serial_interface.SerialInterface.__init__`,
+  `meshtastic.util.findPorts`/`our_exit`):
+  ```python
+  # meshtastic.serial_interface.SerialInterface.__init__, devPath=None:
+  ports = meshtastic.util.findPorts(True)
+  ...
+  elif len(ports) > 1:
+      message = "Warning: Multiple serial ports were detected so one "
+                 "serial port must be specified with the '--port'.\n" ...
+      meshtastic.util.our_exit(message)   # -> print(message); sys.exit(1)
+  ```
+  `sys.exit()` raises `SystemExit`, a `BaseException` subclass - NOT
+  caught by `transport/meshtastic_serial.py`'s `connect()`, which only
+  wraps the `SerialInterface(...)` constructor call in
+  `except Exception as exc:`. `SystemExit` propagates straight past
+  that handler, up through `btcmesh_server_gui.py`'s `run_server()`
+  (whose own `except TransportConnectionError:` around the `connect()`
+  call doesn't match it either), and terminates the background thread
+  immediately - before it can ever push anything onto `result_queue`.
+  With nothing ever arriving, the GUI has no way to know the attempt
+  failed and stays showing "Starting server..." forever.
+- **Reproduces whenever more than one serial candidate is attached** -
+  not a rare edge case for this project's own real-hardware setup
+  (Seeed + Heltec + Story 26.7 relay board routinely means 3+
+  candidates), and Auto-detect is the spinner's *default* selection
+  before any scan/explicit choice, so this is easy to hit by accident.
+- **Not specific to the GUI or to Story 27.3** - any caller of
+  `MeshtasticSerialTransport.connect(None)` with multiple candidates
+  present hits this, including `btcmesh_server_cli.py`/
+  `btcmesh_client_cli.py` if invoked without `-p`/`.env`'s
+  `MESHTASTIC_SERIAL_PORT` set. Found via the server GUI simply because
+  that's what was being tested at the time.
+- **Not fixed here** - per this project's one-issue-one-branch
+  convention (matches how Issue 38 was handled: log and keep testing).
+  Proposed fix (not scoped yet): broaden `connect()`'s except clause in
+  `transport/meshtastic_serial.py` to also catch `SystemExit` from the
+  `SerialInterface(...)` constructor call specifically, converting it to
+  a clear `TransportConnectionError` (e.g. "Multiple Meshtastic devices
+  detected - please select one instead of Auto-detect") so it surfaces
+  as a normal, catchable connection failure instead of silently killing
+  the calling thread.
+- **Immediate workaround**: select a specific device from the dropdown
+  instead of Auto-detect - that path calls
+  `SerialInterface(devPath=..., ...)` directly and never reaches this
+  codepath at all.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -1793,3 +1859,4 @@ a protocol bug)
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **Open** |
 | 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
+| 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | Open |
