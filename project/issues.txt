@@ -2302,8 +2302,7 @@ to disconnect at the same instant - both hit the identical
 call inherits the meshtastic library's default 300-second reply
 timeout, not the ~20s the method's own docstring documents - so a
 single liveness check against a genuinely dead device can legitimately
-block `DeviceWatchdog.tick()` for up to 5 minutes** 🔍 OPEN (confirmed
-root cause, not yet fixed)
+block `DeviceWatchdog.tick()` for up to 5 minutes** ✅ FIXED (2026-08-24)
 
 - Found 2026-08-24 while investigating why a server GUI screenshot
   showed no "Device appears wedged"/"Device recovered" messages in the
@@ -2349,17 +2348,25 @@ root cause, not yet fixed)
     screenshot simply caught a moment where `check_alive()` was still
     inside this same up-to-300s wait - the messages weren't lost, they
     just hadn't been generated yet.
-- **Not fixed here yet** - the straightforward fix would be either
-  passing an explicit short `timeout=` when constructing the
-  `SerialInterface` in `connect()` (affects the whole interface's
-  reply-wait behavior generally, not just `check_alive()`), or having
-  `check_alive()` use its own short-lived `Timeout`/thread-guarded call
-  the way `transport.send()` already does for Issue 21 - matching the
-  method's own documented ~20s intent without changing behavior
-  elsewhere. Left as an open, well-understood fix rather than applied
-  immediately, pending a decision on which approach to take.
+- **Fixed** (PR #56, merged same day): `check_alive()` now builds its
+  own short-lived `meshtastic.mesh_interface.Timeout(maxSecs=_CHECK_ALIVE_TIMEOUT_SECONDS)`
+  (20.0s) and calls its `waitForAckNak()` directly against
+  `self._iface._acknowledgment`, instead of delegating to
+  `self._iface.waitForAckNak()` (which uses the interface's own
+  300s-configured `Timeout`). Scoped to just this one probe - the
+  interface's other reply-wait behavior (chunk-ack waits, config
+  handshake, etc.) is untouched. New test
+  `test_uses_its_own_short_timeout_not_the_interfaces_default` asserts
+  the explicit `maxSecs` and that the interface's own `waitForAckNak()`
+  is never called; 829/829 tests pass. A session-aware variant (short
+  timeout only while a session is active, more lenient while idle, to
+  avoid extra log noise during a prolonged genuine outage - the user's
+  own suggestion) is intentionally left for a separate follow-up story
+  rather than folded into this fix.
 - The temporary `_diag()` diagnostic prints added to
-  `core/device_watchdog.py` for this investigation should be removed
+  `core/device_watchdog.py` for this investigation were removed before
+  the fix was committed - only the actual fix (in
+  `transport/meshtastic_serial.py`) shipped.
   once no longer needed for verification.
 
 ---
@@ -2410,4 +2417,4 @@ root cause, not yet fixed)
 | 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
 | 44    | Seeed's native-USB firmware exhibits recurring real pipe-stalls, unrelated to Issue 22's sleep/wake cause | Informational (hardware/firmware quirk) | Open |
 | 45    | Unplugging one downstream hub can fault the shared upstream hub's own controller, taking down unrelated sibling devices too (confirmed not a power issue - reproduced again with the hub externally powered); also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
-| 46    | `check_alive()` inherits the meshtastic library's 300s default reply timeout instead of the ~20s its docstring assumes - confirmed via `sudo py-spy dump`; explains Issue 43's multi-minute Stop Server wait and proves the watchdog's GUI callbacks were never actually broken, just slow | Medium (recovery/UX latency, root cause confirmed) | Open |
+| 46    | `check_alive()` inherited the meshtastic library's 300s default reply timeout instead of the ~20s its docstring assumes - confirmed via `sudo py-spy dump`; explains Issue 43's multi-minute Stop Server wait and proves the watchdog's GUI callbacks were never actually broken, just slow | Medium (recovery/UX latency) | **FIXED** |
