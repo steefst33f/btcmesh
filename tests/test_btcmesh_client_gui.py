@@ -1118,6 +1118,101 @@ class TestKnownNodesStory112(unittest.TestCase):
 
 
 # =============================================================================
+# Issue 39: non-blocking busy indicator for _scan_devices()
+# =============================================================================
+
+class TestScanDevicesBusyIndicator(unittest.TestCase):
+    """Tests for _scan_devices()'s device_busy wiring (Issue 39)."""
+
+    class _ImmediateThread:
+        """Runs the thread target synchronously so tests stay deterministic."""
+
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    def test_scan_shows_busy_indicator_without_disabling_the_spinner(self):
+        """Given a scan starts, Then device_busy.start() is called and
+        device_spinner.disabled is never touched - scanning has never
+        blocked device selection, and this story doesn't change that."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock(disabled=False)
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.scan_meshtastic_devices', return_value=['/dev/ttyUSB0']
+             ):
+            btcmesh_client_gui.BTCMeshGUI._scan_devices(gui)
+
+        gui.device_busy.start.assert_called_once()
+        self.assertFalse(gui.device_spinner.disabled)
+
+    def test_devices_found_with_multiple_devices_keeps_busy_indicator_active(self):
+        """Given devices_found reports more than one device, Then
+        probe_devices_in_background() starts its own device_busy reason
+        (own start()/stop() pair) - the indicator must not flash off
+        just because the scan itself finished while probing continues."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.device_spinner = unittest.mock.MagicMock(disabled=False)
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        with unittest.mock.patch('btcmesh_client_gui.probe_devices_in_background') as mock_probe:
+            btcmesh_client_gui.BTCMeshGUI._handle_result(
+                gui, ('devices_found', ['/dev/ttyUSB0', '/dev/ttyACM0'])
+            )
+
+        mock_probe.assert_called_once()
+        # Two independent reasons this session: _scan_devices()'s own
+        # (not exercised here) plus this branch's own start() - then the
+        # devices_found handler's own stop() for "the scan is done."
+        # Only the shared stop() (for the scan itself) should have run
+        # here; the probe's own start() must not have been immediately
+        # cancelled out by it.
+        self.assertEqual(gui.device_busy.start.call_count, 1)
+        self.assertEqual(gui.device_busy.stop.call_count, 1)
+
+    def test_device_probe_complete_stops_device_busy(self):
+        """The multi-device identity-probe batch's own completion
+        sentinel (pushed by probe_devices_in_background()) must stop
+        device_busy - this is its only stop trigger."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('device_probe_complete',))
+        gui.device_busy.stop.assert_called_once()
+
+    def test_device_and_nodes_fetch_complete_stops_both_indicators(self):
+        """on_device_selected()'s completion sentinel must stop both
+        device_busy and nodes_busy - it fetches both in one thread."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('device_and_nodes_fetch_complete',))
+        gui.device_busy.stop.assert_called_once()
+        gui.nodes_busy.stop.assert_called_once()
+
+    def test_known_nodes_fetch_complete_stops_only_nodes_busy(self):
+        """on_refresh_nodes()'s completion sentinel must stop nodes_busy
+        only - it never touches device_busy."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        btcmesh_client_gui.BTCMeshGUI._handle_result(gui, ('known_nodes_fetch_complete',))
+        gui.nodes_busy.stop.assert_called_once()
+        gui.device_busy.stop.assert_not_called()
+
+
+# =============================================================================
 # Story 11.2 revised (2026-08-23): on-demand known-nodes fetch
 # Tests for on_refresh_nodes()'s own brief connect/fetch/disconnect cycle -
 # it no longer reads an ambient self.iface (see
@@ -1172,6 +1267,43 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
             results.append(gui.result_queue.get_nowait())
         self.assertIn(('known_nodes_fetched', mock_nodes), results)
 
+    def test_on_refresh_nodes_shows_busy_indicator_without_disabling_anything(self):
+        """Issue 39: on_refresh_nodes() must show the busy indicator via
+        nodes_busy, but never disable node_spinner or dest_input - a
+        user who already knows the destination node ID can keep typing
+        while the fetch is in flight."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
+        gui.device_spinner = unittest.mock.MagicMock()
+        gui.device_spinner.text = 'Meshtastic 4418 (!7c5b4418)'
+        gui.node_spinner = unittest.mock.MagicMock(disabled=False)
+        gui.dest_input = unittest.mock.MagicMock(disabled=False)
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
+             ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes', return_value=[]):
+            btcmesh_client_gui.BTCMeshGUI.on_refresh_nodes(gui, None)
+
+        gui.nodes_busy.start.assert_called_once()
+        # stop() itself happens in _handle_result() once this sentinel is
+        # drained (covered by test_known_nodes_fetch_complete_stops_only_nodes_busy)
+        # - here we only need to confirm the sentinel was actually pushed.
+        results = []
+        while not gui.result_queue.empty():
+            results.append(gui.result_queue.get_nowait())
+        self.assertIn(('known_nodes_fetch_complete',), results)
+        self.assertFalse(gui.node_spinner.disabled)
+        self.assertFalse(gui.dest_input.disabled)
+
     def test_on_refresh_nodes_logs_error_and_disconnects_nothing_on_connect_failure(self):
         """Given the device fails to connect, Then a log error is pushed
         instead of a known_nodes_fetched result, and get_known_nodes() is
@@ -1201,8 +1333,11 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
         results = []
         while not gui.result_queue.empty():
             results.append(gui.result_queue.get_nowait())
-        self.assertEqual(len(results), 1)
+        # Issue 39: known_nodes_fetch_complete always fires too, pairing
+        # with nodes_busy.start() - even on this error path.
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0][0], 'log')
+        self.assertEqual(results[1], ('known_nodes_fetch_complete',))
 
     def test_on_refresh_nodes_skips_connect_for_relay_board(self):
         """Issue 37 follow-up: given the currently selected device is
@@ -1233,9 +1368,12 @@ class TestKnownNodesFetchFlow(unittest.TestCase):
         results = []
         while not gui.result_queue.empty():
             results.append(gui.result_queue.get_nowait())
-        self.assertEqual(len(results), 1)
+        # Issue 39: known_nodes_fetch_complete always fires too, pairing
+        # with nodes_busy.start() - even on this early-exit path.
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0][0], 'log')
         self.assertIn('relay board', results[0][1])
+        self.assertEqual(results[1], ('known_nodes_fetch_complete',))
 
     def test_update_known_nodes_applies_fetched_list(self):
         """Given a fetched nodes list, Then the destination dropdown is
@@ -1338,6 +1476,44 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         self.assertIn(('device_identity', '/dev/ttyUSB0', '!7c5b4418', 'Meshtastic 4418'), results)
         self.assertIn(('known_nodes_fetched', mock_nodes), results)
 
+    def test_shows_busy_indicators_without_disabling_anything(self):
+        """Issue 39: on_device_selected() must show both busy indicators
+        (it fetches identity and known nodes in one thread), but never
+        disable device_spinner, node_spinner, or dest_input - a user who
+        already knows what to pick/type shouldn't have to wait."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+        gui.device_spinner = unittest.mock.MagicMock(disabled=False)
+        gui.node_spinner = unittest.mock.MagicMock(disabled=False)
+        gui.dest_input = unittest.mock.MagicMock(disabled=False)
+        gui.status_log = unittest.mock.MagicMock()
+        gui.result_queue = queue.Queue()
+
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+
+        with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
+             unittest.mock.patch(
+                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.probe_relay_board_id', return_value=None
+             ), unittest.mock.patch(
+                 'btcmesh_client_gui.get_own_node_name', return_value='Meshtastic 4418'
+             ), unittest.mock.patch('btcmesh_client_gui.get_known_nodes', return_value=[]):
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        gui.device_busy.start.assert_called_once()
+        gui.nodes_busy.start.assert_called_once()
+        # stop() itself happens in _handle_result() once this sentinel is
+        # drained (covered by test_device_and_nodes_fetch_complete_stops_both_indicators)
+        # - here we only need to confirm the sentinel was actually pushed.
+        self.assertIn(('device_and_nodes_fetch_complete',), self._drain(gui.result_queue))
+        self.assertFalse(gui.device_spinner.disabled)
+        self.assertFalse(gui.node_spinner.disabled)
+        self.assertFalse(gui.dest_input.disabled)
+
     def test_resolves_labeled_display_text_to_real_path(self):
         """Given the spinner already shows a labeled 'name (node_id)'
         entry (e.g. after a background probe resolved it), Then selecting
@@ -1390,9 +1566,13 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
 
         results = self._drain(gui.result_queue)
-        self.assertEqual(len(results), 1)
+        # Issue 39: device_and_nodes_fetch_complete always fires too,
+        # pairing with device_busy.start()/nodes_busy.start() - even on
+        # this error path.
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0][0], 'log')
         self.assertIn('No Meshtastic device found', results[0][1])
+        self.assertEqual(results[1], ('device_and_nodes_fetch_complete',))
 
     def test_connect_failure_uses_friendly_error_wording(self):
         """Given a raw timeout exception, Then the logged message uses
@@ -1475,9 +1655,13 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         mock_probe_relay.assert_called_once_with('/dev/ttyRelay')
         mock_transport_cls.assert_not_called()
         results = self._drain(gui.result_queue)
-        self.assertEqual(len(results), 1)
+        # Issue 39: device_and_nodes_fetch_complete always fires too,
+        # pairing with device_busy.start()/nodes_busy.start() - even on
+        # this early-exit path.
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0][0], 'log')
         self.assertIn('relay board', results[0][1])
+        self.assertEqual(results[1], ('device_and_nodes_fetch_complete',))
 
 
 # =============================================================================

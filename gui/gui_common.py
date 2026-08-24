@@ -204,6 +204,75 @@ class StatusLog(ScrollView):
         self.layout.clear_widgets()
 
 
+class BusyIndicator:
+    """Purely-visual busy state for a trigger button (e.g. a "Scan"
+    button) - cycles the button's own text between an idle label and a
+    busy message, disabling the button meanwhile so the *same* operation
+    can't be triggered again concurrently.
+
+    Deliberately never touches any *other* widget - disabling the
+    trigger button itself only prevents a duplicate concurrent trigger
+    of the operation it starts, a different thing from disabling e.g. a
+    device/node dropdown or a text input, which would block the user
+    from doing something else entirely unrelated while a background
+    fetch is in flight (Issue 39 / project/plans/story_29_1.md - a user
+    who already knows the device path or destination node ID shouldn't
+    have to wait for a scan/fetch just to pick or type it).
+
+    Reference-counted rather than a simple on/off flag: start()/stop()
+    calls from independent, possibly-overlapping code paths (e.g. a
+    device scan and the auto-selected device's own identity fetch, see
+    btcmesh_client_gui.py's on_device_selected()) each get their own
+    paired call, without one path's stop() restoring idle state while
+    another path's work is still genuinely in flight.
+    """
+
+    _FRAME_COUNT = 4
+    _INTERVAL_SECONDS = 0.4
+
+    def __init__(self, button, idle_text: str):
+        self._button = button
+        self._idle_text = idle_text
+        self._active_count = 0
+        self._message = ''
+        self._frame_index = 0
+        self._event = None
+        button.text = idle_text
+
+    @property
+    def active(self) -> bool:
+        """Whether at least one start() is still awaiting a matching stop()."""
+        return self._active_count > 0
+
+    def start(self, message: str) -> None:
+        """Register one more reason this button should show busy state."""
+        self._active_count += 1
+        if self._active_count == 1:
+            self._message = message
+            self._frame_index = 0
+            self._button.text = message
+            self._button.disabled = True
+            self._event = Clock.schedule_interval(self._tick, self._INTERVAL_SECONDS)
+
+    def stop(self) -> None:
+        """Clear one reason this button should show busy state - only
+        actually restores idle state once every start() has a matching
+        stop()."""
+        if self._active_count == 0:
+            return
+        self._active_count -= 1
+        if self._active_count == 0:
+            if self._event is not None:
+                self._event.cancel()
+                self._event = None
+            self._button.text = self._idle_text
+            self._button.disabled = False
+
+    def _tick(self, _dt) -> None:
+        self._frame_index = (self._frame_index + 1) % self._FRAME_COUNT
+        self._button.text = self._message + '.' * self._frame_index
+
+
 # =============================================================================
 # Widget Factory Functions
 # =============================================================================
@@ -545,16 +614,22 @@ def probe_devices_in_background(devices: List[dict], result_queue,
     `devices` to learn its Meshtastic node ID and name (probe_device_identity()
     - connect, read identity, disconnect), pushing
     ('device_identity', path, node_id, name) onto result_queue for each one
-    not in skip_paths.
+    not in skip_paths, followed by a final ('device_probe_complete',)
+    once the whole batch is done (in a finally, so it still fires even
+    if a probe raises) - the only reliable "all done" signal a caller
+    has, e.g. to stop a busy indicator (Issue 39).
     """
     def probe_thread():
-        for device in list(devices):
-            if device['path'] in skip_paths:
-                continue
-            identity = probe_device_identity(device['path'])
-            result_queue.put((
-                'device_identity', device['path'], identity.node_id, identity.name
-            ))
+        try:
+            for device in list(devices):
+                if device['path'] in skip_paths:
+                    continue
+                identity = probe_device_identity(device['path'])
+                result_queue.put((
+                    'device_identity', device['path'], identity.node_id, identity.name
+                ))
+        finally:
+            result_queue.put(('device_probe_complete',))
 
     threading.Thread(target=probe_thread, daemon=True).start()
 
