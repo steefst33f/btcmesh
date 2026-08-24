@@ -1633,13 +1633,31 @@ lora/
         - [x] *   **Given** the server (CLI or GUI) has been running for a while with no other activity.
         - [x] *   **Then** a periodic INFO log line confirms it's still alive and listening, without needing any incoming traffic to produce log activity.
 
-- [ ] **Story 28.3: Wire DeviceWatchdog into btcmesh_server_gui.py**
-- [ ] *   **As a** relay operator using the server GUI,
-- [ ] *   **I want** the same automatic device recovery the server CLI already has,
-- [ ] *   **So that** the GUI isn't silently unprotected against the exact overnight-wedge scenario the CLI already handles (Story 26.5's originally scoped-out follow-up).
-    - [ ] *   **Scenario:** Server GUI wires the same watchdog pattern as the CLI
-        - [ ] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
-        - [ ] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
+- [x] **Story 28.3: Wire DeviceWatchdog into btcmesh_server_gui.py**
+- [x] *   **As a** relay operator using the server GUI,
+- [x] *   **I want** the same automatic device recovery the server CLI already has,
+- [x] *   **So that** the GUI isn't silently unprotected against the exact overnight-wedge scenario the CLI already handles (Story 26.5's originally scoped-out follow-up).
+    - [x] *   **Scenario:** Server GUI wires the same watchdog pattern as the CLI
+        - [x] *   **Given** the server GUI's own run loop (background thread started by `on_start_pressed()`).
+        - [x] *   **Then** it builds and ticks a `DeviceWatchdog` the same way `btcmesh_server_cli.py` does, reporting recovery attempts/outcomes to the activity log.
+    *   _Note: status corrected 2026-08-24 - this was already implemented
+        and wired in (`build_device_watchdog()` called from
+        `btcmesh_server_gui.py`) well before this checkbox was updated;
+        it just hadn't been marked done. Left unmarked deliberately in
+        the meantime because only the connection-detection/reconnect
+        half of the recovery path had ever been observed live - the
+        real `power_control.power_cycle()` call had never actually
+        fired in any session (every prior real disconnect had been
+        followed by a manual replug that let the plain reconnect path
+        succeed first). That gap is now closed: a real-hardware test
+        deliberately designed to force the power-cycle path (device
+        made to disappear while staying physically connected through
+        the relay, so the plain-reconnect fallback genuinely failed
+        first) found and fixed Issue 48
+        (`project/issues.txt` - the recovery scan wasn't filtering out
+        the relay board's own control port, corrupting it and breaking
+        `power_cycle()`), then re-ran clean: `power_cycle()` succeeded
+        4/4 times and one full recovery cycle completed end-to-end._
 
 - [x] **Story 28.4: Detection-only DeviceWatchdog for the client GUI** — **Superseded 2026-08-23** (see project/plans/story_27_1.md's "Architecture Revision" section)
 - [x] *   **As a** client GUI user,
