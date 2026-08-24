@@ -44,6 +44,7 @@ from gui.gui_common import (
     # Classes
     ConnectionState,
     StatusLog,
+    BusyIndicator,
     # Functions
     get_log_color,
     create_separator,
@@ -482,19 +483,32 @@ class BTCMeshServerGUI(BoxLayout):
         self.device_spinner = Spinner(
             text=default_device if default_device else DEVICE_AUTO_DETECT,
             values=[DEVICE_AUTO_DETECT],
-            size_hint_x=0.75,
+            size_hint_x=1,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
             color=COLOR_SECONDARY,
         )
         settings_container.add_widget(self.device_spinner)
 
-        # Scan button
-        self.scan_btn = create_refresh_button('Scan')
-        self.scan_btn.bind(on_press=self._on_scan_devices)
-        settings_container.add_widget(self.scan_btn)
-
         self.add_widget(settings_container)
+
+        # Scan button - also the busy indicator itself (Issue 47,
+        # mirroring the client GUI's Story 29.1/Issue 39 fix): reads
+        # "Scan" while idle, "Scanning devices..."/"Identifying
+        # devices..." while the scan or the follow-on identity-probe
+        # phase is in flight, disabled meanwhile to prevent a duplicate
+        # concurrent scan. Previously the button re-enabled as soon as
+        # the fast scan finished, before the slower probe phase even
+        # started, making it look "ready" while still working. Full-width
+        # on its own row (rather than a small side button) since the busy
+        # text needs more room than "Scan" did.
+        self.scan_btn = create_refresh_button('Scan')
+        self.scan_btn.size_hint_x = 1
+        self.scan_btn.size_hint_y = None
+        self.scan_btn.height = 40
+        self.scan_btn.bind(on_press=self._on_scan_devices)
+        self.device_busy = BusyIndicator(self.scan_btn, idle_text='Scan')
+        self.add_widget(self.scan_btn)
 
     def _build_timeout_settings(self):
         """Build the reassembly timeout settings section."""
@@ -545,8 +559,7 @@ class BTCMeshServerGUI(BoxLayout):
 
     def _on_scan_devices(self, instance):
         """Scan for available Meshtastic devices."""
-        self.device_spinner.text = DEVICE_SCANNING
-        self.scan_btn.disabled = True
+        self.device_busy.start("Scanning devices...")
 
         def scan_thread():
             from core.meshtastic_utils import scan_meshtastic_devices
@@ -966,8 +979,13 @@ class BTCMeshServerGUI(BoxLayout):
         elif result_type == 'devices_found':
             # Result of the "Scan" button (_on_scan_devices) refreshing the
             # Meshtastic device dropdown - independent of server start/stop.
+            # device_busy is reference-counted (Issue 47): the scan phase's
+            # own start() (in _on_scan_devices()) is matched by the stop()
+            # at the end of this branch below, but when devices were found,
+            # probe_devices_in_background() below opens its own start()/
+            # stop() pair first - so the button stays busy through both
+            # phases instead of looking "ready" while probing continues.
             devices = data
-            self.scan_btn.disabled = False
             if devices:
                 self.devices = [{'path': p, 'node_id': None, 'name': None} for p in devices]
                 # Add Auto-detect as first option, then found devices
@@ -981,27 +999,35 @@ class BTCMeshServerGUI(BoxLayout):
                     self.device_spinner.text = devices[0]
                     self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
-                    # Multiple devices - keep current selection or show first.
-                    # No count stated (unlike the single-device case above) -
-                    # the raw scan count can still drop once probing resolves
-                    # identities and dedup collapses aliases of the same
-                    # physical device (Issue 37); "device(s)" stays accurate
-                    # either way, and the dropdown is the real source of
-                    # truth for "how many."
-                    if self.device_spinner.text == DEVICE_SCANNING:
-                        self.device_spinner.text = DEVICE_AUTO_DETECT
+                    # Multiple devices - keep current selection or show
+                    # first. No count stated (unlike the single-device case
+                    # above) - the raw scan count can still drop once
+                    # probing resolves identities and dedup collapses
+                    # aliases of the same physical device (Issue 37);
+                    # "device(s)" stays accurate either way, and the
+                    # dropdown is the real source of truth for "how many."
                     self.status_log.add_message("Found device(s)", COLOR_SUCCESS)
                 # Always probe every found device's identity, including the
                 # single-device case - unlike the client GUI, the server
                 # never auto-connects on selection, so this background probe
                 # is the only way it ever learns a device's identity (see
                 # project/plans/story_27_1.md's Story 27.3 notes).
+                self.device_busy.start("Identifying devices...")
                 probe_devices_in_background(self.devices, self.result_queue)
             else:
                 self.devices = []
                 self.device_spinner.values = [DEVICE_AUTO_DETECT]
                 self.device_spinner.text = DEVICE_AUTO_DETECT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
+            # The scan itself is done either way - a follow-on
+            # probe_devices_in_background() call above (if any) owns its
+            # own start()/stop() pair independently (ref-counted).
+            self.device_busy.stop()
+
+        elif result_type == 'device_probe_complete':
+            # Issue 47: the whole identity-probe batch just finished (or
+            # errored partway through) - pairs with the start() call above.
+            self.device_busy.stop()
 
         elif result_type == 'device_identity':
             # Background identity-probe result for one device (Story 27.3,
