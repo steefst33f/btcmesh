@@ -1001,6 +1001,8 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
         with patch(
             "core.meshtastic_utils.scan_meshtastic_devices_detailed",
             return_value=devices,
+        ), patch(
+            "transport.power_control.probe_relay_board_id", return_value=None
         ):
             result = transport.scan_for_reconnect_candidates()
 
@@ -1010,10 +1012,39 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
         transport = MeshtasticSerialTransport()
         with patch(
             "core.meshtastic_utils.scan_meshtastic_devices_detailed", return_value=[]
+        ), patch(
+            "transport.power_control.probe_relay_board_id", return_value=None
         ):
             result = transport.scan_for_reconnect_candidates()
 
         self.assertEqual(result, [])
+
+    def test_excludes_relay_board_port(self):
+        """Issue 48: DeviceWatchdog._try_candidate() has no relay-board
+        awareness of its own (transport-agnostic by design), so the
+        filtering has to happen here - otherwise recovery sends the
+        relay board a Meshtastic handshake, corrupting its serial
+        buffer and breaking the next power_cycle() call."""
+        from core.meshtastic_utils import DeviceInfo
+
+        transport = MeshtasticSerialTransport()
+        devices = [
+            DeviceInfo(path="/dev/ttyUSB0", serial_number="A1", description="x"),
+            DeviceInfo(path="/dev/ttyRELAY", serial_number="B2", description="y"),
+        ]
+
+        def fake_probe(path, *args, **kwargs):
+            return "000E55D8" if path == "/dev/ttyRELAY" else None
+
+        with patch(
+            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            return_value=devices,
+        ), patch(
+            "transport.power_control.probe_relay_board_id", side_effect=fake_probe
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, ["/dev/ttyUSB0"])
 
 
 if __name__ == "__main__":

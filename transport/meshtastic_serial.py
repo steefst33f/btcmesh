@@ -327,10 +327,26 @@ class MeshtasticSerialTransport(BaseTransport):
         core.meshtastic_utils.scan_meshtastic_devices_detailed() (the
         stable-identity-aware scan from Story 26.3), returning just the
         paths - identity verification against the expected device happens
-        in DeviceWatchdog via local_node_id, not here."""
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        in DeviceWatchdog via local_node_id, not here.
 
-        return [d.path for d in scan_meshtastic_devices_detailed()]
+        Excludes any Story 26.7 relay board's own control port via
+        probe_relay_board_id() - the same guard Issue 37 already put in
+        front of every other direct transport.connect() call site.
+        Without it, DeviceWatchdog._try_candidate() (transport-agnostic
+        by design, so it has no way to know about relay boards itself)
+        sends the relay board a full Meshtastic handshake during
+        recovery, corrupting its serial buffer and breaking the very
+        next power_control.power_cycle() call (Issue 48, confirmed via
+        real-hardware test - reproduced twice in a row before this fix).
+        """
+        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        from transport.power_control import probe_relay_board_id
+
+        return [
+            d.path
+            for d in scan_meshtastic_devices_detailed()
+            if probe_relay_board_id(d.path) is None
+        ]
 
     @property
     def is_connected(self) -> bool:
