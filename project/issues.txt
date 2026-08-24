@@ -2450,6 +2450,96 @@ so the button looks "ready" while probing is still running, and
 
 ---
 
+## DeviceWatchdog: recovery-candidate scan never filters out the relay board's own control port
+
+**Issue 48: `MeshtasticSerialTransport.scan_for_reconnect_candidates()`
+returns every raw path from `scan_meshtastic_devices_detailed()`
+unfiltered - including the Story 26.7 relay board's own control port -
+so `DeviceWatchdog._try_candidate()` sends it a full Meshtastic protocol
+handshake during every recovery cycle, corrupting the relay firmware's
+serial read buffer and causing the very next `power_control.power_cycle()`
+call to fail with `"ERR unknown command"`** 🔍 OPEN (confirmed root
+cause via real-hardware test, not yet fixed)
+
+- Found 2026-08-24 during the first-ever real-hardware exercise of
+  `DeviceWatchdog`'s actual `power_cycle()` path (never triggered live
+  before this session - every prior real disconnect had been followed
+  by a manual replug that let the plain reconnect-without-power-cycle
+  path succeed first). Test setup: server GUI connected to the Seeed
+  (deliberately reconfigured this session - the Seeed wedges more
+  often than the Heltec, so it was made the server/relay-controlled
+  device specifically to exercise this path; Heltec became the
+  client's sending device). Seeed physically unplugged by hand and
+  left unplugged (not replugged early, to avoid the short-circuit
+  documented in the pending-tasks note this test was designed around).
+  Diagnostic logging temporarily added to `core/device_watchdog.py`
+  (same pattern as Issue 46) confirmed the full sequence live:
+  `check_alive()` correctly timed out (~20s) -> `_recover_once()`
+  disconnected -> `_try_reconnect_without_power_cycle()` correctly
+  found nothing (Seeed genuinely absent) -> `power_control.power_cycle()`
+  was called for the first time ever - and failed:
+  `Relay board error: ERR unknown command`. Reproduced identically on
+  a second, independent recovery cycle a minute later - not a fluke.
+- **Root cause**: `core/device_watchdog.py`'s `_try_candidate()` calls
+  `self._transport.connect(path)` on every path
+  `scan_for_reconnect_candidates()` returns, with no relay-awareness at
+  all (by design - `DeviceWatchdog` is deliberately transport-agnostic,
+  see its module docstring). But
+  `transport/meshtastic_serial.py:324`'s `scan_for_reconnect_candidates()`
+  just returns `[d.path for d in scan_meshtastic_devices_detailed()]` -
+  every raw candidate, unfiltered. Live server-log evidence during
+  recovery showed the transport actually opening a Meshtastic
+  connection (`want_config_id`, full binary framing) against
+  `/dev/cu.usbserial-112440`/`/dev/cu.wchusbserial112440` - the relay
+  board's own two OS-level aliases, not a Meshtastic device at all.
+  That handshake's binary garbage left sitting in (or colliding with)
+  the relay firmware's serial buffer explains why the very next,
+  separate `SerialRelayPowerControl.power_cycle()` connection - opened
+  moments later to send a clean `CYCLE 1 15\n` - had its first line
+  read back corrupted, tripping `power_relay.ino`'s
+  `line.substring(0, firstSpace) != "CYCLE"` check
+  (`hardware/power_relay_firmware/src/power_relay.ino:117-119`).
+- **This is a missed sixth call site of a pattern Issue 37 already
+  fixed everywhere else it was known to exist.** Issue 37's
+  false-positive-candidate fix added a `probe_relay_board_id()` guard
+  (safe, ~2s-timeout, protocol-level positive identification - never a
+  guess) in front of five direct `transport.connect()` call sites:
+  the client's `on_device_selected()`, `on_refresh_nodes()`,
+  `_connect_with_retry()` (Send), and the server/CLI's
+  `on_start_pressed()`/`run_server()`. `DeviceWatchdog._try_candidate()`
+  is functionally a sixth such call site (added later, by Story 26.4,
+  before Issue 37's audit existed) that was never covered - it does
+  its own direct `transport.connect(path)` with no guard at all.
+- **Practical impact**: any real deployment combining the Story 26.7
+  relay board with `DeviceWatchdog` hits this on *every* recovery
+  cycle that reaches `power_cycle()` - not an edge case. The
+  recovery-without-power-cycle path is unaffected (it only needs a
+  *successful* connect to the real device, and the relay board
+  correctly fails that with `TransportConnectionError` rather than a
+  false match) - the damage is specifically to the relay's own serial
+  state, breaking the *next* legitimate `power_cycle()` call.
+- **Proposed fix** (not yet implemented): filter
+  `scan_for_reconnect_candidates()` itself, at the same layer Issue 37
+  already established - reuse `probe_relay_board_id()` (already lives
+  in `transport/power_control.py`, already proven safe against real
+  Meshtastic devices during Issue 37's live verification) to exclude
+  any candidate path that identifies as the relay board, before
+  returning the list to `DeviceWatchdog`. Keeps `DeviceWatchdog` itself
+  untouched/transport-agnostic - the filter belongs in the
+  Meshtastic-specific transport, exactly where the raw candidate list
+  is produced. Accepted tradeoff: adds up to ~2s of probe latency per
+  non-relay candidate per scan pass (worst case for a real device that
+  doesn't answer the relay's `ID` probe) - repeated on each
+  `_wait_for_device()` backoff iteration, but small relative to its
+  60s total window.
+- Once fixed, this also unblocks the deferred correction to Story
+  28.3's status in `project/tasks.txt` (currently stale `[ ]` despite
+  `DeviceWatchdog` being wired into `btcmesh_server_gui.py` and working
+  - deliberately left unresolved pending end-to-end `power_cycle()`
+  verification, which this test now provides, once the fix lands).
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -2498,3 +2588,4 @@ so the button looks "ready" while probing is still running, and
 | 45    | Unplugging one downstream hub can fault the shared upstream hub's own controller, taking down unrelated sibling devices too (confirmed not a power issue - reproduced again with the hub externally powered); also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
 | 46    | `check_alive()` inherited the meshtastic library's 300s default reply timeout instead of the ~20s its docstring assumes - confirmed via `sudo py-spy dump`; explains Issue 43's multi-minute Stop Server wait and proves the watchdog's GUI callbacks were never actually broken, just slow | Medium (recovery/UX latency) | **FIXED** |
 | 47    | Server GUI's Scan button re-enables before device identity-probing actually finishes, and the probe's completion sentinel had no handler at all (silently discarded) | Minor (UX - misleading "ready" state) | **FIXED** |
+| 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | Open |
