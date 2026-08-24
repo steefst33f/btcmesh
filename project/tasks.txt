@@ -1674,3 +1674,37 @@ lora/
 
 ---
 
+# EPIC 8: Client GUI Background-Operation Feedback
+
+**Goal:** Give the client GUI's brief background connect/probe operations (device scan, identity probing, known-nodes fetch) a real, visible busy indicator - without blocking anything the user could otherwise already do (select an unprobed device, type a destination node ID by hand).
+
+**Background:** Issue 39 (`project/issues.txt`) found that only Send (`_connect_with_retry()`) currently gives clear "in progress" feedback (disabled controls, explicit status). Device scanning/identity-probing, `on_device_selected`'s known-nodes fetch, and `on_refresh_nodes` all block silently - the only cue is a status-log line, easy to miss since it scrolls with everything else. Explicitly a low-priority UX enhancement, not a bug.
+
+**Priority:** Low - nice-to-have, no functional impact.
+
+---
+
+## Stories
+
+### 29. Non-Blocking Busy Indicator
+
+- [ ] **Story 29.1: Add a non-blocking busy indicator for device scan/probe and known-nodes fetch**
+- [ ] *   **As a** client GUI user,
+- [ ] *   **I want** a visible cue while device scanning/probing and known-nodes fetching are in progress,
+- [ ] *   **So that** I can tell something is happening without an easy-to-miss log line - but I want to be able to select a device I already know or type a destination node ID by hand at any time, without waiting for these background operations to finish.
+    - [ ] *   **Scenario:** Device scan/probe shows a busy indicator
+        - [ ] *   **Given** `_scan_devices()` or `probe_devices_in_background()` is running.
+        - [ ] *   **Then** a visible busy indicator near the device dropdown is shown, and hidden once both are done.
+    - [ ] *   **Scenario:** Known-nodes fetch shows a busy indicator
+        - [ ] *   **Given** `on_device_selected()` or `on_refresh_nodes()` is fetching known nodes.
+        - [ ] *   **Then** a visible busy indicator near the known-nodes dropdown is shown, and hidden once the fetch completes.
+    - [ ] *   **Scenario:** Nothing is blocked while busy
+        - [ ] *   **Given** either indicator is visible.
+        - [ ] *   **Then** `device_spinner`, `node_spinner`, and `dest_input` all remain selectable/typable the entire time - no widget is disabled by this feature.
+    - [ ] *   **Scenario:** Send is unaffected
+        - [ ] *   **Given** `on_send_pressed()`'s existing full control-disable behavior.
+        - [ ] *   **Then** it is unchanged by this story - preventing two concurrent sends is a different problem, out of scope here.
+    *   _Note: Plan drafted 2026-08-24 (see `project/plans/story_29_1.md`) after discussing and rejecting extending the existing "disable + placeholder text" convention (used only by Send today) - the user explicitly wants the indicator to be purely informational, never blocking. Design: a new reference-counted `BusyIndicator` widget in `gui/gui_common.py`, shared by two independent instances (device-area, known-nodes-area) rather than one shared indicator or a boolean flag. Not yet implemented._
+
+---
+
