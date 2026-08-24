@@ -1993,6 +1993,19 @@ a protocol bug)
 - `REASSEMBLY_TIMEOUT_SECONDS` should be restored from `20` back to its
   normal value once this `.env` change is no longer needed for other
   testing (left to the user - `.env` is not directly editable here).
+- **Clean reproduction at normal timing, confirming the prediction
+  exactly (2026-08-24)**: after `REASSEMBLY_TIMEOUT_SECONDS` was
+  restored to its normal `120` and the Seeed was moved to a physically
+  isolated USB path (see Issue 45), a deliberate Heltec+relay hub
+  unplug/replug during session `d223d` reproduced this issue's exact
+  scenario under realistic (not artificially shortened) timing: the
+  client's own retry budget expired first (`"Error: Chunk 2: timeout
+  after 3 retries"` - the generic message), while the server's log
+  showed its `check_alive()`/reconnect cycle was still in progress at
+  that moment, well before it could finish recovering and get a NACK
+  out. Exactly the predicted behavior - this closes out the issue's
+  investigation with a real, clean confirmation under production-like
+  conditions, not just the shortened-timeout stress tests above.
 
 ---
 
