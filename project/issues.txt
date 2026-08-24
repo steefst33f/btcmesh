@@ -2178,6 +2178,25 @@ a defect)
 - Not scoped or fixed here - logged so the (correct, expected, if
   alarming-looking) behavior is documented rather than mistaken for a
   bug on the next repeat sighting.
+- **Real-world duration data point (2026-08-24)**: during the Issue 45
+  incident, Stop Server was clicked right after a full main-hub
+  disconnect/replug and took several minutes (well past the "60-90+
+  seconds" estimate above) before finally showing "Server stopped." -
+  confirmed via `sudo py-spy dump` mid-wait that the server thread was
+  genuinely still working (not silently dead: the dump briefly missed
+  it between samples, and a following one showed it inside the
+  `check_alive()`/reconnect call path), and it did eventually complete
+  correctly on its own, logging "Device recovered... on port
+  /dev/cu.SLAB_USBtoUART" immediately before "Server stopped." A
+  several-minute wait is plausible without any bug: the up-to-60s
+  `heartbeat_interval_seconds` gap before `tick()` even re-checks,
+  plus the ~20s `check_alive()` round trip, plus (if the device isn't
+  immediately back) the `recovery_cooldown_seconds` (60s) between
+  attempts, can chain across more than one cycle. Confirms this is the
+  same accepted tradeoff described above, just a real number for how
+  long the "if it coincides" case can actually run - the "60-90+
+  seconds" framing above should be read as the common case, not an
+  upper bound.
 
 ---
 
