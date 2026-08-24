@@ -1392,7 +1392,11 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
         self.assertFalse(gui.scan_btn.disabled)
 
     def test_scan_button_disabled_during_scan(self):
-        """Given Scan button clicked, Then scan button should be disabled during scan."""
+        """Given Scan button clicked, Then scan button should be disabled
+        during scan and show busy text (Issue 47: this replaced the old
+        device_spinner.text = "Scanning..." cue - the busy state now
+        lives on the Scan button itself, and device_spinner is left
+        untouched so a previously-selected value isn't clobbered)."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
@@ -1400,18 +1404,55 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                 gui = btcmesh_server_gui.BTCMeshServerGUI()
                 gui._on_scan_devices(None)
         self.assertTrue(gui.scan_btn.disabled)
-        self.assertEqual(gui.device_spinner.text, btcmesh_server_gui.DEVICE_SCANNING)
+        self.assertEqual(gui.scan_btn.text, "Scanning devices...")
 
-    def test_scan_button_enabled_after_devices_found(self):
-        """Given devices_found result, Then scan button should be re-enabled."""
+    def test_scan_button_stays_disabled_while_identity_probe_continues(self):
+        """Issue 47: given devices were found, Then the Scan button must
+        stay disabled/busy after devices_found is handled - the slower
+        identity-probe phase (probe_devices_in_background()) is still
+        running, so re-enabling here would make the button look "ready"
+        while it's still working (the original bug). Text stays "Scanning
+        devices..." throughout - only the first start() in an overlapping
+        pair sets BusyIndicator's displayed message by design."""
         import btcmesh_server_gui
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
-            gui = btcmesh_server_gui.BTCMeshServerGUI()
-            gui.scan_btn.disabled = True
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui._on_scan_devices(None)  # real start() - matches production flow
             with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background'):
                 gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+        self.assertTrue(gui.scan_btn.disabled)
+        self.assertEqual(gui.scan_btn.text, "Scanning devices...")
+
+    def test_scan_button_enabled_after_device_probe_complete(self):
+        """Issue 47: the Scan button is only actually restored once the
+        identity-probe batch's own completion sentinel arrives - not when
+        devices_found alone is handled."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui._on_scan_devices(None)
+            with unittest.mock.patch('btcmesh_server_gui.probe_devices_in_background'):
+                gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
+            gui._handle_result(('device_probe_complete',))
         self.assertFalse(gui.scan_btn.disabled)
+        self.assertEqual(gui.scan_btn.text, "Scan")
+
+    def test_scan_button_enabled_immediately_when_no_devices_found(self):
+        """Given no devices found, Then the Scan button is restored right
+        away - there's no follow-on probe phase to wait for."""
+        import btcmesh_server_gui
+
+        with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
+            with unittest.mock.patch.object(btcmesh_server_gui, 'threading'):
+                gui = btcmesh_server_gui.BTCMeshServerGUI()
+                gui._on_scan_devices(None)
+            gui._handle_result(('devices_found', []))
+        self.assertFalse(gui.scan_btn.disabled)
+        self.assertEqual(gui.scan_btn.text, "Scan")
 
     def test_auto_detect_passes_none_to_server(self):
         """Given Auto-detect selected, Then serial_port should be None when connecting."""
