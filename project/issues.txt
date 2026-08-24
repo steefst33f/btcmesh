@@ -2181,6 +2181,69 @@ a defect)
 
 ---
 
+## Test rig: unplugging one downstream USB hub can brown-out sibling devices sharing the same unpowered upstream hub
+
+**Issue 45: physically unplugging the sub-hub carrying the Heltec +
+relay board caused the Seeed (a separate device, not on that sub-hub)
+to disconnect at the same instant - both hit the identical
+`[Errno 6] Device not configured` failure simultaneously** 🔍 OPEN
+(informational - test-rig topology, not a code defect)
+
+- Found 2026-08-24 during a deliberate real-hardware recovery test
+  (Story 27.1, Heltec=server/relay-wired, Seeed=client, both GUIs live):
+  unplugged the hub carrying the Heltec + Story 26.7 relay board for a
+  few seconds and replugged it, to force a genuine wedge and observe
+  `DeviceWatchdog` react for real. The Seeed - on a completely
+  different, unrelated USB path - disconnected at the exact same
+  moment, confirmed by identical `[Errno 6] Device not configured` read
+  failures in both the server and client GUI logs within the same
+  second.
+- **Root cause (per the user's own hardware topology, not a log-level
+  finding)**: the Heltec+relay sub-hub and the Seeed are both
+  downstream of one shared hub plugged into this Mac's USB-C port, and
+  that shared hub has no external power adapter (bus-powered only, all
+  downstream ports draw from the single upstream USB-C link). Removing
+  one downstream load (the sub-hub) can transiently disrupt the shared
+  hub's power distribution to its other downstream ports - a well-known
+  limitation of unpowered/bus-powered hubs, which have no isolated
+  per-port power budget the way a self-powered hub does.
+- **The rest of the incident is a genuinely valuable, clean real-hardware
+  result, not a failure**:
+  - **Server watchdog**: `check_alive()`'s heartbeat caught the dead
+    connection, then `_try_reconnect_without_power_cycle()` genuinely
+    reconnected once the hub came back, confirmed via a real matching
+    `local_node_id` (`!7c5b4418`) - not a power-cycle (the device was
+    already back by the time recovery ran), but a confirmed real
+    disconnect→detect→reconnect cycle end-to-end.
+  - **Server reassembly timeout**: correctly declared the in-flight
+    session (14/15 chunks received) dead after `REASSEMBLY_TIMEOUT_SECONDS`
+    and sent the accurate `BTC_NACK|...|Reassembly timeout` - the exact
+    mechanism documented in Issue 40.
+  - **Client send-timeout (Issue 21's fix)**: `transport.send()`'s
+    10s worker-thread timeout fired correctly against the now-dead
+    port, and the client's retry loop surfaced a specific, correct
+    error ("Chunk 15: Send timed out after 10.0s - device may be
+    unresponsive") and disconnected cleanly, instead of hanging.
+- **New gap surfaced, not fixed here**: the client GUI has **no
+  `DeviceWatchdog` wired up at all** (`grep` for `build_device_watchdog`/
+  `DeviceWatchdog` in `btcmesh_client_gui.py` returns nothing) - only
+  the server does. The client survived this incident cleanly purely
+  because of Issue 21's send-timeout fix, not because it has any
+  reconnect capability; a wedge that outlives the current send
+  operation would need the user to restart the client by hand. Worth a
+  future story if client-side auto-recovery is ever wanted, but out of
+  scope here.
+- **Practical takeaway for future test sessions**: a self-powered
+  (externally-powered) hub for the shared upstream connection would
+  avoid this cross-device brownout, making future single-device wedge
+  tests cleaner to interpret (a disconnect on one device no longer
+  risks silently taking a sibling device down too).
+- Not scoped or fixed here - logged so a correlated multi-device
+  disconnect during future testing is recognized as this known rig
+  behavior rather than mistaken for a new code-level bug.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -2226,3 +2289,4 @@ a defect)
 | 42    | "Automatic device-recovery enabled via relay" logs even when no relay is connected - based on config presence, not actual reachability | Minor (misleading log message) | **FIXED** |
 | 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
 | 44    | Seeed's native-USB firmware exhibits recurring real pipe-stalls, unrelated to Issue 22's sleep/wake cause | Informational (hardware/firmware quirk) | Open |
+| 45    | Unplugging one downstream hub can brown-out a sibling device sharing the same unpowered upstream hub; also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
