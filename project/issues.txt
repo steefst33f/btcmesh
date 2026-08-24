@@ -1041,6 +1041,22 @@ screen lock** 🔍 OPEN (informational/environmental, no code fix)
 - Not scoped or fixed here - logged as a documented, understood
   hardware quirk specific to this Seeed board's native-USB
   implementation, distinct from Issue 22.
+- **Practical recovery-duration data point (2026-08-24)**: the Seeed
+  wedged spontaneously overnight (client side, no `DeviceWatchdog` -
+  Story 26.6 was decided against, so this needed manual recovery). A
+  short (few-second) unplug/replug was **not** enough - the client GUI
+  found the device again and could list known nodes, but became
+  unresponsive as soon as an actual send was attempted. Unplugging
+  again for **15+ seconds** cleared it fully - the client connected and
+  sent normally afterward, and the transaction completed cleanly (one
+  chunk-1 send needed one retry, then all 15 chunks went through
+  without issue - ordinary stop-and-wait ARQ behavior, not a symptom of
+  the stall). Consistent with Issue 20's finding for the server-side
+  relay-triggered case (a device needs a genuinely clean, uninterrupted
+  window to recover, not just a brief interruption) - worth remembering
+  as practical guidance for manually recovering a wedged Seeed: don't
+  assume a quick unplug was enough just because the device re-enumerates
+  and looks selectable again.
 
 ---
 
