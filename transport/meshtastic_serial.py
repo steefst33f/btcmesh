@@ -48,6 +48,16 @@ class MeshtasticSerialTransport(BaseTransport):
     # multi-minute hang documented in Issue 21 - a genuinely wedged/stalled
     # device froze the entire client GUI, with no way to time out or abort
     # the underlying blocked call.
+    _CHECK_ALIVE_TIMEOUT_SECONDS: float = 20.0
+    # check_alive()'s own explicit bound (Issue 46) - the interface's
+    # SerialInterface/MeshInterface is constructed with no explicit
+    # `timeout=`, so it silently inherits the meshtastic library's own
+    # 300-second default reply-wait. Using self._iface.waitForAckNak()
+    # directly would block check_alive() for up to 5 minutes against a
+    # genuinely dead device - real-hardware confirmed via `sudo py-spy
+    # dump` mid-stall (see Issue 46's write-up). check_alive() instead
+    # builds its own short-lived Timeout below, scoped to just this one
+    # probe, without touching the interface's other reply-wait behavior.
 
     def __init__(self) -> None:
         self._iface: Any = None
@@ -261,8 +271,8 @@ class MeshtasticSerialTransport(BaseTransport):
 
     def check_alive(self) -> bool:
         """Best-effort liveness check. Returns False (never raises) if not
-        connected or the device doesn't respond within the library's default
-        timeout (~20s).
+        connected or the device doesn't respond within
+        _CHECK_ALIVE_TIMEOUT_SECONDS (~20s).
 
         Sends a local admin "get device metadata" request and waits for a
         real round-trip acknowledgment - proven by real hardware testing
@@ -278,11 +288,20 @@ class MeshtasticSerialTransport(BaseTransport):
         periodic background health check, and globally redirecting stdout
         around the call would be unsafe once this runs on a background
         watchdog thread (Story 26.4) alongside other console/log output.
+
+        Waits via its own short-lived Timeout rather than
+        self._iface.waitForAckNak() - the interface's own wait uses
+        self._iface._timeout, built from SerialInterface's default
+        300-second reply timeout (never overridden by connect()), which
+        would let a single check block for up to 5 minutes against a
+        genuinely dead device instead of the ~20s this method documents
+        (Issue 46, confirmed via real-hardware `py-spy dump`).
         """
         if self._iface is None:
             return False
         try:
             from meshtastic import admin_pb2
+            from meshtastic.mesh_interface import Timeout
 
             def _quiet_response_handler(p):
                 if "routing" in p["decoded"]:
@@ -296,8 +315,9 @@ class MeshtasticSerialTransport(BaseTransport):
             self._iface.localNode._sendAdmin(
                 p, wantResponse=True, onResponse=_quiet_response_handler
             )
-            self._iface.waitForAckNak()
-            return True
+            return Timeout(maxSecs=self._CHECK_ALIVE_TIMEOUT_SECONDS).waitForAckNak(
+                self._iface._acknowledgment
+            )
         except Exception:
             return False
 

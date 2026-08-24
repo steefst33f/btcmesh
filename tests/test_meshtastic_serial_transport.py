@@ -881,13 +881,21 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
         """Set up mocks for meshtastic."""
         self.mock_meshtastic = MagicMock()
         self.mock_serial_iface = MagicMock()
+        self.mock_mesh_interface = MagicMock()
         self.mock_meshtastic.serial_interface.SerialInterface = MagicMock()
         sys.modules['meshtastic'] = self.mock_meshtastic
         sys.modules['meshtastic.serial_interface'] = self.mock_serial_iface
+        sys.modules['meshtastic.mesh_interface'] = self.mock_mesh_interface
+        # check_alive() (Issue 46) builds its own short-lived Timeout
+        # instead of using the interface's own (300s-default) wait -
+        # default every test to a "no ack yet" response so a test that
+        # doesn't care about the ack outcome isn't accidentally passed
+        # by a truthy MagicMock.
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = False
 
     def tearDown(self):
         """Clean up mocks."""
-        for mod in ['meshtastic', 'meshtastic.serial_interface']:
+        for mod in ['meshtastic', 'meshtastic.serial_interface', 'meshtastic.mesh_interface']:
             if mod in sys.modules:
                 del sys.modules[mod]
 
@@ -898,10 +906,8 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
     def test_returns_true_when_ack_received(self):
         mock_iface = MagicMock()
         mock_iface.myInfo.my_node_num = 0xDEADBEEF
-        # waitForAckNak() returning normally (no exception) means an ack
-        # or nak was received - the real library returns None on success.
-        mock_iface.waitForAckNak.return_value = None
         self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = True
 
         transport = MeshtasticSerialTransport()
         transport.connect()
@@ -914,12 +920,8 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
     def test_returns_false_when_acknak_times_out(self):
         mock_iface = MagicMock()
         mock_iface.myInfo.my_node_num = 0xDEADBEEF
-        # Mirrors the real library: raises on timeout rather than
-        # returning False - confirmed against a genuinely wedged device.
-        mock_iface.waitForAckNak.side_effect = RuntimeError(
-            "Timed out waiting for an acknowledgment"
-        )
         self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = False
 
         transport = MeshtasticSerialTransport()
         transport.connect()
@@ -944,7 +946,6 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
         health check, see project/plans/story_26_2.md)."""
         mock_iface = MagicMock()
         mock_iface.myInfo.my_node_num = 0xDEADBEEF
-        mock_iface.waitForAckNak.return_value = None
         self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
 
         transport = MeshtasticSerialTransport()
@@ -952,6 +953,31 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
         transport.check_alive()
 
         mock_iface.localNode.getMetadata.assert_not_called()
+
+    def test_uses_its_own_short_timeout_not_the_interfaces_default(self):
+        """Issue 46: the interface's own waitForAckNak() inherits
+        SerialInterface's 300s default reply timeout (connect() never
+        overrides it) - real-hardware confirmed via `sudo py-spy dump`
+        to block check_alive() for minutes against a genuinely dead
+        device instead of the ~20s this method documents. check_alive()
+        must build its own Timeout(maxSecs=_CHECK_ALIVE_TIMEOUT_SECONDS)
+        rather than delegating to self._iface.waitForAckNak()."""
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = True
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport.check_alive()
+
+        self.mock_mesh_interface.Timeout.assert_called_once_with(
+            maxSecs=MeshtasticSerialTransport._CHECK_ALIVE_TIMEOUT_SECONDS
+        )
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.assert_called_once_with(
+            mock_iface._acknowledgment
+        )
+        mock_iface.waitForAckNak.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
