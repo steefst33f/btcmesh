@@ -1876,8 +1876,8 @@ their own** ✅ FIXED (2026-08-23)
 ## Client GUI: no loading indicator during device probe/connect
 
 **Issue 39: device-info fetch, known-nodes fetch, and Send's connect
-step all block silently with no spinner/progress indicator** 🔍 OPEN
-(enhancement, not a regression)
+step all block silently with no spinner/progress indicator** ✅ FIXED
+(2026-08-24, device scan/probe and known-nodes fetch only - see below)
 
 - Noted during real-hardware verification of the "clear known nodes
   immediately on selection" and "friendlier connect-error wording"
@@ -1897,7 +1897,24 @@ step all block silently with no spinner/progress indicator** 🔍 OPEN
   `_connect_with_retry()` - i.e. every brief background connect this
   session's `_friendly_connect_error()` (Issue-adjacent, same call
   sites) already unified the error-wording for.
-- Not scoped or fixed here - left as a future enhancement.
+- **Fixed** (PR #57, Story 29.1, merged 2026-08-24) for device
+  scanning/identity-probing and both known-nodes fetch paths
+  (`on_device_selected()`, `on_refresh_nodes()`): a reference-counted
+  `BusyIndicator` (`gui/gui_common.py`) drives the relevant trigger
+  button's own text/disabled state - "Scan" becomes "Scanning
+  devices..."/"Fetching known nodes..." while the work is in flight,
+  disabling only that button (to prevent a duplicate concurrent
+  trigger) - never `device_spinner`, `node_spinner`, or `dest_input`.
+  This was an explicit, discussed requirement: a user who already
+  knows the device path or destination node ID must be able to
+  select/type it immediately, without waiting on a background fetch.
+  See `project/plans/story_29_1.md` for the full design.
+- **Send's connect step (`_connect_with_retry()`) is intentionally
+  left unchanged** - it already had full "in progress" feedback
+  (disabled controls, clear status) before this issue was ever filed,
+  and starting a second concurrent send is a real correctness concern
+  (not just "wait for me"), a different problem from what this fix
+  addresses. Not a gap - just out of scope for this fix.
 
 ---
 
@@ -2426,7 +2443,7 @@ block `DeviceWatchdog.tick()` for up to 5 minutes** ✅ FIXED (2026-08-24)
 | 36    | Mocked Kivy `Button` in `test_btcmesh_server_gui.py` is one shared instance across every button/test | Minor (test-isolation bug) | **FIXED** |
 | 37    | Device scan returns duplicate paths for one physical device plus non-Meshtastic false positives (relay board) | Minor (UX/wasted probe time) | **FIXED** |
 | 38    | Abort button doesn't interrupt a chunk stuck retrying on timeout - only checked in the ACK-received branch, not the timeout/retry branch | Medium (UX - abort silently ineffective in the common case) | **FIXED** |
-| 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | Open |
+| 39    | No loading indicator during device probe/connect | Minor (UX enhancement) | **FIXED** (device scan/probe + known-nodes fetch; Send's connect step intentionally unchanged) |
 | 40    | Client disconnects on its own chunk-retry timeout before the server's slower reassembly-timeout NACK can arrive | Informational (UX gap, correct end-state) | Open |
 | 41    | Auto-detect connect() silently kills its thread via uncaught SystemExit when multiple serial candidates exist | **High (looks like an unrecoverable hang)** | **FIXED** |
 | 42    | "Automatic device-recovery enabled via relay" logs even when no relay is connected - based on config presence, not actual reachability | Minor (misleading log message) | **FIXED** |
