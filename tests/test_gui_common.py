@@ -456,6 +456,100 @@ class TestStatusLog(unittest.TestCase):
         self.assertTrue(hasattr(gui_common, 'StatusLog'))
 
 
+class TestBusyIndicator(unittest.TestCase):
+    """Tests for BusyIndicator (Issue 39) - a purely-visual, reference-
+    counted busy state for a trigger button. It cycles the button's own
+    text and disables it (only to prevent a duplicate concurrent trigger
+    of the *same* operation - never any other widget). Reference
+    counting (not a boolean) is the whole point of this design:
+    independent, possibly-overlapping code paths each get their own
+    paired start()/stop() call without one path's stop() restoring idle
+    state while another path's work is still in flight (see
+    project/plans/story_29_1.md's Key Design Decisions)."""
+
+    def _button(self):
+        return unittest.mock.MagicMock(text='', disabled=False)
+
+    def test_sets_idle_text_on_construction(self):
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        self.assertFalse(indicator.active)
+        self.assertEqual(button.text, "Scan")
+        self.assertFalse(button.disabled)
+
+    def test_start_makes_it_active_sets_text_and_disables_button(self):
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.start("Scanning devices...")
+        self.assertTrue(indicator.active)
+        self.assertEqual(button.text, "Scanning devices...")
+        self.assertTrue(button.disabled)
+
+    def test_stop_after_single_start_restores_idle_state(self):
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.start("Scanning devices...")
+        indicator.stop()
+        self.assertFalse(indicator.active)
+        self.assertEqual(button.text, "Scan")
+        self.assertFalse(button.disabled)
+
+    def test_reference_counted_two_starts_need_two_stops(self):
+        """The core requirement this widget exists to satisfy: two
+        independent reasons to be busy overlapping must not let the
+        first stop() restore idle state while the second reason is
+        still in flight."""
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.start("First...")
+        indicator.start("Second...")
+        indicator.stop()
+        self.assertTrue(indicator.active, "should still be busy - one start() is unmatched")
+        self.assertTrue(button.disabled)
+        indicator.stop()
+        self.assertFalse(indicator.active)
+        self.assertEqual(button.text, "Scan")
+        self.assertFalse(button.disabled)
+
+    def test_extra_stop_without_matching_start_is_a_no_op(self):
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.stop()  # no matching start() - must not raise or go negative
+        self.assertFalse(indicator.active)
+        indicator.start("Busy...")
+        indicator.stop()
+        indicator.stop()  # extra stop after already balanced
+        self.assertFalse(indicator.active)
+        self.assertEqual(button.text, "Scan")
+
+    def test_second_start_does_not_reset_the_displayed_message(self):
+        """Only the first start() in an overlapping pair sets the
+        message - a second, concurrent start() shouldn't change what's
+        already showing."""
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.start("First...")
+        indicator.start("Second...")
+        self.assertEqual(button.text, "First...")
+
+    def test_never_touches_any_other_widget(self):
+        """Only the button passed to the constructor is ever mutated -
+        this is the whole point vs. disabling e.g. a device dropdown."""
+        from gui.gui_common import BusyIndicator
+        button = self._button()
+        other_widget = unittest.mock.MagicMock(disabled=False)
+        indicator = BusyIndicator(button, idle_text="Scan")
+        indicator.start("Busy...")
+        indicator.stop()
+        self.assertFalse(other_widget.disabled)
+
+
 # =============================================================================
 # Tests for Widget Factory Functions
 # =============================================================================
@@ -564,7 +658,10 @@ class TestProbeDevicesInBackground(unittest.TestCase):
 
     def test_pushes_one_result_per_device(self):
         """Given a list of devices, Then probe_device_identity() is called
-        for each and a device_identity result is pushed per device."""
+        for each, a device_identity result is pushed per device, and a
+        final device_probe_complete sentinel is pushed once the whole
+        batch is done (Issue 39 - the only reliable "all done" signal a
+        caller has, e.g. to stop a busy indicator)."""
         import queue
         from gui import gui_common
         from core.meshtastic_utils import ProbedDevice
@@ -590,12 +687,13 @@ class TestProbeDevicesInBackground(unittest.TestCase):
             [
                 ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
                 ('device_identity', '/dev/ttyACM0', None, None),
+                ('device_probe_complete',),
             ],
         )
 
     def test_skip_paths_are_not_probed(self):
         """Given a path in skip_paths, Then it's not probed and no result
-        is pushed for it."""
+        is pushed for it (the completion sentinel still fires)."""
         import queue
         from gui import gui_common
         from core.meshtastic_utils import ProbedDevice
@@ -618,8 +716,31 @@ class TestProbeDevicesInBackground(unittest.TestCase):
         mock_probe.assert_called_once_with('/dev/ttyACM0')
         self.assertEqual(
             _drain(result_queue),
-            [('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two')],
+            [
+                ('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two'),
+                ('device_probe_complete',),
+            ],
         )
+
+    def test_completion_sentinel_fires_even_if_a_probe_raises(self):
+        """Issue 39: device_probe_complete must fire even when
+        probe_device_identity() raises partway through the batch - a
+        busy indicator's stop() call depends on it always arriving."""
+        import queue
+        from gui import gui_common
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_device_identity',
+                 side_effect=RuntimeError("serial error"),
+             ):
+            with self.assertRaises(RuntimeError):
+                gui_common.probe_devices_in_background(devices, result_queue)
+
+        self.assertEqual(_drain(result_queue), [('device_probe_complete',)])
 
 
 class TestDedupeDevicesByNodeId(unittest.TestCase):

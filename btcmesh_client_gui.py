@@ -42,6 +42,7 @@ from gui.gui_common import (
     # Classes
     ConnectionState,
     StatusLog,
+    BusyIndicator,
     # Functions
     get_log_color,
     create_separator,
@@ -362,35 +363,46 @@ class BTCMeshGUI(BoxLayout):
         # Device selection row
         self.add_widget(create_section_label('Your Device:'))
 
-        device_selection_box = BoxLayout(size_hint_y=None, height=40, spacing=10)
-
-        # Spinner (drop down list). Picking a device still doesn't connect
-        # anything for Send's sake (2026-08-23 revision) - but it does
-        # trigger a brief connect to refresh the known-nodes destination
-        # dropdown, since known nodes are per-device and a stale list from
-        # a previously selected device would be actively misleading.
+        # Spinner (drop down list), full width on its own row. Picking a
+        # device still doesn't connect anything for Send's sake
+        # (2026-08-23 revision) - but it does trigger a brief connect to
+        # refresh the known-nodes destination dropdown, since known nodes
+        # are per-device and a stale list from a previously selected
+        # device would be actively misleading.
         self.device_spinner = Spinner(
             text=SCANNING_TEXT,
             values=[],
             size_hint_x=1,
+            size_hint_y=None,
+            height=40,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
             color=COLOR_SECONDARY,
         )
         self.device_spinner.bind(text=self.on_device_selected)
-        device_selection_box.add_widget(self.device_spinner)
+        self.add_widget(self.device_spinner)
 
-        # Refresh button
+        # Scan button - also the busy indicator itself (Issue 39): reads
+        # "Scan" while idle, "Scanning devices..."/"Identifying
+        # devices..." while a scan/identity-probe is in flight, disabled
+        # meanwhile to prevent a duplicate concurrent scan - never
+        # anything else. device_spinner is untouched throughout, so an
+        # already-known device can still be picked before probing
+        # finishes labeling it. Full-width on its own row (rather than a
+        # small fixed-width side button) since the busy text needs the
+        # extra room.
         self.refresh_btn = create_refresh_button('Scan')
+        self.refresh_btn.size_hint_x = 1
+        self.refresh_btn.size_hint_y = None
+        self.refresh_btn.height = 40
         self.refresh_btn.bind(on_press=self.on_refresh_devices)
-        device_selection_box.add_widget(self.refresh_btn)
-
-        self.add_widget(device_selection_box)
+        self.device_busy = BusyIndicator(self.refresh_btn, idle_text='Scan')
+        self.add_widget(self.refresh_btn)
 
         # Destination input section
         self.add_widget(create_section_label('Destination Node ID:'))
 
-        # Node selection row (Spinner + TextInput + Refresh)
+        # Node selection row (Spinner + TextInput)
         dest_selection_box = BoxLayout(size_hint_y=None, height=45, spacing=5)
 
         # Known nodes cache for mapping display text back to node id
@@ -412,19 +424,29 @@ class BTCMeshGUI(BoxLayout):
         self.dest_input = TextInput(
             hint_text='!node_id',
             multiline=False,
-            size_hint_x=0.4,
+            size_hint_x=0.5,
             background_color=COLOR_BG_LIGHT,
             foreground_color=COLOR_SECONDARY,
             cursor_color=COLOR_SECONDARY,
         )
         dest_selection_box.add_widget(self.dest_input)
 
-        # Refresh nodes button
-        self.refresh_nodes_btn = create_refresh_button('Scan')
-        self.refresh_nodes_btn.bind(on_press=self.on_refresh_nodes)
-        dest_selection_box.add_widget(self.refresh_nodes_btn)
-
         self.add_widget(dest_selection_box)
+
+        # Refresh-nodes button - also the busy indicator itself (Issue 39),
+        # same pattern as the device Scan button above: "Scan" while idle,
+        # "Fetching known nodes..." while in flight, disabled meanwhile to
+        # prevent a duplicate concurrent fetch only. node_spinner/dest_input
+        # stay fully usable throughout - a destination can still be picked
+        # or typed before the fetch finishes. Full-width on its own row for
+        # the same reason as the device Scan button.
+        self.refresh_nodes_btn = create_refresh_button('Scan')
+        self.refresh_nodes_btn.size_hint_x = 1
+        self.refresh_nodes_btn.size_hint_y = None
+        self.refresh_nodes_btn.height = 40
+        self.refresh_nodes_btn.bind(on_press=self.on_refresh_nodes)
+        self.nodes_busy = BusyIndicator(self.refresh_nodes_btn, idle_text='Scan')
+        self.add_widget(self.refresh_nodes_btn)
 
         # TX Hex input
         self.add_widget(create_section_label('Raw Transaction Hex:'))
@@ -513,6 +535,7 @@ class BTCMeshGUI(BoxLayout):
         """Scan for available Meshtastic devices in background."""
         self.device_spinner.text = SCANNING_TEXT
         self.status_log.add_message("Scanning for Meshtastic devices...")
+        self.device_busy.start("Scanning devices...")
 
         def scan_thread():
             devices = scan_meshtastic_devices()
@@ -601,27 +624,36 @@ class BTCMeshGUI(BoxLayout):
 
         path = device_path_from_display(self.devices, text)
         self.status_log.add_message("Fetching device info and known nodes...")
+        self.device_busy.start("Fetching device info...")
+        self.nodes_busy.start("Fetching known nodes...")
 
         def fetch_thread():
-            if probe_relay_board_id(path):
-                self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
-                return
+            # Wrapped in try/finally so device_and_nodes_fetch_complete
+            # always fires exactly once, on every exit path (relay-board
+            # guard, connect failure, or success) - the busy indicators'
+            # stop() calls depend on it (Issue 39).
             try:
-                transport = MeshtasticSerialTransport()
-                transport.connect(path)
-            except TransportConnectionError as e:
-                self.result_queue.put((
-                    'log', f"Could not fetch device info: {_friendly_connect_error(path, e)}", logging.ERROR
-                ))
-                return
-            try:
-                node_id = transport.local_node_id
-                name = get_own_node_name(transport._iface)
-                self.result_queue.put(('device_identity', path, node_id, name))
-                nodes = get_known_nodes(transport._iface)
-                self.result_queue.put(('known_nodes_fetched', nodes))
+                if probe_relay_board_id(path):
+                    self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
+                    return
+                try:
+                    transport = MeshtasticSerialTransport()
+                    transport.connect(path)
+                except TransportConnectionError as e:
+                    self.result_queue.put((
+                        'log', f"Could not fetch device info: {_friendly_connect_error(path, e)}", logging.ERROR
+                    ))
+                    return
+                try:
+                    node_id = transport.local_node_id
+                    name = get_own_node_name(transport._iface)
+                    self.result_queue.put(('device_identity', path, node_id, name))
+                    nodes = get_known_nodes(transport._iface)
+                    self.result_queue.put(('known_nodes_fetched', nodes))
+                finally:
+                    transport.disconnect()
             finally:
-                transport.disconnect()
+                self.result_queue.put(('device_and_nodes_fetch_complete',))
 
         threading.Thread(target=fetch_thread, daemon=True).start()
 
@@ -648,24 +680,31 @@ class BTCMeshGUI(BoxLayout):
         section)."""
         port = device_path_from_display(self.devices, self.device_spinner.text)
         self.status_log.add_message("Fetching known nodes...")
+        self.nodes_busy.start("Fetching known nodes...")
 
         def fetch_thread():
-            if probe_relay_board_id(port):
-                self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
-                return
+            # Wrapped in try/finally so known_nodes_fetch_complete always
+            # fires exactly once, on every exit path - nodes_busy.stop()
+            # depends on it (Issue 39).
             try:
-                transport = MeshtasticSerialTransport()
-                transport.connect(port)
-            except TransportConnectionError as e:
-                self.result_queue.put((
-                    'log', f"Could not fetch known nodes: {_friendly_connect_error(port, e)}", logging.ERROR
-                ))
-                return
-            try:
-                nodes = get_known_nodes(transport._iface)
-                self.result_queue.put(('known_nodes_fetched', nodes))
+                if probe_relay_board_id(port):
+                    self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
+                    return
+                try:
+                    transport = MeshtasticSerialTransport()
+                    transport.connect(port)
+                except TransportConnectionError as e:
+                    self.result_queue.put((
+                        'log', f"Could not fetch known nodes: {_friendly_connect_error(port, e)}", logging.ERROR
+                    ))
+                    return
+                try:
+                    nodes = get_known_nodes(transport._iface)
+                    self.result_queue.put(('known_nodes_fetched', nodes))
+                finally:
+                    transport.disconnect()
             finally:
-                transport.disconnect()
+                self.result_queue.put(('known_nodes_fetch_complete',))
 
         threading.Thread(target=fetch_thread, daemon=True).start()
 
@@ -734,12 +773,42 @@ class BTCMeshGUI(BoxLayout):
                     # the real, already-visible source of truth for
                     # "how many."
                     self.status_log.add_message("Device(s) found - select one to connect", COLOR_WARNING)
+                    # Own start() paired with the device_probe_complete
+                    # handler's stop() - independent of the scan's own
+                    # start()/stop() pair below (Issue 39, ref-counted).
+                    self.device_busy.start("Identifying devices...")
                     probe_devices_in_background(self.devices, self.result_queue)
             else:
                 self.devices = []
                 self.device_spinner.values = [NO_DEVICES_TEXT]
                 self.device_spinner.text = NO_DEVICES_TEXT
                 self.status_log.add_message("No Meshtastic devices found", COLOR_ERROR)
+            # The scan itself (device_busy.start() in _scan_devices()) is
+            # done either way - a follow-on probe_devices_in_background()
+            # call above owns its own device_busy.start()/stop() pair
+            # independently (ref-counted, see BusyIndicator).
+            self.device_busy.stop()
+            return
+
+        # Issue 39: the whole multi-device identity-probe batch just
+        # finished (or errored partway through) - pairs with
+        # probe_devices_in_background()'s device_busy.start() call above.
+        if result[0] == 'device_probe_complete':
+            self.device_busy.stop()
+            return
+
+        # Issue 39: on_device_selected()'s combined identity+known-nodes
+        # fetch just finished (or errored) - pairs with its own
+        # device_busy.start()/nodes_busy.start() calls.
+        if result[0] == 'device_and_nodes_fetch_complete':
+            self.device_busy.stop()
+            self.nodes_busy.stop()
+            return
+
+        # Issue 39: on_refresh_nodes()'s fetch just finished (or errored) -
+        # pairs with its own nodes_busy.start() call.
+        if result[0] == 'known_nodes_fetch_complete':
+            self.nodes_busy.stop()
             return
 
         # Background identity-probe result for one device (Story 27.2,
