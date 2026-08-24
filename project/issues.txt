@@ -2296,6 +2296,74 @@ to disconnect at the same instant - both hit the identical
 
 ---
 
+## Server: `check_alive()` can block up to 5 minutes, not the ~20s its own docstring assumes
+
+**Issue 46: `MeshtasticSerialTransport.check_alive()`'s `waitForAckNak()`
+call inherits the meshtastic library's default 300-second reply
+timeout, not the ~20s the method's own docstring documents - so a
+single liveness check against a genuinely dead device can legitimately
+block `DeviceWatchdog.tick()` for up to 5 minutes** 🔍 OPEN (confirmed
+root cause, not yet fixed)
+
+- Found 2026-08-24 while investigating why a server GUI screenshot
+  showed no "Device appears wedged"/"Device recovered" messages in the
+  Activity Log despite a real disconnect+reconnect having clearly
+  happened (traced via the raw debug log). Added temporary diagnostic
+  logging to every branch of `core/device_watchdog.py` (`record_failure()`,
+  `tick()`, `_recover()`, `_recover_once()`, `_try_candidate()`, `_fail()`)
+  printing to stderr (visible in the captured stdout log, unlike the
+  GUI-only `result_queue` messages) and relaunched the server GUI to
+  pick it up.
+- **Root cause, confirmed via `sudo py-spy dump` mid-stall**: a fresh
+  live reproduction (deliberate Heltec+relay hub unplug/replug) showed
+  `tick() calling check_alive()` fire, then **nothing for over a
+  minute** - `sudo py-spy dump --pid <server>` caught the exact frame:
+  ```
+  Thread-6 (run_server):
+      waitForAckNak (meshtastic/util.py:226)
+      waitForAckNak (meshtastic/mesh_interface.py:1030)
+      check_alive (transport/meshtastic_serial.py:299)
+      tick (core/device_watchdog.py:124)
+  ```
+  Checking `meshtastic.mesh_interface.MeshInterface.__init__`
+  confirmed why: it defaults `timeout: int = 300` and builds
+  `self._timeout = Timeout(maxSecs=timeout)` from it - the same
+  `Timeout` object `waitForAckNak()` polls against. `MeshtasticSerialTransport.connect()`
+  (`transport/meshtastic_serial.py`) constructs its `SerialInterface`
+  without ever passing an explicit `timeout=`, so it silently inherits
+  this 300-second cap. `check_alive()`'s own docstring claim ("~20s")
+  was based on the bare `Timeout` class's own constructor default
+  (`maxSecs: int=20`), not on how this codebase actually constructs
+  the interface - the two never matched.
+- **This explains two things already documented as separate findings
+  tonight, retroactively**:
+  - Issue 43's amendment (a real several-minute Stop Server wait) -
+    not multiple chained heartbeat/cooldown cycles as guessed at the
+    time, but potentially this *single* call legitimately running for
+    up to 5 minutes.
+  - The screenshot that started this investigation - the diagnostic
+    trace from this same session **proved** `on_recovery_attempt()`
+    and `on_recovered()` do fire correctly, in order, on the expected
+    thread, with a real successful reconnect confirmed via matching
+    `local_node_id`. There is no callback-wiring bug. The earlier
+    screenshot simply caught a moment where `check_alive()` was still
+    inside this same up-to-300s wait - the messages weren't lost, they
+    just hadn't been generated yet.
+- **Not fixed here yet** - the straightforward fix would be either
+  passing an explicit short `timeout=` when constructing the
+  `SerialInterface` in `connect()` (affects the whole interface's
+  reply-wait behavior generally, not just `check_alive()`), or having
+  `check_alive()` use its own short-lived `Timeout`/thread-guarded call
+  the way `transport.send()` already does for Issue 21 - matching the
+  method's own documented ~20s intent without changing behavior
+  elsewhere. Left as an open, well-understood fix rather than applied
+  immediately, pending a decision on which approach to take.
+- The temporary `_diag()` diagnostic prints added to
+  `core/device_watchdog.py` for this investigation should be removed
+  once no longer needed for verification.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -2342,3 +2410,4 @@ to disconnect at the same instant - both hit the identical
 | 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
 | 44    | Seeed's native-USB firmware exhibits recurring real pipe-stalls, unrelated to Issue 22's sleep/wake cause | Informational (hardware/firmware quirk) | Open |
 | 45    | Unplugging one downstream hub can fault the shared upstream hub's own controller, taking down unrelated sibling devices too (confirmed not a power issue - reproduced again with the hub externally powered); also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
+| 46    | `check_alive()` inherits the meshtastic library's 300s default reply timeout instead of the ~20s its docstring assumes - confirmed via `sudo py-spy dump`; explains Issue 43's multi-minute Stop Server wait and proves the watchdog's GUI callbacks were never actually broken, just slow | Medium (recovery/UX latency, root cause confirmed) | Open |
