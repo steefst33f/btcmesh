@@ -2200,7 +2200,7 @@ a defect)
 
 ---
 
-## Test rig: unplugging one downstream USB hub can brown-out sibling devices sharing the same unpowered upstream hub
+## Test rig: unplugging one downstream USB hub can take down unrelated sibling devices on the same upstream hub
 
 **Issue 45: physically unplugging the sub-hub carrying the Heltec +
 relay board caused the Seeed (a separate device, not on that sub-hub)
@@ -2217,15 +2217,31 @@ to disconnect at the same instant - both hit the identical
   moment, confirmed by identical `[Errno 6] Device not configured` read
   failures in both the server and client GUI logs within the same
   second.
-- **Root cause (per the user's own hardware topology, not a log-level
-  finding)**: the Heltec+relay sub-hub and the Seeed are both
-  downstream of one shared hub plugged into this Mac's USB-C port, and
-  that shared hub has no external power adapter (bus-powered only, all
-  downstream ports draw from the single upstream USB-C link). Removing
-  one downstream load (the sub-hub) can transiently disrupt the shared
-  hub's power distribution to its other downstream ports - a well-known
-  limitation of unpowered/bus-powered hubs, which have no isolated
-  per-port power budget the way a self-powered hub does.
+- **Root cause, corrected after a second reproduction (2026-08-24,
+  same day) with real kernel-log evidence** - the Heltec+relay sub-hub
+  and the Seeed are both downstream of one shared "main" hub plugged
+  into this Mac's USB-C port. The *first* pass assumed a bus-power
+  brownout (the shared hub had no external power adapter at the time)
+  and recommended adding one. That was tried on the retest - the main
+  hub was given a power adapter, with the Seeed confirmed still
+  genuinely on it and only the Heltec+relay sub-hub unplugged - and
+  the **exact same correlated disconnect happened again**. Checking
+  `/usr/bin/log show` for this second incident's timeframe found the
+  real mechanism: unplugging the sub-hub at `02:23:55` (`hardware
+  connection lost`, as expected) was followed ~10s later, at
+  `02:24:05.431`, by the **main hub's own USB controller throwing a
+  genuine hardware exception** - `AppleUSBHub::hardwareException: type
+  0x00000001 with error 0xe00002ed`, from a failed control request on
+  the main hub port (`AppleUSB20Hub@01120000`), **not** the sub-hub
+  port that was actually unplugged. That exception took down the
+  *entire* main hub, re-enumerating everything on it together -
+  including two completely unrelated devices sharing that hub (a USB
+  Ethernet adapter and a USB-C AV adapter), not just the Seeed. So this
+  was never a power issue at all: it's this specific main hub's
+  controller chip glitching/resetting its whole port set in response
+  to a downstream port being hot-unplugged, independent of power
+  delivery - powering it did nothing because power was never the
+  actual constraint.
 - **The rest of the incident is a genuinely valuable, clean real-hardware
   result, not a failure**:
   - **Server watchdog**: `check_alive()`'s heartbeat caught the dead
@@ -2252,14 +2268,18 @@ to disconnect at the same instant - both hit the identical
   operation would need the user to restart the client by hand. Worth a
   future story if client-side auto-recovery is ever wanted, but out of
   scope here.
-- **Practical takeaway for future test sessions**: a self-powered
-  (externally-powered) hub for the shared upstream connection would
-  avoid this cross-device brownout, making future single-device wedge
-  tests cleaner to interpret (a disconnect on one device no longer
-  risks silently taking a sibling device down too).
+- **Practical takeaway for future test sessions, corrected**: a power
+  adapter on the shared hub does **not** fix this (confirmed by the
+  failed retest) - the only reliable fix is physical isolation. Put the
+  Seeed (or whichever device needs to stay up during a deliberate wedge
+  test) on a genuinely separate USB path - a different port on the Mac
+  directly, or at minimum a different physical hub - from whatever is
+  being unplugged, since this specific main hub's controller can't be
+  trusted to isolate its ports from each other on a hot-unplug event.
 - Not scoped or fixed here - logged so a correlated multi-device
   disconnect during future testing is recognized as this known rig
-  behavior rather than mistaken for a new code-level bug.
+  behavior (this specific hub's controller, not a power issue) rather
+  than mistaken for a new code-level bug.
 
 ---
 
@@ -2308,4 +2328,4 @@ to disconnect at the same instant - both hit the identical
 | 42    | "Automatic device-recovery enabled via relay" logs even when no relay is connected - based on config presence, not actual reachability | Minor (misleading log message) | **FIXED** |
 | 43    | Stop Server can take 60-90+ seconds if it coincides with a watchdog heartbeat check; alarming-looking but correct recovery log sequence | Informational (by-design tradeoff) | Open |
 | 44    | Seeed's native-USB firmware exhibits recurring real pipe-stalls, unrelated to Issue 22's sleep/wake cause | Informational (hardware/firmware quirk) | Open |
-| 45    | Unplugging one downstream hub can brown-out a sibling device sharing the same unpowered upstream hub; also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
+| 45    | Unplugging one downstream hub can fault the shared upstream hub's own controller, taking down unrelated sibling devices too (confirmed not a power issue - reproduced again with the hub externally powered); also confirmed server DeviceWatchdog recovery + client send-timeout both work correctly, and found the client GUI has no watchdog at all | Informational (test-rig topology) | Open |
