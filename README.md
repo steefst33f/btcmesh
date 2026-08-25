@@ -195,18 +195,22 @@ python btcmesh_client_gui.py
 
 ### Client GUI Features
 
-- **Device Selection**: Dropdown to select from multiple connected Meshtastic devices with scan/refresh capability
-- **Connection Status**: Displays connected device name and node ID with color-coded indicators
-- **Known Nodes Dropdown**: Select destination from previously seen mesh nodes
+- **Device Selection**: Dropdown listing connected Meshtastic devices, each labeled with its node ID (and name, once known) as background identity probes complete
+- **Busy Indicators**: The Scan and known-nodes-refresh buttons show their own progress text ("Scanning devices...", "Fetching known nodes...") while working, without blocking manual device/destination selection
+- **Known Nodes Dropdown**: Select destination from previously seen mesh nodes, or type a node ID manually
 - **Transaction Input**: Text fields for destination node ID and raw transaction hex
-- **Dry Run Toggle**: Test your transaction without actually broadcasting (ON/OFF indicator)
+- **Dry Run Toggle**: Test your transaction without actually broadcasting (YES/NO indicator)
 - **Real-time Status Log**: Color-coded scrollable log showing transaction progress
 - **Success Popup**: Styled confirmation popup with TXID and copy-to-clipboard button
 - **Abort Button**: Cancel a transaction in progress
-- **Load Example**: Quick-fill example data for testing
-- **Disabled Controls During Send**: Input fields are locked while transaction is in progress
+- **Load Hex Example**: Quick-fill example transaction data for testing
+- **Disabled Controls During Send**: Input fields are locked while a transaction is actively sending
+
+The app holds no ambient Meshtastic connection while idle - selecting a device only decides what Send will connect to; the actual connection happens when Send is pressed.
 
 ### Client GUI Layout
+
+> **Note:** the screenshots below predate the node-ID device labels, busy indicators, and other features described above - a refresh is pending.
 
 <img src="project/images/gui_main.png" width="500" alt="BTCMesh Client GUI Main Window">
 
@@ -218,11 +222,11 @@ python btcmesh_client_gui.py
 
 ### Usage Instructions
 
-1. **Select your Meshtastic device** - Use the device dropdown to select from available devices. Click "Scan" to refresh the list.
+1. **Select your Meshtastic device** - Use the device dropdown to select from available devices. Click "Scan" to refresh the list; each entry's label fills in with its node ID (and name) shortly after.
 
 2. **Select or enter destination** - Choose a known node from the dropdown or manually type the relay server's Meshtastic node ID (e.g., `!abcdef12`).
 
-3. **Enter transaction hex** - Paste your raw Bitcoin transaction hex string or use the "Paste" button to paste from clipboard.
+3. **Enter transaction hex** - Paste your raw Bitcoin transaction hex string into the text field (standard OS paste, e.g. Cmd/Ctrl+V).
 
 4. **Toggle Dry Run** (optional) - Enable dry run mode to test without actually transmitting over LoRa.
 
@@ -248,15 +252,19 @@ python btcmesh_server_gui.py
 ### Server GUI Features
 
 - **Start/Stop Controls**: One-click buttons to start and stop the relay server
+- **In-GUI Settings**: Bitcoin RPC credentials, Meshtastic device selection (with Scan/node-ID labeling, same as the client), and the reassembly timeout are all editable directly in the window, with a Save Settings button that persists them to `.env`
 - **Network Badge**: Displays the connected Bitcoin network (MAINNET/TESTNET3/TESTNET4/SIGNET) with color-coded badge
 - **Bitcoin RPC Status**: Shows connection status to Bitcoin Core node with host information and Tor indicator
 - **Meshtastic Status**: Shows device connection status with node ID and device path
+- **Active Sessions**: Live panel showing in-progress transactions and their chunk-received progress
 - **Activity Log**: Real-time color-coded log of all server events
 - **Clear Log**: Button to clear the activity log
 - **Transaction History**: Persistent, browsable log of past broadcast attempts (success and failure), stored in `data/transaction_history.json`
 - **Automatic Device Recovery**: If configured (see [Device Recovery](#device-recovery-optional)), a wedged Meshtastic device is detected and power-cycled automatically, with recovery attempts reported in the Activity Log
 
 ### Server GUI Layout
+
+> **Note:** the screenshot below predates Active Sessions, Transaction History, node-ID device labels, and automatic device recovery - a refresh is pending.
 
 <img src="project/images/server_gui_main.png" width="500" alt="BTCMesh Server GUI Main Window">
 
@@ -269,7 +277,7 @@ The Server GUI displays:
 
 ### Server Usage Instructions
 
-1. **Configure your `.env` file** - Ensure Bitcoin RPC credentials and Meshtastic settings are configured.
+1. **Configure Bitcoin RPC / Meshtastic settings** - Either edit `.env` directly, or fill in the Bitcoin RPC, Meshtastic device, and reassembly timeout fields in the GUI itself and click "Save Settings" to persist them to `.env`.
 
 2. **Click Start Server** - The server will initialize connections to Meshtastic and Bitcoin RPC.
 
@@ -278,9 +286,11 @@ The Server GUI displays:
    - Green indicators show successful connections
    - Red indicators show connection failures
 
-4. **Watch the activity log** - All server events appear with color-coded messages.
+4. **Watch the activity log and Active Sessions panel** - Server events appear with color-coded messages in the log; in-progress transactions and their chunk progress appear in Active Sessions.
 
-5. **Click Stop Server** - Gracefully shuts down the relay server.
+5. **Check Transaction History** - Click "History" to browse past broadcast attempts, success or failure.
+
+6. **Click Stop Server** - Gracefully shuts down the relay server.
 
 ## Tor Setup
 
