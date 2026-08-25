@@ -269,10 +269,10 @@ class MeshtasticSerialTransport(BaseTransport):
             self._unsubscribe()
         self._handler = None
 
-    def check_alive(self) -> bool:
+    def check_alive(self, timeout_seconds: Optional[float] = None) -> bool:
         """Best-effort liveness check. Returns False (never raises) if not
-        connected or the device doesn't respond within
-        _CHECK_ALIVE_TIMEOUT_SECONDS (~20s).
+        connected or the device doesn't respond within timeout_seconds
+        (falls back to _CHECK_ALIVE_TIMEOUT_SECONDS, ~20s, when omitted).
 
         Sends a local admin "get device metadata" request and waits for a
         real round-trip acknowledgment - proven by real hardware testing
@@ -315,7 +315,12 @@ class MeshtasticSerialTransport(BaseTransport):
             self._iface.localNode._sendAdmin(
                 p, wantResponse=True, onResponse=_quiet_response_handler
             )
-            return Timeout(maxSecs=self._CHECK_ALIVE_TIMEOUT_SECONDS).waitForAckNak(
+            effective_timeout = (
+                timeout_seconds
+                if timeout_seconds is not None
+                else self._CHECK_ALIVE_TIMEOUT_SECONDS
+            )
+            return Timeout(maxSecs=effective_timeout).waitForAckNak(
                 self._iface._acknowledgment
             )
         except Exception:

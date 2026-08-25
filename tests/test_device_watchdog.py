@@ -105,6 +105,42 @@ class TestTick(unittest.TestCase):
         watchdog.tick(now=61.0)
         on_recovery_attempt.assert_not_called()
 
+    def test_tick_uses_active_timeout_when_session_active(self):
+        """Story 26.8: a short timeout while a time-sensitive transfer
+        is in flight, so a blocked check_alive() doesn't eat into the
+        client's own retry budget (Issue 46)."""
+        watchdog, transport, power_control = make_watchdog(
+            heartbeat_interval_seconds=60.0,
+            active_check_timeout_seconds=20.0,
+            idle_check_timeout_seconds=300.0,
+        )
+        transport.check_alive.return_value = True
+        watchdog.tick(now=61.0, session_active=True)
+        transport.check_alive.assert_called_once_with(timeout_seconds=20.0)
+
+    def test_tick_uses_idle_timeout_when_session_not_active(self):
+        """Long timeout while idle, to avoid unnecessary recovery-cycle
+        log noise from a single slow round-trip when nothing
+        time-sensitive is happening."""
+        watchdog, transport, power_control = make_watchdog(
+            heartbeat_interval_seconds=60.0,
+            active_check_timeout_seconds=20.0,
+            idle_check_timeout_seconds=300.0,
+        )
+        transport.check_alive.return_value = True
+        watchdog.tick(now=61.0, session_active=False)
+        transport.check_alive.assert_called_once_with(timeout_seconds=300.0)
+
+    def test_tick_defaults_to_idle_timeout_when_session_active_omitted(self):
+        watchdog, transport, power_control = make_watchdog(
+            heartbeat_interval_seconds=60.0,
+            active_check_timeout_seconds=20.0,
+            idle_check_timeout_seconds=300.0,
+        )
+        transport.check_alive.return_value = True
+        watchdog.tick(now=61.0)
+        transport.check_alive.assert_called_once_with(timeout_seconds=300.0)
+
 
 class TestRecoveryNoPowerControl(unittest.TestCase):
     def test_fails_immediately_without_power_control(self):

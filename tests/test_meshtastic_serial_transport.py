@@ -979,6 +979,35 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
         )
         mock_iface.waitForAckNak.assert_not_called()
 
+    def test_honors_explicit_timeout_seconds(self):
+        """Story 26.8: an explicit timeout_seconds overrides the default
+        _CHECK_ALIVE_TIMEOUT_SECONDS - lets DeviceWatchdog use a shorter
+        bound while a session is active."""
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = True
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport.check_alive(timeout_seconds=300.0)
+
+        self.mock_mesh_interface.Timeout.assert_called_once_with(maxSecs=300.0)
+
+    def test_omitting_timeout_seconds_falls_back_to_default(self):
+        mock_iface = MagicMock()
+        mock_iface.myInfo.my_node_num = 0xDEADBEEF
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_mesh_interface.Timeout.return_value.waitForAckNak.return_value = True
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport.check_alive()
+
+        self.mock_mesh_interface.Timeout.assert_called_once_with(
+            maxSecs=MeshtasticSerialTransport._CHECK_ALIVE_TIMEOUT_SECONDS
+        )
+
 
 # ---------------------------------------------------------------------------
 # scan_for_reconnect_candidates tests (Story 26.4)

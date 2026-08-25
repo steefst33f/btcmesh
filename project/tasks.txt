@@ -1410,21 +1410,21 @@ lora/
         - [x] *   **Then** it implements the `CYCLE`/`OK`/`ERR` protocol above, toggling a relay/MOSFET GPIO pin wired across the target device's USB VBUS line.
     *   _Note: Promoted from "fallback" to the primary recovery mechanism after real-hardware testing showed `uhubctl` doesn't cut real VBUS power on either of the operator's hubs (Issue 19). Verified end-to-end on real hardware: relay cuts power (device's own LED confirmed going dark) and the device reconnects cleanly afterward. Supports both ESP32 and ESP8266 (e.g. NodeMCU V2) boards via `#if defined(...)`; a single relay channel is the normal case. Also added a PlatformIO project (`hardware/power_relay_firmware/platformio.ini`) as an alternative to the Arduino IDE for flashing. See `project/plans/story_26_7.md` for the full design, polarity-discovery process, and verification notes._
 
-- [ ] **Story 26.8: Session-aware check_alive() timeout**
-- [ ] *   **As a** relay operator,
-- [ ] *   **I want** `check_alive()`'s liveness-check timeout to be short while a transaction is actively transferring and more lenient while idle,
-- [ ] *   **So that** a wedge detected mid-session recovers fast enough for the client's own retry budget to survive it, without the watchdog logging "wedged"/retrying every ~60-80s during a genuinely prolonged idle outage.
-    - [ ] *   **Scenario:** Active session uses the short timeout
-        - [ ] *   **Given** `DeviceWatchdog.tick()` is called with `session_active=True` (a reassembly session is in progress).
-        - [ ] *   **When** the scheduled heartbeat check runs.
-        - [ ] *   **Then** `transport.check_alive()` is called with the short (~20s) timeout, matching Issue 46's fix.
-    - [ ] *   **Scenario:** Idle uses the long timeout
-        - [ ] *   **Given** `DeviceWatchdog.tick()` is called with `session_active=False` (no active session).
-        - [ ] *   **Then** `transport.check_alive()` is called with the long (~300s) timeout, matching the codebase's original de-facto behavior.
-    - [ ] *   **Scenario:** Caller bridges session state
-        - [ ] *   **Given** `server/run_loop.py`'s `run_polling_loop()`, which already calls `receiver.get_active_sessions()` every iteration for the GUI's Active Sessions panel.
-        - [ ] *   **Then** it also passes `session_active=bool(receiver.get_active_sessions())` into `watchdog.tick()` - `DeviceWatchdog` itself never learns what a "session" is, only a plain boolean.
-    *   _Note: Plan drafted 2026-08-24 as a follow-up to Issue 46 (`project/issues.txt`) - see `project/plans/story_26_8.md` for the full design. Not yet implemented._
+- [x] **Story 26.8: Session-aware check_alive() timeout**
+- [x] *   **As a** relay operator,
+- [x] *   **I want** `check_alive()`'s liveness-check timeout to be short while a transaction is actively transferring and more lenient while idle,
+- [x] *   **So that** a wedge detected mid-session recovers fast enough for the client's own retry budget to survive it, without the watchdog logging "wedged"/retrying every ~60-80s during a genuinely prolonged idle outage.
+    - [x] *   **Scenario:** Active session uses the short timeout
+        - [x] *   **Given** `DeviceWatchdog.tick()` is called with `session_active=True` (a reassembly session is in progress).
+        - [x] *   **When** the scheduled heartbeat check runs.
+        - [x] *   **Then** `transport.check_alive()` is called with the short (~20s) timeout, matching Issue 46's fix.
+    - [x] *   **Scenario:** Idle uses the long timeout
+        - [x] *   **Given** `DeviceWatchdog.tick()` is called with `session_active=False` (no active session).
+        - [x] *   **Then** `transport.check_alive()` is called with the long (~300s) timeout, matching the codebase's original de-facto behavior.
+    - [x] *   **Scenario:** Caller bridges session state
+        - [x] *   **Given** `server/run_loop.py`'s `run_polling_loop()`.
+        - [x] *   **Then** it also passes `session_active=bool(receiver.get_active_sessions())` into `watchdog.tick()` - `DeviceWatchdog` itself never learns what a "session" is, only a plain boolean.
+    *   _Note: Implemented 2026-08-25 (PR pending) - see `project/plans/story_26_8.md` for the full design and its Implementation Completion section for deviations. `receiver.get_active_sessions()` is now called unconditionally every loop iteration (previously conditional on `on_tick`/the liveness-log interval) since `session_active` needs a fresh value every tick, not just when the GUI's Active Sessions panel or periodic log needed it - cheap, in-memory-only call, negligible cost. Cross-referenced from Issue 43 (`project/issues.txt`): reverting the idle timeout to ~300s means Issue 43's "Stop Server" wait-time estimate, written assuming a flat ~20s bound, now understates the idle case again - an intended trade-off of this story, not a regression._
 
 ---
 

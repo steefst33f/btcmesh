@@ -192,3 +192,57 @@ needed.
   doesn't show the 60-80s-cadence "wedged" spam this story exists to
   avoid - a longer, ~300s-class gap between log lines is the
   expected/correct outcome for that case.
+
+---
+
+## Implementation Completion (2026-08-25)
+
+**Status:** Implemented as planned, no deviations from the design.
+
+- All 5 implementation steps done exactly as scoped:
+  `transport/base.py`'s abstract `check_alive()` gained
+  `timeout_seconds: Optional[float] = None`;
+  `MeshtasticSerialTransport.check_alive()` honors it, falling back to
+  `_CHECK_ALIVE_TIMEOUT_SECONDS`; `DeviceWatchdog.__init__` gained
+  `active_check_timeout_seconds`/`idle_check_timeout_seconds`, and
+  `tick()` gained `session_active: bool = False`, picking between them;
+  `run_polling_loop()` passes
+  `session_active=bool(receiver.get_active_sessions())`.
+- **One implementation detail the plan didn't fully spell out**: the
+  plan's "Current flow" section assumed `receiver.get_active_sessions()`
+  was "already called every loop iteration" - true only for the GUI
+  path (`on_tick` provided). The CLI path (`on_tick=None`) previously
+  only called it inside the periodic `LIVENESS_LOG_INTERVAL_SECONDS`
+  block, not every iteration. Since `watchdog.tick()` now needs
+  `session_active` on *every* call regardless of `on_tick`,
+  `run_polling_loop()` now calls `get_active_sessions()` unconditionally
+  once per iteration and reuses that single result for `on_tick` (if
+  given), the liveness log, and `watchdog.tick()` - simpler than the
+  plan's separate CLI-update concern, since both CLI and GUI already
+  share this one `run_polling_loop()` call site (confirmed via `grep` -
+  `watchdog.tick()` has exactly one call site in the whole codebase).
+  The extra per-second call is a cheap in-memory dict scan
+  (`TransactionReceiver.get_active_sessions()` ->
+  `TransactionReassembler.get_active_sessions_info()`), no I/O -
+  negligible cost.
+- Updated `tests/test_server_run_loop.py`'s
+  `test_on_tick_omitted_does_not_call_get_active_sessions_every_iteration`
+  (asserted the now-superseded old behavior) to assert the new one
+  instead, plus added `test_watchdog_tick_receives_session_active_from_active_sessions`.
+  Added `test_honors_explicit_timeout_seconds`/
+  `test_omitting_timeout_seconds_falls_back_to_default` to
+  `tests/test_meshtastic_serial_transport.py`, and three `session_active`
+  cases to `tests/test_device_watchdog.py`'s `TestTick`.
+- **Test results**: 853/853 tests pass (847 pre-existing + 6 new).
+- **Cross-reference added to Issue 43** (`project/issues.txt`):
+  reverting the idle-path timeout to ~300s means a Stop Server that
+  coincides with an idle heartbeat check can again take ~300s-class
+  time, not the ~60-90s the issue originally estimated (which assumed
+  a flat ~20s bound) - an intended consequence of this story, not a
+  new regression, so noted there to avoid future confusion.
+- Real-hardware verification not yet performed as of this writeup -
+  the unit-test coverage above exercises every branch
+  (`session_active=True`/`False`/omitted, explicit `timeout_seconds`
+  honored/omitted, CLI vs. GUI call patterns), but the plan's suggested
+  live repro (deliberate hub unplug mid-session vs. idle) hasn't been
+  run yet.

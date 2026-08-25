@@ -187,10 +187,11 @@ class TestRunPollingLoop(unittest.TestCase):
         self.assertEqual(on_tick.call_count, 2)
         on_tick.assert_any_call(["s1"])
 
-    def test_on_tick_omitted_does_not_call_get_active_sessions_every_iteration(self):
-        """The CLI has no live display and passes no on_tick - it should
-        not pay for a get_active_sessions() call every second just for
-        that, only when actually needed for the liveness log."""
+    def test_on_tick_omitted_still_calls_get_active_sessions_every_iteration(self):
+        """The CLI has no live display and passes no on_tick, but
+        get_active_sessions() is still needed every iteration (Story
+        26.8) to feed watchdog.tick()'s session_active - on_tick itself
+        just isn't invoked when omitted."""
         receiver = MagicMock()
         receiver.get_active_sessions.return_value = []
         watchdog = MagicMock()
@@ -198,7 +199,18 @@ class TestRunPollingLoop(unittest.TestCase):
                 patch("server.run_loop.time.sleep", side_effect=[None, RuntimeError("stop")]):
             with self.assertRaises(RuntimeError):
                 run_polling_loop(receiver, watchdog, log=MagicMock())
-        receiver.get_active_sessions.assert_not_called()
+        self.assertEqual(receiver.get_active_sessions.call_count, 2)
+
+    def test_watchdog_tick_receives_session_active_from_active_sessions(self):
+        receiver = MagicMock()
+        watchdog = MagicMock()
+        receiver.get_active_sessions.side_effect = [["s1"], []]
+        with patch("server.run_loop.time.time", return_value=100.0), \
+                patch("server.run_loop.time.sleep", side_effect=[None, RuntimeError("stop")]):
+            with self.assertRaises(RuntimeError):
+                run_polling_loop(receiver, watchdog, log=MagicMock())
+        watchdog.tick.assert_any_call(100.0, session_active=True)
+        watchdog.tick.assert_any_call(100.0, session_active=False)
 
 
 if __name__ == "__main__":
