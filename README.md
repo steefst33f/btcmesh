@@ -13,6 +13,8 @@ This project is currently under development.
 *   **Payload Handling**: Relay server reassembles hexadecimal chunks. The connected Bitcoin Core node performs full transaction validation upon broadcast attempt. (Advanced pre-broadcast decoding and validation capabilities on the relay server via `core/transaction_parser.py` are planned for future enhancements).
 *   **Basic Transaction Validation**: Currently, the relay server relies on the connected Bitcoin Core node for most transaction validation. (More extensive pre-broadcast sanity checks on the relay are planned).
 *   **Bitcoin RPC Integration**: Connects to a Bitcoin Core RPC node to broadcast the validated raw transaction.
+*   **Transaction History**: Completed transactions (success and failure) are persisted to `data/transaction_history.json` and viewable in the server GUI.
+*   **Automatic Device Recovery**: An optional watchdog detects an unresponsive Meshtastic USB device and power-cycles it automatically (via a uhubctl-compatible hub, or a cheap DIY relay board - see [Device Recovery](#device-recovery-optional) below), instead of requiring a manual unplug/replug.
 *   **Logging**: Comprehensive logging for both server and client operations.
 *   **Client Script (`btcmesh_client_cli.py`)**: Implemented command-line tool (`btcmesh_client_cli.py`) for users to send raw transactions.
 *   **Tor Support**: Optionally connect to a Bitcoin RPC node via its `.onion` address (requires Tor to be installed and running on your system).
@@ -25,26 +27,35 @@ btcmesh/
 ├── btcmesh_client_gui.py  # Graphical user interface client
 ├── btcmesh_server_cli.py  # Server/Relay script
 ├── btcmesh_server_gui.py  # Server GUI for relay operators
-├── core/                  # Core logic for the server/relay
-│   ├── __init__.py
-│   ├── config_loader.py   # For loading .env and other configurations
-│   ├── gui_common.py      # Shared GUI components and styling
-│   ├── logger_setup.py    # For setting up consistent logging
-│   ├── meshtastic_utils.py # Meshtastic device utilities
-│   ├── transaction_parser.py # For decoding raw Bitcoin transactions (Planned)
-│   ├── rpc_client.py      # For interacting with Bitcoin RPC
-│   └── reassembler.py     # For reassembling chunked messages
+├── core/                  # Pure business logic (protocol, RPC, config, device utils)
+│   ├── protocol.py         # Message chunking, parsing, session management
+│   ├── message_types.py    # Wire message dataclasses
+│   ├── reassembler.py      # Reassembling chunked messages
+│   ├── transaction_parser.py # Decoding raw Bitcoin transactions
+│   ├── transaction_history.py # Persistent transaction history storage
+│   ├── device_watchdog.py  # Wedged-device detection + power-cycle recovery
+│   ├── rpc_client.py       # Bitcoin RPC client
+│   ├── config_loader.py    # Loading .env and other configuration
+│   └── meshtastic_utils.py # Meshtastic device scanning/identity utilities
+├── transport/             # Mesh device communication (Meshtastic serial, power control)
+├── client/                # Client-side sending logic (chunking, ARQ, retries)
+├── server/                # Server-side receiving logic (reassembly, broadcast)
+├── gui/                   # Shared GUI components and styling (used by both GUIs)
+├── hardware/              # DIY relay-board firmware for automatic device recovery
+├── scripts/hw_tests/      # Real-hardware verification scripts
 ├── project/               # Project planning documents
 │   ├── tasks.txt
+│   ├── architecture.md
 │   ├── protocol_spec.md
 │   └── reference_materials.md
+├── data/                  # Runtime data, e.g. transaction_history.json (created at runtime)
 ├── logs/                  # Directory for log files (created at runtime)
 ├── tests/                 # Unit and integration tests
 ├── .env.example           # Example environment variable configuration file
 ├── requirements.txt       # Python dependencies
 └── README.md              # This file
 ```
-(Refer to `project/tasks.txt` for detailed ongoing tasks and user stories.)
+(Refer to `project/tasks.txt` for detailed ongoing tasks and user stories, and `project/architecture.md` for the full architecture design.)
 
 ## Setup Instructions
 
@@ -125,6 +136,25 @@ Key settings configurable in `.env`:
 *   Meshtastic device serial port (`MESHTASTIC_SERIAL_PORT`).
 *   Bitcoin RPC connection details (`BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD`). Use a `.onion` address for `BITCOIN_RPC_HOST` to route traffic through Tor (requires Tor to be installed and running).
 *   Transaction reassembly timeout (`REASSEMBLY_TIMEOUT_SECONDS`).
+
+## Device Recovery (Optional)
+
+Meshtastic USB devices can occasionally become unresponsive ("wedged") after extended runtime. The relay server includes an optional watchdog (`core/device_watchdog.py`) that detects this - via repeated send failures or a periodic liveness check - and automatically power-cycles the device to recover, without needing anyone to physically unplug/replug it.
+
+Automatic recovery requires a way to actually cut power to the device's USB connection:
+
+*   **A uhubctl-compatible USB hub** - if your hub genuinely supports per-port (or whole-hub) power switching via [`uhubctl`](https://github.com/mvp/uhubctl), no extra hardware is needed.
+*   **A DIY relay board** (recommended, since many hubs report success without actually cutting power) - a cheap ESP32 or ESP8266 microcontroller wired across the device's USB VBUS line, running the firmware in `hardware/power_relay_firmware/` (Arduino or PlatformIO project). See that firmware's source for wiring notes.
+
+Configure which backend to use via `.env`:
+```env
+# DIY relay board (recommended)
+RELAY_SERIAL_PORT=/dev/your/relay_board_port
+# RELAY_SERIAL_BAUD=115200   # optional, matches the firmware default
+# RELAY_CHANNEL=1            # optional, only needed if one board controls multiple devices
+```
+
+If no relay is configured, the server still detects and logs a wedged device - it just can't power-cycle it automatically.
 
 ## Running the Server (`btcmesh_server_cli.py`)
 
@@ -223,6 +253,8 @@ python btcmesh_server_gui.py
 - **Meshtastic Status**: Shows device connection status with node ID and device path
 - **Activity Log**: Real-time color-coded log of all server events
 - **Clear Log**: Button to clear the activity log
+- **Transaction History**: Persistent, browsable log of past broadcast attempts (success and failure), stored in `data/transaction_history.json`
+- **Automatic Device Recovery**: If configured (see [Device Recovery](#device-recovery-optional)), a wedged Meshtastic device is detected and power-cycled automatically, with recovery attempts reported in the Activity Log
 
 ### Server GUI Layout
 

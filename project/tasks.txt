@@ -1218,14 +1218,26 @@ lora/
 
 ### 24. Documentation and Handoff
 
-- [ ] **Story 24.1: Update architecture.md with final implementation**
-- [ ] *   **As a** Swift developer,
-- [ ] *   **I want** accurate documentation of the protocol,
-- [ ] *   **So that** I can implement the iOS version correctly.
-    - [ ] *   **Scenario:** Protocol spec finalized
-        - [ ] *   **Given** the completed refactoring.
-        - [ ] *   **Then** `architecture.md` reflects the actual implementation.
-        - [ ] *   **And** all message formats and constants are documented.
+- [x] **Story 24.1: Update architecture.md with final implementation**
+- [x] *   **As a** Swift developer,
+- [x] *   **I want** accurate documentation of the protocol,
+- [x] *   **So that** I can implement the iOS version correctly.
+    - [x] *   **Scenario:** Protocol spec finalized
+        - [x] *   **Given** the completed refactoring.
+        - [x] *   **Then** `architecture.md` reflects the actual implementation.
+        - [x] *   **And** all message formats and constants are documented.
+    *   _Note: Implemented 2026-08-25 as a full project-docs sync (see
+        `project/plans/story_24_1.md`), not just `architecture.md` -
+        `README.md` was stale in the same way (describing EPIC 3 as
+        in-progress/future, and predating EPICs 5-8 entirely).
+        `architecture.md` itself was reframed from "recommended future
+        architecture" to "as
+        implemented", its illustrative code examples corrected to match
+        real signatures (`core/message_types.py`, `client/sender.py`'s
+        actual `send_transaction()`, `transport/base.py`'s `check_alive()`/
+        `scan_for_reconnect_candidates()`), and its stale pre-Story-20.4
+        message-format table fixed. `project/protocol_spec.md` was
+        checked and found already accurate - left untouched._
 
 - [ ] **Story 24.2: Create Swift implementation skeleton**
 - [ ] *   **As a** Swift developer,
