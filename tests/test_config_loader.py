@@ -6,6 +6,7 @@ exercise core.config_loader directly and have no dependency on
 btcmesh_server.py, they were just historically written before this logic
 was extracted into its own core/ module.
 """
+import logging
 import os
 import tempfile
 import unittest
@@ -272,6 +273,46 @@ class TestRelayConfigStory267(unittest.TestCase):
                 "os.environ", {"RELAY_CHANNEL": bad_val}, clear=True
             ):
                 self.assertEqual(get_relay_channel(), 1)
+
+
+class TestLogLevelConfigIssue49(unittest.TestCase):
+    """Tests for load_log_level() (Issue 49 - LOG_LEVEL was documented in
+    .env.example but never actually read anywhere)."""
+
+    def test_log_level_loaded_from_env(self):
+        from core.config_loader import load_log_level
+
+        for value, expected in [
+            ("DEBUG", logging.DEBUG),
+            ("debug", logging.DEBUG),
+            ("  WARNING  ", logging.WARNING),
+            ("ERROR", logging.ERROR),
+            ("CRITICAL", logging.CRITICAL),
+        ]:
+            with unittest.mock.patch.dict("os.environ", {"LOG_LEVEL": value}, clear=True):
+                level, source = load_log_level()
+                self.assertEqual(level, expected)
+                self.assertEqual(source, "env")
+
+    def test_log_level_missing_uses_default(self):
+        from core.config_loader import load_log_level
+
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            level, source = load_log_level()
+            self.assertEqual(level, logging.INFO)
+            self.assertEqual(source, "default")
+
+    def test_log_level_invalid_uses_default_and_logs_warning(self):
+        from core.config_loader import load_log_level
+
+        with unittest.mock.patch.dict("os.environ", {"LOG_LEVEL": "NOTALEVEL"}, clear=True):
+            with unittest.mock.patch("core.config_loader.server_logger") as mock_logger:
+                level, source = load_log_level()
+                self.assertEqual(level, logging.INFO)
+                self.assertEqual(source, "default")
+                mock_logger.warning.assert_any_call(
+                    "Invalid LOG_LEVEL value 'NOTALEVEL'. Using default: INFO."
+                )
 
 
 class TestLoadAppConfig(unittest.TestCase):
