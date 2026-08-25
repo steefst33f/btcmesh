@@ -140,9 +140,14 @@ class BaseTransport(ABC):
         ...
 
     @abstractmethod
-    def check_alive(self) -> bool:
+    def check_alive(self, timeout_seconds: Optional[float] = None) -> bool:
         """Best-effort liveness check. Returns False (never raises) if not
-        connected or the device doesn't respond within a bounded timeout."""
+        connected or the device doesn't respond within a bounded timeout.
+
+        timeout_seconds: overrides the implementation's own default bound
+        when given (e.g. a shorter timeout while a time-sensitive session
+        is active - see DeviceWatchdog.tick()'s session_active parameter).
+        """
         ...
 
     @abstractmethod

@@ -47,6 +47,8 @@ class DeviceWatchdog:
         heartbeat_interval_seconds: float = 60.0,
         max_reenumerate_wait_seconds: float = 60.0,
         recovery_cooldown_seconds: float = 60.0,
+        active_check_timeout_seconds: float = 20.0,
+        idle_check_timeout_seconds: float = 300.0,
         on_recovery_attempt: Optional[Callable[[], None]] = None,
         on_recovered: Optional[Callable[[RecoveryOutcome], None]] = None,
         on_recovery_failed: Optional[Callable[[RecoveryOutcome], None]] = None,
@@ -77,6 +79,17 @@ class DeviceWatchdog:
                 it one clean, uninterrupted window long enough to
                 actually come up. Found via real-hardware testing (see
                 Issue 20 in project/issues.txt).
+            active_check_timeout_seconds: check_alive() timeout used when
+                tick()'s session_active is True - short, since every
+                second a check blocks eats directly into whether a
+                time-sensitive in-flight transfer can complete before the
+                client's own retry budget runs out (Issue 46).
+            idle_check_timeout_seconds: check_alive() timeout used when
+                session_active is False - long, matching this codebase's
+                original de-facto behavior (see Issue 46), to avoid
+                unnecessary recovery-cycle log noise from a single slow
+                round-trip when nothing time-sensitive is happening
+                (Story 26.8).
         """
         self._transport = transport
         self._power_control = power_control
@@ -85,6 +98,8 @@ class DeviceWatchdog:
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._max_reenumerate_wait_seconds = max_reenumerate_wait_seconds
         self._recovery_cooldown_seconds = recovery_cooldown_seconds
+        self._active_check_timeout_seconds = active_check_timeout_seconds
+        self._idle_check_timeout_seconds = idle_check_timeout_seconds
         self._on_recovery_attempt = on_recovery_attempt
         self._on_recovered = on_recovered
         self._on_recovery_failed = on_recovery_failed
@@ -105,13 +120,26 @@ class DeviceWatchdog:
         if self._consecutive_failures >= self._max_consecutive_failures:
             self._recover()
 
-    def tick(self, now: float) -> None:
+    def tick(self, now: float, session_active: bool = False) -> None:
         """Only performs the (potentially slow) liveness check once
-        heartbeat_interval_seconds has elapsed since the last one."""
+        heartbeat_interval_seconds has elapsed since the last one.
+
+        session_active: True while a time-sensitive transfer is actively
+        in flight - uses active_check_timeout_seconds (short) instead of
+        idle_check_timeout_seconds (long) for that check (Story 26.8).
+        The caller decides what "active" means; this class stays
+        ignorant of sessions as a concept, matching its transport-only
+        design (see class docstring).
+        """
         if now - self._last_heartbeat_time < self._heartbeat_interval_seconds:
             return
         self._last_heartbeat_time = now
-        if not self._transport.check_alive():
+        timeout = (
+            self._active_check_timeout_seconds
+            if session_active
+            else self._idle_check_timeout_seconds
+        )
+        if not self._transport.check_alive(timeout_seconds=timeout):
             self._recover()
 
     def _recover(self) -> None:

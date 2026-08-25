@@ -117,22 +117,27 @@ def run_polling_loop(
 
     on_tick, if given, is called every iteration with the current
     active-sessions snapshot - used by the GUI to keep its "Active
-    Sessions" panel live. The CLI has no such display and omits it, which
-    also avoids an extra get_active_sessions() call every second it
-    never needed.
+    Sessions" panel live.
+
+    Also drives watchdog.tick()'s session_active parameter (Story 26.8)
+    from the same active-sessions snapshot, so DeviceWatchdog uses a
+    short check_alive() timeout while a transfer is in flight and a long
+    one while idle - this is the one piece that already knows about
+    sessions (get_active_sessions()), bridging to DeviceWatchdog, which
+    stays deliberately ignorant of the concept.
     """
     last_cleanup = time.time()
     last_liveness_log = time.time()
     while not stop_check():
         now = time.time()
+        active_sessions = receiver.get_active_sessions()
         if on_tick:
-            on_tick(receiver.get_active_sessions())
+            on_tick(active_sessions)
         if now - last_cleanup >= CHECK_TIMEOUTS_INTERVAL_SECONDS:
             receiver.check_timeouts()
             last_cleanup = now
         if now - last_liveness_log >= LIVENESS_LOG_INTERVAL_SECONDS:
-            active = len(receiver.get_active_sessions())
-            log(f"Server heartbeat: alive, listening. {active} active session(s).", logging.INFO)
+            log(f"Server heartbeat: alive, listening. {len(active_sessions)} active session(s).", logging.INFO)
             last_liveness_log = now
-        watchdog.tick(now)
+        watchdog.tick(now, session_active=bool(active_sessions))
         time.sleep(1)

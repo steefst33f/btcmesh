@@ -2243,6 +2243,21 @@ a defect)
   long the "if it coincides" case can actually run - the "60-90+
   seconds" framing above should be read as the common case, not an
   upper bound.
+- **Update (Story 26.8, 2026-08-25)**: `check_alive()`'s timeout is now
+  session-aware - short (~20s) while a transfer is actively in flight,
+  but deliberately reverted back to long (~300s, matching this
+  codebase's original pre-Issue-46 behavior) while idle, to avoid
+  unnecessary recovery-cycle log noise from a single slow round-trip
+  when nothing time-sensitive is happening. Issue 43's reproduction
+  here was idle (no active session, no relay even attached), so the
+  "60-90+ seconds" estimate above - written assuming the flat ~20s
+  bound - now understates the idle case again: a Stop Server that
+  coincides with an idle heartbeat check can take up to ~300s-class
+  time, same order of magnitude as the pre-Issue-46 numbers this issue
+  originally described. This is Story 26.8's own intended trade-off
+  (see `project/plans/story_26_8.md`), not a new regression - the
+  active-session case (the scenario Issue 46 actually needed fixed)
+  stays fast.
 
 ---
 
