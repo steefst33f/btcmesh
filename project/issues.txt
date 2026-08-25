@@ -2560,6 +2560,50 @@ call to fail with `"ERR unknown command"`** ✅ FIXED (PR #59, 2026-08-24)
 
 ---
 
+## Config: LOG_LEVEL documented in .env.example but never read by the app
+
+**Issue 49: `.env.example` has always shipped a commented-out
+`LOG_LEVEL=INFO` line, but nothing in the codebase ever reads a
+`LOG_LEVEL` environment variable - `core/logger_setup.py` hardcodes
+`LOG_LEVEL = logging.INFO` as a module constant, so setting it in `.env`
+silently does nothing** ✅ FIXED (2026-08-26)
+
+- Found 2026-08-26 while reviewing `.env.example` for missing/stale
+  config documentation (unrelated docs pass). Confirmed via a full grep
+  for `getenv`/`environ` across the codebase - `LOG_LEVEL` never
+  appeared as a read, only as a dead comment.
+- **Root cause**: the `LOG_LEVEL` line in `.env.example` was written
+  aspirationally and never actually wired up in `core/logger_setup.py`.
+- **Fix**: added `core/config_loader.py::load_log_level()` (same
+  `(value, source)` pattern as `load_reassembly_timeout()`/
+  `get_relay_channel()` - parses `DEBUG`/`INFO`/`WARNING`/`ERROR`/
+  `CRITICAL` case-insensitively, warns and falls back to `logging.INFO`
+  on anything missing/invalid) and `core/logger_setup.py::set_logger_level()`
+  (updates both a logger's level and its handlers' formatters, since
+  `setup_logger()`'s existing `if not logger.handlers` guard means
+  calling it again after first construction would update the level but
+  silently leave the formatter on whichever of `LOG_FORMAT_INFO`/
+  `LOG_FORMAT_DEBUG` was chosen at the very first call).
+- Only wired into the two CLI entry points
+  (`btcmesh_server_cli.py`/`btcmesh_client_cli.py`) - both GUIs
+  (`btcmesh_client_gui.py`/`btcmesh_server_gui.py`) route their on-screen
+  activity log through their own Kivy `StatusLog` widget with
+  `logging.INFO`/`WARNING`/etc. used only as a color-coding hint, never
+  through `core/logger_setup.py`'s actual `Logger`/`Handler` machinery -
+  so there is no equivalent file/console logger there for `LOG_LEVEL` to
+  apply to.
+- Deliberately *not* auto-applied at `logger_setup.py` import time:
+  `server_logger`/`cli_logger` are constructed at module-import time
+  (before `.env` is loaded), and `core/config_loader.py` already imports
+  `server_logger` from `core/logger_setup.py` - having `logger_setup.py`
+  import back from `config_loader.py` would be a circular import. Each
+  CLI entry point instead calls `load_log_level()` + `set_logger_level()`
+  explicitly, right after its existing `load_app_config()` call - the
+  same explicit-application pattern already used for
+  `REASSEMBLY_TIMEOUT_SECONDS` and `RELAY_*`.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -2609,3 +2653,4 @@ call to fail with `"ERR unknown command"`** ✅ FIXED (PR #59, 2026-08-24)
 | 46    | `check_alive()` inherited the meshtastic library's 300s default reply timeout instead of the ~20s its docstring assumes - confirmed via `sudo py-spy dump`; explains Issue 43's multi-minute Stop Server wait and proves the watchdog's GUI callbacks were never actually broken, just slow | Medium (recovery/UX latency) | **FIXED** |
 | 47    | Server GUI's Scan button re-enables before device identity-probing actually finishes, and the probe's completion sentinel had no handler at all (silently discarded) | Minor (UX - misleading "ready" state) | **FIXED** |
 | 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | **FIXED** |
+| 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |

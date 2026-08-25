@@ -1,8 +1,17 @@
+import logging
 import os
 from dotenv import load_dotenv
 from typing import Optional
 
 from core.logger_setup import server_logger
+
+_LOG_LEVEL_NAMES = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 # Load environment variables from .env file in the project root
 # Determine the project root by going up one level from the 'core' directory
@@ -201,6 +210,28 @@ def load_reassembly_timeout():
             f"Using default: {default}s."
         )
         return default, "default"
+
+
+def load_log_level():
+    """
+    Loads the console/file log level (Issue 49) from environment variables
+    (.env). Returns (level: int, source: str); source is 'env' or 'default'.
+    Accepts DEBUG/INFO/WARNING/ERROR/CRITICAL, case-insensitive.
+    Falls back to default (logging.INFO) if missing/invalid.
+    """
+    if not dotenv_loaded:
+        load_app_config()
+    val = os.environ.get("LOG_LEVEL")
+    default = logging.INFO
+    if val is None:
+        return default, "default"
+    level = _LOG_LEVEL_NAMES.get(val.strip().upper())
+    if level is None:
+        server_logger.warning(
+            f"Invalid LOG_LEVEL value '{val}'. Using default: INFO."
+        )
+        return default, "default"
+    return level, "env"
 
 
 # Example of how to extend for more configurations:

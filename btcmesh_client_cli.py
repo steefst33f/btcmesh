@@ -9,8 +9,8 @@ import argparse
 import sys
 import os
 
-from core.config_loader import get_meshtastic_serial_port
-from core.logger_setup import setup_logger
+from core.config_loader import get_meshtastic_serial_port, load_app_config, load_log_level
+from core.logger_setup import setup_logger, set_logger_level
 from core.protocol import validate_destination, validate_transaction_hex
 from client.sender import TransactionSender, create_preview
 from transport.meshtastic_serial import MeshtasticSerialTransport
@@ -107,6 +107,10 @@ def run_send(destination: str, tx_hex: str, port: str = None) -> int:
 
 def cli_main(argv=None) -> int:
     """Thin CLI orchestration. Returns process exit code."""
+    load_app_config()
+    log_level, _log_level_source = load_log_level()
+    set_logger_level(cli_logger, log_level)
+
     args = parse_args(argv)
 
     try:

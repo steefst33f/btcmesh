@@ -51,6 +51,22 @@ def setup_logger(
 
     return logger
 
+
+def set_logger_level(logger: logging.Logger, level: int) -> None:
+    """Change an already-configured logger's level after the fact (Issue 49).
+
+    setup_logger() only sets each handler's formatter (INFO vs DEBUG line-
+    number format) the first time it's called for a given logger name -
+    its `if not logger.handlers` guard skips handler setup on any later
+    call, so re-calling setup_logger() with a new level would update
+    logger.level but leave formatters stuck on whichever format was
+    chosen at first construction. This updates both together.
+    """
+    logger.setLevel(level)
+    formatter = logging.Formatter(LOG_FORMAT_DEBUG if level == logging.DEBUG else LOG_FORMAT_INFO)
+    for handler in logger.handlers:
+        handler.setFormatter(formatter)
+
 # Pre-configured server logger instance
 server_logger = setup_logger("btcmesh_server", SERVER_LOG_FILE)
 

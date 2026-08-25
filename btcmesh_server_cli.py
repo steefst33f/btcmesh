@@ -12,10 +12,11 @@ from core.config_loader import (
     get_meshtastic_serial_port,
     load_app_config,
     load_bitcoin_rpc_config,
+    load_log_level,
     load_reassembly_timeout,
 )
 from core.device_watchdog import build_device_watchdog
-from core.logger_setup import server_logger
+from core.logger_setup import server_logger, set_logger_level
 from core.rpc_client import BitcoinRPCClient
 from core.transaction_history import TransactionHistory
 from server.run_loop import build_receiver, run_polling_loop
@@ -49,6 +50,8 @@ def run_server(port=None) -> int:
     """Connect, run until Ctrl+C, then disconnect. Returns process exit code."""
     server_logger.info("Loading configuration...")
     load_app_config()
+    log_level, _log_level_source = load_log_level()
+    set_logger_level(server_logger, log_level)
 
     resolved_port = port or get_meshtastic_serial_port()
     if resolved_port and probe_relay_board_id(resolved_port):
