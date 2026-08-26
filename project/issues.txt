@@ -2602,6 +2602,109 @@ silently does nothing** ✅ FIXED (2026-08-26)
   same explicit-application pattern already used for
   `REASSEMBLY_TIMEOUT_SECONDS` and `RELAY_*`.
 
+**Issue 50: `MeshCoreSerialTransport._subscribe()` never actually delivers
+incoming messages - it subscribes to `CONTACT_MSG_RECV` directly, but
+that event only ever fires as the reply to an explicit pull the
+transport never makes** Open
+
+- Found 2026-08-26, during the first-ever real-hardware MeshCore↔MeshCore
+  test (two freshly-flashed devices for Epic 9: a Heltec Vision Master
+  T190 as client, a Heltec V3 as server - see `project/plans/story_30_1.md`
+  and `project/plans/story_30_2.md` for the transport/validation work this
+  hardware finally exercises for real).
+- **Root cause**: MeshCore's companion protocol does not push received
+  messages to the client proactively. When a message arrives, the
+  firmware buffers it and sends a lightweight `MESSAGES_WAITING`
+  notification only; the companion client is expected to then actively
+  pull the message via `CMD_SYNC_NEXT_MESSAGE` (`commands.get_msg()` in
+  `meshcore_py`). Only the *reply* to that pull is what `meshcore_py`'s
+  `reader.py` parses into a `CONTACT_MSG_RECV` event - confirmed directly
+  in the library source, where `PacketType.CONTACT_MSG_RECV_V3` is
+  commented "A reply to CMD_SYNC_NEXT_MESSAGE (ver >= 3)".
+  `MeshCoreSerialTransport._subscribe()` (`transport/meshcore_serial.py`)
+  subscribes only to `EventType.CONTACT_MSG_RECV` and never calls
+  `get_msg()` (or `meshcore_py`'s own `start_auto_message_fetching()`
+  helper, which does exactly this pull automatically) - so
+  `CONTACT_MSG_RECV` never fires for a real incoming message, and the
+  handler registered via `set_message_handler()` is never invoked, even
+  though the message physically reached the radio.
+- **Confirmed via real hardware**: sent a plain test message
+  (`commands.send_msg()`) from one flashed device directly to the other.
+  The receiving device's raw event stream (subscribed to every
+  `EventType`, not just the one BTCMesh listens for) showed a genuine
+  `RX_LOG_DATA` event (SNR 11.75, RSSI -6, `route_typename: DIRECT`,
+  `payload_typename: TEXT_MSG`) immediately followed by
+  `MESSAGES_WAITING` - but `CONTACT_MSG_RECV` never fired, because
+  nothing ever called the pull that produces it.
+- **Why the mocked unit test suite never caught this**:
+  `tests/test_meshcore_serial_transport.py` mocks `sys.modules['meshcore']`
+  entirely; its receive tests simulate delivery by directly invoking the
+  registered `_on_event` callback, never modeling the real
+  `MESSAGES_WAITING` → `get_msg()` → `CONTACT_MSG_RECV` round trip. The
+  gap is invisible to a mocked test by construction - only real hardware
+  (or a much more faithful mock) can surface it. This is exactly the risk
+  `project/plans/story_30_1.md` flagged Story 30.5 ("real-hardware
+  verification script") as existing to catch.
+- **Proposed fix**: `_subscribe()` should call `await
+  self._mc.start_auto_message_fetching()` in addition to its existing
+  `EventType.CONTACT_MSG_RECV` subscription (that event is still what the
+  fetched-message reply arrives as - the missing piece is the "go get it"
+  trigger), bridged through the class's existing `_run_coro()` sync/async
+  bridge - the same pattern `connect()`/`send()`/`check_alive()` already
+  use to call into the background asyncio loop from synchronous
+  `BaseTransport` methods.
+- Related: [[Issue 51]] - found in the same session; both block a real
+  end-to-end MeshCore relay, but are independent root causes needing
+  independent fixes (and, per existing practice in this repo, independent
+  branches/PRs even though planned together here).
+
+**Issue 51: `core/constants.py`'s `DEFAULT_CHUNK_SIZE` (170, tuned for
+Meshtastic) exceeds MeshCore's hard per-message cap, so every `BTC_TX`
+chunk is rejected outright over MeshCore** Open
+
+- Found 2026-08-26, same real-hardware session as Issue 50.
+- **Root cause**: `DEFAULT_CHUNK_SIZE=170` was sized against Meshtastic's
+  LongFast airtime budget (per its own docstring in
+  `core/constants.py`) - `project/plans/story_30_1.md`'s Critical Files
+  table already flagged this value as needing "re-validation against
+  MeshCore's framing in a later story, not blocking this one." MeshCore's
+  companion firmware hard-caps a single text message payload at
+  `MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160` bytes
+  (`src/helpers/BaseChatMesh.h`, `CIPHER_BLOCK_SIZE=16` in
+  `src/MeshCore.h`, both in the `meshcore-dev/MeshCore` firmware repo).
+  BTCMesh's wire format adds `BTC_TX|<5-char session>|<n>/<total>|`
+  framing (~17-19 bytes) on top of the 170-char hex payload, landing
+  around 187-189 bytes total - over MeshCore's 160-byte ceiling.
+  `Mesh::createDatagram()` rejects any text longer than `MAX_TEXT_LEN`
+  outright (`composeMsgPacket()` in `BaseChatMesh.cpp` returns NULL before
+  ever reaching the radio), which the companion protocol reports back as
+  `MSG_SEND_FAILED` → `ERR_CODE_TABLE_FULL` - a generic "packet could not
+  be created" code reused across several unrelated failure paths in
+  `examples/companion_radio/MyMesh.cpp`, not a literal contact-table or
+  packet-pool exhaustion (initially misleading during diagnosis - traced
+  through the actual firmware source rather than assumed from the error
+  name).
+- **Confirmed via real hardware**: every attempt at the default 170-char
+  chunk size failed immediately on chunk 1/5 with `{'error_code': 3,
+  'code_string': 'ERR_CODE_TABLE_FULL'}`. Dropping to a 100-char chunk
+  size (117-byte wire message, well under the 160-byte cap) sent
+  successfully with no send-side error at all - isolating the cause to
+  message length, not a hardware or radio problem.
+- **Proposed fix**: needs a transport-aware chunk size, not one global
+  `DEFAULT_CHUNK_SIZE` - same shape as Story 30.2's
+  `BaseTransport.validate_destination()`. Add a
+  `max_chunk_payload_size`-style property (name TBD) to `BaseTransport`;
+  `MeshtasticSerialTransport` keeps returning the existing 170;
+  `MeshCoreSerialTransport` returns a conservative value safely under the
+  160-byte `MAX_TEXT_LEN` ceiling, leaving margin for the wire-format
+  overhead's worst case (larger chunk-total digit counts) rather than
+  shaving right up to the edge - per [[feedback_ground_caps_in_physical_constraints]]
+  ("derive LoRa-transport caps from real constraints, lean conservative").
+  `client/sender.py`'s `create_session()` call would need to consult
+  `self.transport`'s cap instead of `core.protocol`'s hardcoded
+  `DEFAULT_CHUNK_SIZE` default.
+- Related: [[Issue 50]].
+
 ---
 
 ## Summary
@@ -2654,3 +2757,5 @@ silently does nothing** ✅ FIXED (2026-08-26)
 | 47    | Server GUI's Scan button re-enables before device identity-probing actually finishes, and the probe's completion sentinel had no handler at all (silently discarded) | Minor (UX - misleading "ready" state) | **FIXED** |
 | 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | **FIXED** |
 | 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |
+| 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | Open |
+| 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | Open |
