@@ -138,7 +138,7 @@ class TestRunSendConnection(unittest.TestCase):
 
             cli.run_send("!abcdef12", "deadbeef", port="/dev/explicit_port")
 
-        mock_transport.connect.assert_called_once_with("/dev/explicit_port")
+        mock_transport.connect.assert_called_once_with("/dev/explicit_port", log_firmware_info=True)
 
     def test_omitted_port_falls_back_to_env(self):
         with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
@@ -153,7 +153,7 @@ class TestRunSendConnection(unittest.TestCase):
 
             cli.run_send("!abcdef12", "deadbeef")
 
-        mock_transport.connect.assert_called_once_with("/dev/env_port")
+        mock_transport.connect.assert_called_once_with("/dev/env_port", log_firmware_info=True)
 
 
 class TestRunSendResult(unittest.TestCase):

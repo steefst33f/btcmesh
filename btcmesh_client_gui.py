@@ -68,6 +68,7 @@ from core.meshtastic_utils import (
     get_known_nodes,
     format_node_display,
     format_device_display,
+    extract_firmware_info,
 )
 
 # Import transport layer
@@ -192,13 +193,18 @@ def process_result(result: tuple) -> ResultAction:
         iface = result[1]
         node_id = result[2]
         node_name = result[3] if len(result) > 3 else None
+        firmware_version = result[4] if len(result) > 4 else None
+        hw_model = result[5] if len(result) > 5 else None
         action.store_iface = iface
         if node_name:
             action.connection_text = f'Meshtastic: Connected - {node_name} ({node_id})'
-            action.log_messages.append((f"Connected to Meshtastic device: {node_name} ({node_id})", COLOR_SUCCESS))
+            message = f"Connected to Meshtastic device: {node_name} ({node_id})"
         else:
             action.connection_text = f'Meshtastic: Connected ({node_id})'
-            action.log_messages.append((f"Connected to Meshtastic device: {node_id}", COLOR_SUCCESS))
+            message = f"Connected to Meshtastic device: {node_id}"
+        if firmware_version or hw_model:
+            message += f" - firmware {firmware_version or 'unknown'}, hardware {hw_model or 'unknown'}"
+        action.log_messages.append((message, COLOR_SUCCESS))
         action.connection_color = COLOR_SUCCESS
 
     elif result_type == 'log':
@@ -567,7 +573,7 @@ class BTCMeshGUI(BoxLayout):
         for attempt in range(CONNECT_MAX_ATTEMPTS):
             try:
                 transport = MeshtasticSerialTransport()
-                transport.connect(port)
+                transport.connect(port, log_firmware_info=True)
                 # Issue 32: local_node_id is always correctly zero-padded;
                 # transport.connect() already guarantees it's set by the
                 # time it returns without raising.
@@ -647,7 +653,10 @@ class BTCMeshGUI(BoxLayout):
                 try:
                     node_id = transport.local_node_id
                     name = get_own_node_name(transport._iface)
-                    self.result_queue.put(('device_identity', path, node_id, name))
+                    firmware_version, hw_model = extract_firmware_info(transport._iface)
+                    self.result_queue.put((
+                        'device_identity', path, node_id, name, firmware_version, hw_model
+                    ))
                     nodes = get_known_nodes(transport._iface)
                     self.result_queue.put(('known_nodes_fetched', nodes))
                 finally:
@@ -740,9 +749,14 @@ class BTCMeshGUI(BoxLayout):
         if result[0] == 'devices_found':
             devices = result[1]
             if devices:
-                self.devices = [{'path': p, 'node_id': None, 'name': None} for p in devices]
+                self.devices = [
+                    {'path': p, 'node_id': None, 'name': None,
+                     'firmware_version': None, 'hw_model': None}
+                    for p in devices
+                ]
                 self.device_spinner.values = [
-                    format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
+                    format_device_display(d['path'], d['node_id'], d['name'], d['hw_model'])
+                    for d in self.devices
                 ]
                 if len(devices) == 1:
                     # Auto-select (not auto-connect - 2026-08-23 revision,
@@ -815,9 +829,12 @@ class BTCMeshGUI(BoxLayout):
         # extended by Issue 37's node-name work)
         if result[0] == 'device_identity':
             path, node_id, name = result[1], result[2], result[3]
+            firmware_version = result[4] if len(result) > 4 else None
+            hw_model = result[5] if len(result) > 5 else None
             for device in self.devices:
                 if device['path'] == path:
                     device['node_id'], device['name'] = node_id, name
+                    device['firmware_version'], device['hw_model'] = firmware_version, hw_model
                     break
             if node_id:
                 self.devices, _removed = dedupe_devices_by_node_id(self.devices, keep_path=path)
@@ -944,7 +961,10 @@ class BTCMeshGUI(BoxLayout):
         try:
             node_id = transport.local_node_id
             node_name = get_own_node_name(self.iface)
-            self.result_queue.put(('connected', self.iface, node_id, node_name))
+            firmware_version, hw_model = extract_firmware_info(self.iface)
+            self.result_queue.put((
+                'connected', self.iface, node_id, node_name, firmware_version, hw_model
+            ))
 
             if dest.lower() == node_id.lower():
                 self.result_queue.put(('error', "Cannot send to your own node"))

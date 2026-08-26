@@ -67,7 +67,7 @@ from gui.gui_common import (
 
 from core.config_loader import load_app_config
 from core.device_watchdog import build_device_watchdog
-from core.meshtastic_utils import get_own_node_name, format_device_display
+from core.meshtastic_utils import get_own_node_name, format_device_display, extract_firmware_info
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from transport.meshtastic_serial import MeshtasticSerialTransport
@@ -796,18 +796,21 @@ class BTCMeshServerGUI(BoxLayout):
 
             transport = MeshtasticSerialTransport()
             try:
-                transport.connect(serial_port)
+                transport.connect(serial_port, log_firmware_info=True)
             except TransportConnectionError as e:
                 self.result_queue.put(('meshtastic_failed', str(e)))
                 return
 
             node_name = get_own_node_name(transport._iface)
+            firmware_version, hw_model = extract_firmware_info(transport._iface)
             self.result_queue.put((
                 'meshtastic_connected',
                 {
                     'node_id': transport.local_node_id,
                     'device': serial_port or 'auto-detect',
                     'node_name': node_name,
+                    'firmware_version': firmware_version,
+                    'hw_model': hw_model,
                 },
             ))
 
@@ -987,10 +990,15 @@ class BTCMeshServerGUI(BoxLayout):
             # phases instead of looking "ready" while probing continues.
             devices = data
             if devices:
-                self.devices = [{'path': p, 'node_id': None, 'name': None} for p in devices]
+                self.devices = [
+                    {'path': p, 'node_id': None, 'name': None,
+                     'firmware_version': None, 'hw_model': None}
+                    for p in devices
+                ]
                 # Add Auto-detect as first option, then found devices
                 self.device_spinner.values = [DEVICE_AUTO_DETECT] + [
-                    format_device_display(d['path'], d['node_id'], d['name']) for d in self.devices
+                    format_device_display(d['path'], d['node_id'], d['name'], d['hw_model'])
+                    for d in self.devices
                 ]
                 if len(devices) == 1:
                     # Exactly one real device found - auto-select it so the
@@ -1035,9 +1043,12 @@ class BTCMeshServerGUI(BoxLayout):
             # selection_handler to protect here - the server's device
             # spinner has no bound selection handler at all.
             path, node_id, name = result[1], result[2], result[3]
+            firmware_version = result[4] if len(result) > 4 else None
+            hw_model = result[5] if len(result) > 5 else None
             for device in self.devices:
                 if device['path'] == path:
                     device['node_id'], device['name'] = node_id, name
+                    device['firmware_version'], device['hw_model'] = firmware_version, hw_model
                     break
             if node_id:
                 self.devices, _removed = dedupe_devices_by_node_id(self.devices, keep_path=path)
@@ -1093,6 +1104,8 @@ class BTCMeshServerGUI(BoxLayout):
             node_id = data.get('node_id', 'Unknown') if isinstance(data, dict) else data
             device = data.get('device') if isinstance(data, dict) else None
             node_name = data.get('node_name') if isinstance(data, dict) else None
+            firmware_version = data.get('firmware_version') if isinstance(data, dict) else None
+            hw_model = data.get('hw_model') if isinstance(data, dict) else None
             # Show the node's human-readable name before its id, matching the
             # client GUI's convention - falls back to the id alone if the
             # device hasn't advertised a name (e.g. right after a factory reset).
@@ -1105,10 +1118,10 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_CONNECTED.color
 
             id_display = f"{node_name} ({node_id})" if node_name else node_id
-            self.status_log.add_message(
-                f"Connected to Meshtastic device: {id_display}" + (f" on {device}" if device else ""),
-                COLOR_SUCCESS,
-            )
+            message = f"Connected to Meshtastic device: {id_display}" + (f" on {device}" if device else "")
+            if firmware_version or hw_model:
+                message += f" - firmware {firmware_version or 'unknown'}, hardware {hw_model or 'unknown'}"
+            self.status_log.add_message(message, COLOR_SUCCESS)
 
         elif status_type == 'meshtastic_failed':
             self.meshtastic_label.text = STATE_MESHTASTIC_FAILED.text

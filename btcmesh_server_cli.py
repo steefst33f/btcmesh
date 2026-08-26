@@ -63,7 +63,7 @@ def run_server(port=None) -> int:
     server_logger.info(f"Connecting to Meshtastic device{f' ({resolved_port})' if resolved_port else ' (auto-detect)'}...")
     transport = MeshtasticSerialTransport()
     try:
-        transport.connect(resolved_port)
+        transport.connect(resolved_port, log_firmware_info=True)
     except TransportConnectionError as e:
         server_logger.error(f"Failed to connect to Meshtastic device: {e}")
         return 2
