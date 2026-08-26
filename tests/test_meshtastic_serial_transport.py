@@ -220,6 +220,65 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
         self.assertIn("could not retrieve device info", str(ctx.exception))
         mock_iface.close.assert_called_once()
 
+    def test_connect_logs_firmware_when_opted_in_and_metadata_available(self):
+        """Story 27.4: given the caller opts in with log_firmware_info=True
+        and the connected iface exposes metadata (populated for free by
+        waitForConfig()), Then the success log is extended with firmware
+        version and hardware model."""
+        mock_iface = MockSerialInterface(0xAABBCCDD)
+        mock_iface.metadata = MagicMock()
+        mock_iface.metadata.firmware_version = '2.6.11.60ec05e'
+        mock_iface.metadata.hw_model = 47
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_meshtastic.mesh_pb2.HardwareModel.Name.return_value = 'HELTEC_V3'
+
+        transport = MeshtasticSerialTransport()
+        with self.assertLogs('transport.meshtastic_serial', level='INFO') as log_ctx:
+            transport.connect("/dev/ttyUSB0", log_firmware_info=True)
+
+        joined = '\n'.join(log_ctx.output)
+        self.assertIn('Firmware: 2.6.11.60ec05e', joined)
+        self.assertIn('Hardware: HELTEC_V3', joined)
+
+    def test_connect_omits_firmware_by_default_even_with_metadata_available(self):
+        """Given log_firmware_info is left at its default (False) - the
+        case for probe-only connects (device-dropdown scanning, known-
+        nodes refresh) - Then the success log stays plain even though
+        metadata is available, so probing many devices doesn't log
+        firmware/hardware once per device."""
+        mock_iface = MockSerialInterface(0xAABBCCDD)
+        mock_iface.metadata = MagicMock()
+        mock_iface.metadata.firmware_version = '2.6.11.60ec05e'
+        mock_iface.metadata.hw_model = 47
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+        self.mock_meshtastic.mesh_pb2.HardwareModel.Name.return_value = 'HELTEC_V3'
+
+        transport = MeshtasticSerialTransport()
+        with self.assertLogs('transport.meshtastic_serial', level='INFO') as log_ctx:
+            transport.connect("/dev/ttyUSB0")
+
+        joined = '\n'.join(log_ctx.output)
+        self.assertIn('Node ID: !aabbccdd', joined)
+        self.assertNotIn('Firmware:', joined)
+        self.assertNotIn('Hardware:', joined)
+
+    def test_connect_logs_node_id_when_metadata_absent(self):
+        """Given the connected iface has no metadata attribute (older
+        firmware, or an unexpected shape) even with log_firmware_info=True,
+        Then the node-ID log still fires with no firmware/hardware suffix,
+        rather than raising."""
+        mock_iface = MockSerialInterface(0xAABBCCDD)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        with self.assertLogs('transport.meshtastic_serial', level='INFO') as log_ctx:
+            transport.connect("/dev/ttyUSB0", log_firmware_info=True)
+
+        joined = '\n'.join(log_ctx.output)
+        self.assertIn('Node ID: !aabbccdd', joined)
+        self.assertNotIn('Firmware:', joined)
+        self.assertNotIn('Hardware:', joined)
+
 
 # ---------------------------------------------------------------------------
 # Disconnect tests

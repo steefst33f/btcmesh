@@ -6,7 +6,7 @@ This module provides device scanning, node information retrieval, and formatting
 functions used by CLI, GUI, and server components.
 """
 from dataclasses import dataclass
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 
 def scan_meshtastic_devices() -> List[str]:
@@ -100,9 +100,30 @@ class ProbedDevice:
     destructuring."""
     node_id: Optional[str]
     name: Optional[str]
+    firmware_version: Optional[str] = None
+    hw_model: Optional[str] = None
 
 
 RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"
+
+
+def extract_firmware_info(iface) -> Tuple[Optional[str], Optional[str]]:
+    """Extract firmware version and hardware model name from a connected
+    interface's metadata, populated for free by the connect handshake's
+    waitForConfig() - no extra round-trip. Returns (None, None) on any
+    missing/unexpected metadata shape rather than raising: firmware info
+    is a nice-to-have for logging/display, never worth failing a
+    connection over.
+    """
+    if iface is None or getattr(iface, "metadata", None) is None:
+        return None, None
+    try:
+        from meshtastic import mesh_pb2
+        firmware_version = iface.metadata.firmware_version or None
+        hw_model = mesh_pb2.HardwareModel.Name(iface.metadata.hw_model) or None
+        return firmware_version, hw_model
+    except Exception:
+        return None, None
 
 
 def probe_device_identity(path: str) -> ProbedDevice:
@@ -151,9 +172,12 @@ def probe_device_identity(path: str) -> ProbedDevice:
     transport = MeshtasticSerialTransport()
     try:
         transport.connect(path)
+        firmware_version, hw_model = extract_firmware_info(transport._iface)
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=get_own_node_name(transport._iface),
+            firmware_version=firmware_version,
+            hw_model=hw_model,
         )
     except TransportConnectionError:
         return ProbedDevice(node_id=None, name=None)
@@ -161,7 +185,8 @@ def probe_device_identity(path: str) -> ProbedDevice:
         transport.disconnect()
 
 
-def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:
+def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None,
+                           hw_model: Optional[str] = None) -> str:
     """Format a device path and its (possibly not-yet-known) identity for
     display in a dropdown.
 
@@ -172,13 +197,19 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
         known with no node_id - e.g. probe_device_identity()'s Issue 37
         relay-board result ('Relay board (not a Meshtastic device)'),
         which has no Meshtastic protocol identity to show.
+
+        If hw_model is known, it's appended as a bracketed suffix (e.g.
+        'Meshtastic 4418 (!7c5b4418) [HELTEC_V3]') so multiple physically
+        connected devices with similar names can be told apart at a
+        glance during hardware testing (Story 27.4).
     """
+    suffix = f" [{hw_model}]" if hw_model else ""
     if node_id and name:
-        return f"{name} ({node_id})"
+        return f"{name} ({node_id}){suffix}"
     if node_id:
-        return f"{path} ({node_id})"
+        return f"{path} ({node_id}){suffix}"
     if name:
-        return name
+        return f"{name}{suffix}"
     return path
 
 

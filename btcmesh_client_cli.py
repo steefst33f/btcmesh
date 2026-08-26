@@ -63,7 +63,7 @@ def run_send(destination: str, tx_hex: str, port: str = None) -> int:
 
     transport = MeshtasticSerialTransport()
     try:
-        transport.connect(resolved_port)
+        transport.connect(resolved_port, log_firmware_info=True)
     except TransportConnectionError as e:
         print(f"Failed to connect to Meshtastic device: {e}", file=sys.stderr)
         cli_logger.error(f"Failed to connect: {e}")

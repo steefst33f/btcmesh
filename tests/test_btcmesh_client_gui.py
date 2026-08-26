@@ -641,8 +641,10 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
         self.assertEqual(
             gui.devices,
             [
-                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
-                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None,
+                 'firmware_version': None, 'hw_model': None},
+                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None,
+                 'firmware_version': None, 'hw_model': None},
             ],
         )
         mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
@@ -1456,6 +1458,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
+        mock_transport._iface.metadata = None
         mock_nodes = [{'id': '!11111111', 'name': 'Other', 'lastHeard': 0, 'is_recent': False}]
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
@@ -1473,7 +1476,9 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         mock_transport.connect.assert_called_once_with('/dev/ttyUSB0')
         mock_transport.disconnect.assert_called_once()
         results = self._drain(gui.result_queue)
-        self.assertIn(('device_identity', '/dev/ttyUSB0', '!7c5b4418', 'Meshtastic 4418'), results)
+        self.assertIn(
+            ('device_identity', '/dev/ttyUSB0', '!7c5b4418', 'Meshtastic 4418', None, None), results
+        )
         self.assertIn(('known_nodes_fetched', mock_nodes), results)
 
     def test_shows_busy_indicators_without_disabling_anything(self):

@@ -1485,7 +1485,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with(None)
+                        mock_transport_cls.return_value.connect.assert_called_once_with(None, log_firmware_info=True)
 
     def test_selected_device_passes_to_server(self):
         """Given device selected, Then serial_port should be passed when connecting."""
@@ -1513,7 +1513,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
+                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
 
     def test_labeled_device_selection_resolves_to_real_path(self):
         """Story 27.3: once probing has labeled a device "Name (!nodeid)",
@@ -1546,7 +1546,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0')
+                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
 
     def test_start_pressed_rejects_relay_board_without_attempting_connect(self):
         """Issue 37 follow-up: given the selected device is confirmed to be
@@ -1618,8 +1618,10 @@ class TestNodeIdDisplayStory273(unittest.TestCase):
         self.assertEqual(
             gui.devices,
             [
-                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
-                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+                {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None,
+                 'firmware_version': None, 'hw_model': None},
+                {'path': '/dev/ttyACM0', 'node_id': None, 'name': None,
+                 'firmware_version': None, 'hw_model': None},
             ],
         )
         mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
