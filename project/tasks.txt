@@ -1726,3 +1726,97 @@ lora/
 
 ---
 
+# EPIC 9: MeshCore Transport Support
+
+**Goal:** Add MeshCore as a second selectable transport alongside Meshtastic, reusing the existing chunked-transaction protocol and client/server orchestration unchanged, so the same relay flow can run over MeshCore-flashed hardware.
+
+**Background:** BTCMesh currently only speaks Meshtastic. Research (`project/mesh_network_analysis.md`) found MeshCore to be the closest architectural match among live alternatives: same hardware class (Heltec, T-Beam, T-Echo, T-Deck, RAK), a companion-protocol-over-serial shape similar to Meshtastic's, and an existing Python client library (`meshcore`/`meshcore_py`) - though that library is asyncio-native, unlike Meshtastic's synchronous API, which is the main new wrinkle. `transport/base.py`'s `BaseTransport` abstraction was already built with exactly this kind of second implementation in mind. Scope for this epic is wired/USB-serial only - BLE (for either transport) is deferred until serial works well end-to-end.
+
+**Priority:** Medium - new capability, not a bug fix; no impact on existing Meshtastic users.
+
+**Branch:** `epic-9-meshcore-support` (off `master`) - all story branches for this epic branch off and PR back into this branch, not `master`, so unrelated hotfixes keep landing on `master` directly in parallel. Merges to `master` once the epic is stable.
+
+---
+
+## Stories
+
+### 30. MeshCore Serial Transport
+
+- [x] **Story 30.1: `MeshCoreSerialTransport` - core connect/send/receive over serial**
+- [x] *   **As a** developer,
+- [x] *   **I want** a `BaseTransport` implementation backed by the `meshcore` Python library,
+- [x] *   **So that** the existing client/server orchestration can send and receive BTCMesh chunk messages over MeshCore-flashed hardware without any changes to `client/sender.py` or `server/receiver.py`.
+    - [x] *   **Scenario:** Connect and send succeed
+        - [x] *   **Given** a MeshCore companion device connected over USB serial.
+        - [x] *   **When** `connect()` then `send(message, destination)` are called.
+        - [x] *   **Then** the message is delivered via `meshcore_py`'s `commands.send_msg()`, bridged synchronously from the transport's background asyncio loop thread.
+    - [x] *   **Scenario:** Incoming message reaches the registered handler
+        - [x] *   **Given** a handler registered via `set_message_handler()`.
+        - [x] *   **When** a `CONTACT_MSG_RECV` event arrives on the asyncio loop thread.
+        - [x] *   **Then** the handler is invoked with `(text, sender_pubkey_prefix)`, matching `MessageHandler`'s signature exactly.
+    - [x] *   **Scenario:** Send times out or errors
+        - [x] *   **Given** the device is wedged or `meshcore_py` returns an `EventType.ERROR` event.
+        - [x] *   **Then** `send()` raises `TransportSendError` within a bounded timeout, never blocking forever (same guarantee `MeshtasticSerialTransport.send()` gives today for Issue 21).
+    - [x] *   **Scenario:** Connection failure is mapped correctly
+        - [x] *   **Given** the `meshcore` library is missing or the serial connect fails.
+        - [x] *   **Then** `connect()` raises `TransportConnectionError`, not a raw exception.
+    *   _Note: Implemented per `project/plans/story_30_1.md`. The `meshcore_py`
+        API (connect/send/subscribe/self-identity method names and
+        signatures) was confirmed directly against the library's GitHub
+        source before implementation, then re-confirmed via `inspect` against
+        the actually-installed package - both matched the plan exactly, no
+        surprises. `disconnect()` also tears down the background asyncio
+        loop/thread entirely (beyond what the plan's code sketch showed), so
+        repeated connect()/disconnect() cycles don't leak a thread per cycle.
+        38 new unit tests added (`tests/test_meshcore_serial_transport.py`);
+        full suite (906 tests) green with the real `meshcore` package
+        installed, not just mocked._
+
+- [ ] **Story 30.2: Generalize destination validation onto `BaseTransport`**
+- [ ] *   **As a** developer,
+- [ ] *   **I want** destination-format validation to live on each transport instead of hard-coded in `core/protocol.py`,
+- [ ] *   **So that** MeshCore's public-key-based addresses can be validated correctly, and `core/`'s "no protocol-specific knowledge" rule stops being violated for Meshtastic too.
+    - [ ] *   **Scenario:** Meshtastic validation is unchanged
+        - [ ] *   **Given** `MeshtasticSerialTransport.validate_destination()`.
+        - [ ] *   **Then** it enforces the same `!hex8` format `core/protocol.py::validate_destination()` does today - no behavior change.
+    - [ ] *   **Scenario:** MeshCore validation checks its own format
+        - [ ] *   **Given** `MeshCoreSerialTransport.validate_destination()`.
+        - [ ] *   **Then** it checks MeshCore's public-key-prefix hex format instead of the `!`-prefixed Meshtastic format.
+    - [ ] *   **Scenario:** `client/sender.py` calls the transport, not the free function
+        - [ ] *   **Given** `TransactionSender.send_transaction()`.
+        - [ ] *   **Then** it calls `self.transport.validate_destination(destination)` instead of the standalone `core.protocol.validate_destination()`.
+    *   _Note: Not yet done. As an interim stopgap (needed to make Story
+        30.3's `--transport meshcore` actually usable in the meantime),
+        `btcmesh_client_cli.py::cli_main()` currently skips the Meshtastic-
+        only `validate_destination()` call entirely when `--transport
+        meshcore` is selected, rather than validating MeshCore's own format -
+        `meshcore_py`'s `send_msg()` still rejects a malformed destination at
+        send time either way. This story's actual `BaseTransport`-based
+        refactor is still open._
+
+- [x] **Story 30.3: Transport selection via CLI flag**
+- [x] *   **As a** relay operator or client user,
+- [x] *   **I want** a `--transport {meshtastic,meshcore}` flag on both CLIs,
+- [x] *   **So that** the MeshCore path can be exercised end-to-end without hand-editing entry-point code, while existing users see zero change (default stays `meshtastic`).
+    - [x] *   **Scenario:** Default behavior is unchanged
+        - [x] *   **Given** `btcmesh_client_cli.py`/`btcmesh_server_cli.py` invoked with no `--transport` flag.
+        - [x] *   **Then** `MeshtasticSerialTransport` is used, exactly as today.
+    - [x] *   **Scenario:** MeshCore can be selected
+        - [x] *   **Given** `--transport meshcore`.
+        - [x] *   **Then** `transport/factory.py`'s `get_transport("meshcore")` returns a `MeshCoreSerialTransport` instance instead.
+    *   _Note: Also guarded two other Meshtastic-specific behaviors behind
+        `transport_name == "meshtastic"` on the server CLI - the Story 26.7
+        relay-board-port check and the `MESHTASTIC_SERIAL_PORT` env-var
+        fallback - neither applies to a MeshCore connection. Manually
+        verified against the real installed `meshcore` package (not just
+        mocked tests): `--transport meshcore --dry-run` previews correctly,
+        and a real connection attempt against this machine's actual serial
+        ports correctly surfaced "Multiple serial devices detected" through
+        the full CLI error path._
+
+- [ ] **Story 30.4: MeshCore device scanning/identity + GUI wiring** _(deferred - scoped after 30.1-30.3 land and are verified on real hardware)_
+
+- [ ] **Story 30.5: Real-hardware verification script in `scripts/hw_tests/`** _(deferred - needs a device actually flashed with MeshCore firmware first)_
+
+---
+

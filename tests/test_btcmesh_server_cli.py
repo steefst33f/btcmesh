@@ -26,19 +26,27 @@ class TestParseArgs(unittest.TestCase):
         args = cli.parse_args([])
         self.assertIsNone(args.port)
 
+    def test_transport_defaults_to_meshtastic(self):
+        args = cli.parse_args([])
+        self.assertEqual(args.transport, "meshtastic")
+
+    def test_transport_flag_accepts_meshcore(self):
+        args = cli.parse_args(["--transport", "meshcore"])
+        self.assertEqual(args.transport, "meshcore")
+
 
 class TestRunServerConnection(unittest.TestCase):
     """Tests for run_server()'s Meshtastic connection / port resolution."""
 
     def test_connection_failure_logs_error_and_returns_2(self):
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.probe_relay_board_id", return_value=None), \
                 patch("btcmesh_server_cli.load_app_config"), \
                 patch("btcmesh_server_cli.BitcoinRPCClient") as mock_rpc_cls, \
                 patch("btcmesh_server_cli.build_receiver") as mock_build_receiver, \
                 patch("btcmesh_server_cli.server_logger") as mock_logger:
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             mock_transport.connect.side_effect = TransportConnectionError("no device found")
 
             code = cli.run_server()
@@ -54,7 +62,7 @@ class TestRunServerConnection(unittest.TestCase):
         2 without attempting a Meshtastic connect that could never
         succeed - and would otherwise cost a full ~30s timeout for
         nothing."""
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyRelay"), \
                 patch("btcmesh_server_cli.probe_relay_board_id", return_value="246F28AECB34") as mock_probe_relay, \
                 patch("btcmesh_server_cli.load_app_config"), \
@@ -65,7 +73,7 @@ class TestRunServerConnection(unittest.TestCase):
 
         self.assertEqual(code, 2)
         mock_probe_relay.assert_called_once_with("/dev/ttyRelay")
-        mock_transport_cls.assert_not_called()
+        mock_get_transport.assert_not_called()
         mock_rpc_cls.assert_not_called()
         mock_build_receiver.assert_not_called()
         error_calls = [str(c.args[0]) for c in mock_logger.error.call_args_list]
@@ -95,14 +103,14 @@ class TestRunServerConnection(unittest.TestCase):
 
     def test_explicit_port_overrides_env(self):
         self._patch_successful_startup()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
                 patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt):
             # time.sleep raising KeyboardInterrupt on the first loop tick just
             # ends the otherwise-infinite loop so this test can return -
             # that's not what's being tested here, see
             # test_keyboard_interrupt_disconnects_and_returns_0 for that.
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             code = cli.run_server(port="/dev/explicit_port")
 
         self.assertEqual(code, 0)
@@ -110,14 +118,32 @@ class TestRunServerConnection(unittest.TestCase):
 
     def test_omitted_port_falls_back_to_env(self):
         self._patch_successful_startup()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
                 patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt):
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             code = cli.run_server()
 
         self.assertEqual(code, 0)
         mock_transport.connect.assert_called_once_with("/dev/env_port")
+
+    def test_meshcore_transport_skips_relay_board_check_and_env_fallback(self):
+        """The relay board check and MESHTASTIC_SERIAL_PORT fallback are
+        both Meshtastic-specific - neither should apply to --transport
+        meshcore."""
+        self._patch_successful_startup()
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
+                patch("btcmesh_server_cli.get_meshtastic_serial_port") as mock_get_env_port, \
+                patch("btcmesh_server_cli.probe_relay_board_id") as mock_probe_relay, \
+                patch("server.run_loop.time.sleep", side_effect=KeyboardInterrupt):
+            mock_transport = mock_get_transport.return_value
+            code = cli.run_server(transport_name="meshcore")
+
+        self.assertEqual(code, 0)
+        mock_get_transport.assert_called_once_with("meshcore")
+        mock_transport.connect.assert_called_once_with(None)
+        mock_get_env_port.assert_not_called()
+        mock_probe_relay.assert_not_called()
 
     def test_keyboard_interrupt_disconnects_and_returns_0(self):
         """Given the server is already running its main loop (has completed
@@ -125,7 +151,7 @@ class TestRunServerConnection(unittest.TestCase):
         Then it disconnects the transport and returns 0 instead of letting
         the exception propagate."""
         self._patch_successful_startup()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("server.run_loop.time.sleep", side_effect=[None, KeyboardInterrupt]) as mock_sleep:
             # First call succeeds (one full loop tick completes normally =
@@ -133,7 +159,7 @@ class TestRunServerConnection(unittest.TestCase):
             # Ctrl+C arriving *while it's running* rather than on the very
             # first instruction, which would be ambiguous with "it never
             # actually started."
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             code = cli.run_server()
 
         # Proves the loop really did complete a tick before being
@@ -163,7 +189,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
     def test_tick_called_each_loop_iteration(self):
         self._patch_successful_startup()
         mock_watchdog = MagicMock()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -179,7 +205,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
 
     def test_logs_enabled_when_power_control_configured(self):
         self._patch_successful_startup()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -197,7 +223,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
 
     def test_logs_disabled_when_power_control_not_configured(self):
         self._patch_successful_startup()
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -221,7 +247,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
             captured.update(kwargs)
             return MagicMock(), None
 
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -244,7 +270,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
             captured.update(kwargs)
             return MagicMock(), None
 
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -266,7 +292,7 @@ class TestRunServerDeviceWatchdog(unittest.TestCase):
             captured.update(kwargs)
             return MagicMock(), None
 
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch(
                     "btcmesh_server_cli.build_device_watchdog",
@@ -307,7 +333,7 @@ class TestRunServerLivenessLog(unittest.TestCase):
         mock_receiver.get_active_sessions.return_value = ["s1", "s2"]
 
         with patch("btcmesh_server_cli.build_receiver", return_value=mock_receiver), \
-                patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
                 patch("server.run_loop.time.time", side_effect=[100.0, 100.0, 100.0, 401.0]), \
@@ -329,7 +355,7 @@ class TestRunServerLivenessLog(unittest.TestCase):
         mock_receiver.get_active_sessions.return_value = []
 
         with patch("btcmesh_server_cli.build_receiver", return_value=mock_receiver), \
-                patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+                patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.build_device_watchdog", return_value=(MagicMock(), None)), \
                 patch("server.run_loop.time.time", side_effect=[100.0, 100.0, 100.0, 150.0]), \
@@ -347,7 +373,7 @@ class TestRunServerRpcFailure(unittest.TestCase):
     receiving/reassembling/ACKing chunks, only the eventual broadcast fails."""
 
     def test_rpc_failure_logs_error_and_builds_receiver_with_none_rpc_client(self):
-        with patch("btcmesh_server_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_server_cli.get_transport") as mock_get_transport, \
                 patch("btcmesh_server_cli.get_meshtastic_serial_port", return_value="/dev/ttyUSB0"), \
                 patch("btcmesh_server_cli.probe_relay_board_id", return_value=None), \
                 patch("btcmesh_server_cli.load_app_config"), \

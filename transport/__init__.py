@@ -11,13 +11,17 @@ from transport.base import (
     TransportError,
     TransportSendError,
 )
+from transport.factory import get_transport
+from transport.meshcore_serial import MeshCoreSerialTransport
 from transport.meshtastic_serial import MeshtasticSerialTransport
 
 __all__ = [
     "BaseTransport",
+    "MeshCoreSerialTransport",
     "MeshtasticSerialTransport",
     "MessageHandler",
     "TransportConnectionError",
     "TransportError",
     "TransportSendError",
+    "get_transport",
 ]

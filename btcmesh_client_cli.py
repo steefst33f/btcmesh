@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Thin CLI entry point for sending a Bitcoin transaction via Meshtastic relay.
+"""Thin CLI entry point for sending a Bitcoin transaction via a mesh relay.
 
 All business logic lives in client/sender.py (chunking, ARQ, retries) and
-transport/meshtastic_serial.py (device connection). This file only handles:
+the transport/ implementations (device connection). This file only handles:
 argument parsing, output formatting, and exit codes.
 """
 import argparse
@@ -13,7 +13,7 @@ from core.config_loader import get_meshtastic_serial_port, load_app_config, load
 from core.logger_setup import setup_logger, set_logger_level
 from core.protocol import validate_destination, validate_transaction_hex
 from client.sender import TransactionSender, create_preview
-from transport.meshtastic_serial import MeshtasticSerialTransport
+from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLAY_NAMES
 from transport.base import TransportConnectionError
 
 CLI_LOG_FILE = os.path.join(
@@ -39,10 +39,15 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "-p", "--port",
-        help="Meshtastic serial port to use (e.g. /dev/ttyUSB0). "
-             "Overrides MESHTASTIC_SERIAL_PORT in .env. If neither is set, "
-             "auto-detects - which fails or picks unpredictably if more than "
-             "one device is connected.",
+        help="Serial port to use (e.g. /dev/ttyUSB0). For --transport "
+             "meshtastic, overrides MESHTASTIC_SERIAL_PORT in .env when set, "
+             "otherwise auto-detects - which fails or picks unpredictably if "
+             "more than one device is connected. For --transport meshcore, "
+             "auto-detects only when exactly one serial port is present.",
+    )
+    parser.add_argument(
+        "--transport", choices=TRANSPORT_CHOICES, default="meshtastic",
+        help="Mesh transport to use (default: meshtastic).",
     )
     return parser.parse_args(argv)
 
@@ -56,16 +61,21 @@ def run_preview(tx_hex: str) -> int:
     return 0
 
 
-def run_send(destination: str, tx_hex: str, port: str = None) -> int:
-    """Connect to the Meshtastic device and send the transaction."""
-    resolved_port = port or get_meshtastic_serial_port()
-    print(f"Connecting to Meshtastic device ({resolved_port or 'auto-detect'})...")
+def run_send(
+    destination: str, tx_hex: str, transport_name: str = "meshtastic", port: str = None
+) -> int:
+    """Connect to the mesh device and send the transaction."""
+    resolved_port = port
+    if resolved_port is None and transport_name == "meshtastic":
+        resolved_port = get_meshtastic_serial_port()
+    display_name = TRANSPORT_DISPLAY_NAMES.get(transport_name, transport_name)
+    print(f"Connecting to {display_name} device ({resolved_port or 'auto-detect'})...")
 
-    transport = MeshtasticSerialTransport()
+    transport = get_transport(transport_name)
     try:
         transport.connect(resolved_port)
     except TransportConnectionError as e:
-        print(f"Failed to connect to Meshtastic device: {e}", file=sys.stderr)
+        print(f"Failed to connect to {display_name} device: {e}", file=sys.stderr)
         cli_logger.error(f"Failed to connect: {e}")
         return 2
 
@@ -113,11 +123,18 @@ def cli_main(argv=None) -> int:
 
     args = parse_args(argv)
 
-    try:
-        validate_destination(args.destination)
-    except ValueError as e:
-        print(f"Invalid destination: {e}", file=sys.stderr)
-        return 1
+    if args.transport == "meshtastic":
+        # MeshCore's destination format (a public-key prefix) is different
+        # from Meshtastic's "!hex8" - generalizing validate_destination()
+        # onto BaseTransport is Story 30.2's job, deliberately kept separate
+        # from this transport-selection story. Until then, MeshCore
+        # destinations pass through unchecked here; meshcore_py's send_msg()
+        # itself rejects a malformed destination on send.
+        try:
+            validate_destination(args.destination)
+        except ValueError as e:
+            print(f"Invalid destination: {e}", file=sys.stderr)
+            return 1
 
     try:
         validate_transaction_hex(args.tx)
@@ -127,7 +144,7 @@ def cli_main(argv=None) -> int:
 
     if args.dry_run:
         return run_preview(args.tx)
-    return run_send(args.destination, args.tx, args.port)
+    return run_send(args.destination, args.tx, args.transport, args.port)
 
 
 def main():
