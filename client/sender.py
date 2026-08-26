@@ -15,7 +15,6 @@ from core.protocol import (
     create_session,
     get_chunk_message,
     parse_message,
-    validate_destination,
     validate_transaction_hex,
 )
 from core.message_types import ChunkAckMessage, AckMessage, NackMessage
@@ -288,7 +287,7 @@ class TransactionSender:
         """
         # Validate input
         try:
-            validate_destination(destination)
+            self.transport.validate_destination(destination)
             validate_transaction_hex(tx_hex)
         except ValueError as e:
             return SendResult(

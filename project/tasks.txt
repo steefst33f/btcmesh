@@ -1772,27 +1772,40 @@ lora/
         full suite (906 tests) green with the real `meshcore` package
         installed, not just mocked._
 
-- [ ] **Story 30.2: Generalize destination validation onto `BaseTransport`**
-- [ ] *   **As a** developer,
-- [ ] *   **I want** destination-format validation to live on each transport instead of hard-coded in `core/protocol.py`,
-- [ ] *   **So that** MeshCore's public-key-based addresses can be validated correctly, and `core/`'s "no protocol-specific knowledge" rule stops being violated for Meshtastic too.
-    - [ ] *   **Scenario:** Meshtastic validation is unchanged
-        - [ ] *   **Given** `MeshtasticSerialTransport.validate_destination()`.
-        - [ ] *   **Then** it enforces the same `!hex8` format `core/protocol.py::validate_destination()` does today - no behavior change.
-    - [ ] *   **Scenario:** MeshCore validation checks its own format
-        - [ ] *   **Given** `MeshCoreSerialTransport.validate_destination()`.
-        - [ ] *   **Then** it checks MeshCore's public-key-prefix hex format instead of the `!`-prefixed Meshtastic format.
-    - [ ] *   **Scenario:** `client/sender.py` calls the transport, not the free function
-        - [ ] *   **Given** `TransactionSender.send_transaction()`.
-        - [ ] *   **Then** it calls `self.transport.validate_destination(destination)` instead of the standalone `core.protocol.validate_destination()`.
-    *   _Note: Not yet done. As an interim stopgap (needed to make Story
-        30.3's `--transport meshcore` actually usable in the meantime),
-        `btcmesh_client_cli.py::cli_main()` currently skips the Meshtastic-
-        only `validate_destination()` call entirely when `--transport
-        meshcore` is selected, rather than validating MeshCore's own format -
-        `meshcore_py`'s `send_msg()` still rejects a malformed destination at
-        send time either way. This story's actual `BaseTransport`-based
-        refactor is still open._
+- [x] **Story 30.2: Generalize destination validation onto `BaseTransport`**
+- [x] *   **As a** developer,
+- [x] *   **I want** destination-format validation to live on each transport instead of hard-coded in `core/protocol.py`,
+- [x] *   **So that** MeshCore's public-key-based addresses can be validated correctly, and `core/`'s "no protocol-specific knowledge" rule stops being violated for Meshtastic too.
+    - [x] *   **Scenario:** Meshtastic validation is unchanged
+        - [x] *   **Given** `MeshtasticSerialTransport.validate_destination()`.
+        - [x] *   **Then** it enforces the same `!hex8` format `core/protocol.py::validate_destination()` did before - no behavior change.
+    - [x] *   **Scenario:** MeshCore validation checks its own format
+        - [x] *   **Given** `MeshCoreSerialTransport.validate_destination()`.
+        - [x] *   **Then** it checks MeshCore's public-key-prefix hex format instead of the `!`-prefixed Meshtastic format.
+    - [x] *   **Scenario:** `client/sender.py` calls the transport, not the free function
+        - [x] *   **Given** `TransactionSender.send_transaction()`.
+        - [x] *   **Then** it calls `self.transport.validate_destination(destination)` instead of the standalone `core.protocol.validate_destination()`.
+    *   _Note: Implemented per `project/plans/story_30_2.md`. Added an
+        abstract `validate_destination()` to `BaseTransport`; moved the
+        Meshtastic `!hex8` rule onto `MeshtasticSerialTransport` verbatim
+        (no behavior change) and added a hex-format check (non-empty, valid
+        hex, even length) to `MeshCoreSerialTransport`. Deleted
+        `core/protocol.py::validate_destination()` entirely - it's fully
+        superseded. Removed the Story 30.1 CLI stopgap in
+        `btcmesh_client_cli.py::cli_main()` that skipped validation for
+        `--transport meshcore`; it now calls
+        `get_transport(args.transport).validate_destination(...)`
+        unconditionally, so a malformed MeshCore destination is rejected up
+        front instead of only failing (or not) inside `meshcore_py`'s
+        `send_msg()`. `client/sender.py` and the GUI's `validate_send_inputs()`
+        (still Meshtastic-only, per Story 30.4) both updated to call the
+        transport's method instead of the removed free function. Test suite:
+        914 tests, all passing (up from 906 pre-story, net new coverage in
+        `test_transport_base.py`, `test_meshtastic_serial_transport.py`,
+        `test_meshcore_serial_transport.py`, plus updated assertions in
+        `test_client_sender.py` and `test_btcmesh_client_cli.py` where tests
+        had relied on the now-removed Meshtastic-only rule or the now-gone
+        stopgap)._
 
 - [x] **Story 30.3: Transport selection via CLI flag**
 - [x] *   **As a** relay operator or client user,

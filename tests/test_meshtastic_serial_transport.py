@@ -1076,5 +1076,26 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
         self.assertEqual(result, ["/dev/ttyUSB0"])
 
 
+class TestMeshtasticSerialTransportValidateDestination(unittest.TestCase):
+    """Story 30.2: destination-format validation, moved here from
+    core/protocol.py's Meshtastic-only free function - same rule, same
+    messages, no behavior change."""
+
+    def test_valid_destination(self):
+        MeshtasticSerialTransport().validate_destination("!abcdef12")  # no raise
+
+    def test_empty_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination("")
+
+    def test_missing_bang_prefix_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination("abcdef12")
+
+    def test_none_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination(None)
+
+
 if __name__ == "__main__":
     unittest.main()

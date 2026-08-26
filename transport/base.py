@@ -151,6 +151,16 @@ class BaseTransport(ABC):
         ...
 
     @abstractmethod
+    def validate_destination(self, destination: str) -> None:
+        """Validate a destination identifier's structural format for this
+        transport's addressing scheme.
+
+        Raises:
+            ValueError: If destination is empty or malformed for this transport.
+        """
+        ...
+
+    @abstractmethod
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Return candidate connection targets to try reconnecting to
         (e.g. serial ports for a serial transport, discovered addresses

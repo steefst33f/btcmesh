@@ -17,6 +17,7 @@ import threading
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, List, Optional
 
+from core.protocol import is_valid_hex
 from transport.base import (
     BaseTransport,
     MessageHandler,
@@ -249,6 +250,22 @@ class MeshCoreSerialTransport(BaseTransport):
             return result is not None and result.type != EventType.ERROR
         except Exception:
             return False
+
+    def validate_destination(self, destination: str) -> None:
+        """Validate a MeshCore destination's structural format: a
+        hex-encoded public key or public-key prefix (Story 30.2).
+
+        Raises:
+            ValueError: If destination is empty, contains non-hex
+                characters, or has odd length (a public key/prefix is
+                always a whole number of bytes).
+        """
+        if not destination:
+            raise ValueError("Destination cannot be empty")
+        if not is_valid_hex(destination) or len(destination) % 2 != 0:
+            raise ValueError(
+                "Destination must be a hex-encoded public key or prefix"
+            )
 
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Not yet implemented for MeshCore - returns an empty list.

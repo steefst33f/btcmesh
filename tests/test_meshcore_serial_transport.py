@@ -636,5 +636,33 @@ class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
         self.assertEqual(transport.scan_for_reconnect_candidates(), [])
 
 
+class TestMeshCoreSerialTransportValidateDestination(unittest.TestCase):
+    """Story 30.2: MeshCore validates its own addressing format - a
+    hex-encoded public key or public-key prefix - distinct from
+    Meshtastic's '!hex8' rule."""
+
+    def test_valid_full_public_key(self):
+        MeshCoreSerialTransport().validate_destination("ab" * 32)  # no raise
+
+    def test_valid_prefix(self):
+        MeshCoreSerialTransport().validate_destination("a1b2c3d4e5f6")  # no raise
+
+    def test_empty_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshCoreSerialTransport().validate_destination("")
+
+    def test_none_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshCoreSerialTransport().validate_destination(None)
+
+    def test_non_hex_characters_raise(self):
+        with self.assertRaises(ValueError):
+            MeshCoreSerialTransport().validate_destination("zzzznotahexstring")
+
+    def test_odd_length_raises(self):
+        with self.assertRaises(ValueError):
+            MeshCoreSerialTransport().validate_destination("abc")
+
+
 if __name__ == "__main__":
     unittest.main()

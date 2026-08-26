@@ -326,6 +326,19 @@ class MeshtasticSerialTransport(BaseTransport):
         except Exception:
             return False
 
+    def validate_destination(self, destination: str) -> None:
+        """Validate a Meshtastic destination node ID's structural format
+        (Issue 30 / Story 30.2 - moved here from core/protocol.py verbatim,
+        no behavior change).
+
+        Raises:
+            ValueError: If destination is empty or doesn't start with '!'.
+        """
+        if not destination:
+            raise ValueError("Destination cannot be empty")
+        if not destination.startswith("!"):
+            raise ValueError("Destination must start with '!'")
+
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Serial ports to try reconnecting to, for DeviceWatchdog's
         post-power-cycle recovery. Reuses
