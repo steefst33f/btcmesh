@@ -319,7 +319,19 @@ class MeshCoreSerialTransport(BaseTransport):
         return future.result(timeout=timeout)
 
     def _subscribe(self) -> None:
-        """Subscribe to MeshCore contact-message events."""
+        """Subscribe to MeshCore contact-message events, and actively start
+        pulling any queued ones (Issue 50).
+
+        MeshCore's companion protocol doesn't push received messages
+        proactively - it sends a MESSAGES_WAITING ping and expects the
+        client to explicitly pull each message via get_msg(); only that
+        pull's reply becomes a CONTACT_MSG_RECV event.
+        start_auto_message_fetching() does exactly this pull automatically
+        (once immediately, to catch anything already queued, then again on
+        every future MESSAGES_WAITING event) - without it, CONTACT_MSG_RECV
+        never fires for a real incoming message, even though it physically
+        reaches the radio (confirmed via real hardware: RX_LOG_DATA and
+        MESSAGES_WAITING fired, CONTACT_MSG_RECV never did)."""
         from meshcore import EventType
 
         async def _on_event(event) -> None:
@@ -334,15 +346,25 @@ class MeshCoreSerialTransport(BaseTransport):
                 logger.exception("Error in message handler")
 
         self._subscription = self._mc.subscribe(EventType.CONTACT_MSG_RECV, _on_event)
+        self._run_coro(
+            self._mc.start_auto_message_fetching(), self._SEND_TIMEOUT_SECONDS
+        )
 
     def _unsubscribe(self) -> None:
-        """Unsubscribe from MeshCore contact-message events."""
+        """Unsubscribe from MeshCore contact-message events and stop the
+        active message-pulling started by _subscribe() (Issue 50)."""
         try:
             if self._subscription is not None:
                 self._subscription.unsubscribe()
         except Exception:
             pass
         self._subscription = None
+        try:
+            self._run_coro(
+                self._mc.stop_auto_message_fetching(), self._SEND_TIMEOUT_SECONDS
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _autodetect_port() -> str:

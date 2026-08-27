@@ -2605,7 +2605,7 @@ silently does nothing** ✅ FIXED (2026-08-26)
 **Issue 50: `MeshCoreSerialTransport._subscribe()` never actually delivers
 incoming messages - it subscribes to `CONTACT_MSG_RECV` directly, but
 that event only ever fires as the reply to an explicit pull the
-transport never makes** Open
+transport never makes** ✅ FIXED (2026-08-27)
 
 - Found 2026-08-26, during the first-ever real-hardware MeshCore↔MeshCore
   test (two freshly-flashed devices for Epic 9: a Heltec Vision Master
@@ -2645,18 +2645,26 @@ transport never makes** Open
   (or a much more faithful mock) can surface it. This is exactly the risk
   `project/plans/story_30_1.md` flagged Story 30.5 ("real-hardware
   verification script") as existing to catch.
-- **Proposed fix**: `_subscribe()` should call `await
-  self._mc.start_auto_message_fetching()` in addition to its existing
+- **Fix**: `_subscribe()` now also calls `await
+  self._mc.start_auto_message_fetching()` alongside its existing
   `EventType.CONTACT_MSG_RECV` subscription (that event is still what the
-  fetched-message reply arrives as - the missing piece is the "go get it"
+  fetched-message reply arrives as - the missing piece was the "go get it"
   trigger), bridged through the class's existing `_run_coro()` sync/async
   bridge - the same pattern `connect()`/`send()`/`check_alive()` already
-  use to call into the background asyncio loop from synchronous
-  `BaseTransport` methods.
-- Related: [[Issue 51]] - found alongside it; both block a real
-  end-to-end MeshCore relay, but are independent root causes needing
-  independent fixes (and, per existing practice in this repo, independent
-  branches/PRs even though planned together here).
+  use. `_unsubscribe()` symmetrically calls `stop_auto_message_fetching()`.
+- **Confirmed via real hardware**: on first connect after the fix, the
+  server immediately drained a message that had been stuck in the
+  device's queue since the original diagnosis session - direct proof
+  `get_msg()` is now actually being called. A live send/receive round
+  trip then produced a real `BTC_CHUNK_ACK` delivered back to the client
+  (`Received ACK for chunk 1/3`) - the first genuine bidirectional
+  message exchange over MeshCore hardware in this project. (Chunk 2 of
+  that same test was lost to a separate, newly-found timing issue - see
+  [[Issue 52]] - unrelated to this fix; Issue 50 itself, "does a message
+  ever reach the handler at all," is conclusively resolved.)
+- Related: [[Issue 51]] (fixed alongside it - independent root causes,
+  independent branches/PRs, per existing practice in this repo) and
+  [[Issue 52]] (a new, separate finding surfaced while verifying this fix).
 
 **Issue 51: `core/constants.py`'s `DEFAULT_CHUNK_SIZE` (170, tuned for
 Meshtastic) exceeds MeshCore's hard per-message cap, so every `BTC_TX`
@@ -2708,9 +2716,70 @@ chunk is rejected outright over MeshCore** ✅ FIXED (2026-08-27)
   transport's cap before previewing. **Confirmed via real hardware**:
   re-ran the exact send that previously failed immediately with
   `ERR_CODE_TABLE_FULL` - it now sends every chunk cleanly at the new
-  default size, retrying only on ACK timeout (Issue 50's separate,
-  still-open bug), never on the send itself.
-- Related: [[Issue 50]] (still open - tracked and planned independently).
+  default size, retrying only on ACK timeout (Issue 50's separate bug,
+  since fixed), never on the send itself.
+- Related: [[Issue 50]] (fixed).
+
+**Issue 52: a MeshCore send to a not-yet-pathed contact can exceed
+`MeshCoreSerialTransport`'s own 10s send timeout, eating into the
+server's 30s reassembly budget enough to lose a later chunk** Open
+
+- Found 2026-08-27, verifying the [[Issue 50]] fix on real hardware: a
+  clean 3-chunk send got a real `BTC_CHUNK_ACK` back for chunk 1 - proving
+  Issue 50's fix works - but the ACK took roughly 20 seconds to arrive.
+  The server's own log showed why: `Error from <sender>: Send timed out
+  after 10.0s - device may be unresponsive` when it first tried to send
+  the ACK back, followed by an apparently-successful retry. By the time
+  chunk 2 was sent, too much of the reassembly window had elapsed; the
+  server's 30-second reassembly timeout (`core/config_loader.py::load_reassembly_timeout()`'s
+  own default - notably a different literal, 30, than
+  `core/constants.py::DEFAULT_REASSEMBLY_TIMEOUT`'s 300; the two aren't
+  the same constant despite the similar name) fired having only received
+  1 of 3 chunks, and the session was discarded with a NACK.
+- **Likely root cause**: `transport/meshcore_serial.py::MeshCoreSerialTransport.send()`'s
+  `_SEND_TIMEOUT_SECONDS = 10.0` bound was sized against Meshtastic's
+  send-latency characteristics (Issue 21's original wedge-protection
+  work), not against MeshCore's own routing cost. A destination with no
+  cached path yet (`out_path_len == OUT_PATH_UNKNOWN`, see
+  `MeshCoreSerialTransport.send()`'s docstring) requires a flood send,
+  which is meaningfully slower than a routed one - plausibly explaining
+  a ~10s-plus first send in either direction on a fresh contact pair. Not
+  yet confirmed by direct measurement (e.g. timing a flood send vs. a
+  routed one back-to-back); this is the most likely explanation given
+  what the logs show, not a certainty.
+- Not yet fixed - needs more direct measurement before deciding whether
+  the right fix is a longer `_SEND_TIMEOUT_SECONDS` for MeshCore
+  specifically, a longer default reassembly timeout, path pre-warming
+  (e.g. exchanging a message before the timed protocol run starts, so
+  the flood-routing cost isn't on the critical path), or some
+  combination - deliberately left open rather than guessed at.
+- **Also affects the server's outgoing ACK, not just client sends, and
+  mislabels the failure when it does**: found 2026-08-27 in a follow-up
+  real-hardware run. A single-chunk transaction reassembled successfully
+  server-side (`server/receiver.py`'s `_on_message` logged "Reassembly
+  successful" instantly), but the client's final result was `Transaction
+  failed: Internal server error` - not the RPC-specific NACK that
+  scenario actually has (`_broadcast()`, `server/receiver.py:298`, sends
+  the clear, dedicated `"Bitcoin RPC not connected"` NACK when
+  `rpc_client is None`, confirmed by reading that code path directly).
+  The server's own log explains why: sending the per-chunk
+  `BTC_CHUNK_ACK` back (`self._send(ack, sender_id)`, `server/receiver.py:228`)
+  hit the same `_SEND_TIMEOUT_SECONDS` timeout this issue is about,
+  raising `TransportSendError` *before* the RPC-connection check was ever
+  reached. That exception isn't caught locally - it falls through to
+  `_on_message`'s generic `except Exception` catch-all
+  (`server/receiver.py:254-261`), which sends the client a NACK reading
+  `"Internal server error"` instead of anything indicating a transport
+  timeout. The chunk ACK apparently still went out shortly after
+  (`MeshCoreSerialTransport.send()`'s bridge abandons the wait but can't
+  cancel the underlying coroutine - same "abandoned, not killed" shape as
+  `MeshtasticSerialTransport.send()`'s Issue 21 fix - the client did
+  receive `BTC_CHUNK_ACK` a moment later), but by then the server-side
+  code had already moved on to the generic-error branch. Whatever fix
+  addresses this issue's core timeout problem should also make sure a
+  timed-out *outgoing* ACK is reported accurately rather than folded into
+  the generic "Internal server error" catch-all.
+- Related: [[Issue 50]].
 
 ---
 
@@ -2764,5 +2833,6 @@ chunk is rejected outright over MeshCore** ✅ FIXED (2026-08-27)
 | 47    | Server GUI's Scan button re-enables before device identity-probing actually finishes, and the probe's completion sentinel had no handler at all (silently discarded) | Minor (UX - misleading "ready" state) | **FIXED** |
 | 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | **FIXED** |
 | 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |
-| 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | Open |
+| 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
+| 52    | A MeshCore send to a not-yet-pathed contact can exceed the transport's 10s send timeout, eating into the server's 30s reassembly budget | Medium (real-hardware reliability - confirmed once, root cause not yet measured) | Open |
