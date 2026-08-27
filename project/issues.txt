@@ -2753,6 +2753,32 @@ server's 30s reassembly budget enough to lose a later chunk** Open
   (e.g. exchanging a message before the timed protocol run starts, so
   the flood-routing cost isn't on the critical path), or some
   combination - deliberately left open rather than guessed at.
+- **Also affects the server's outgoing ACK, not just client sends, and
+  mislabels the failure when it does**: found 2026-08-27 in a follow-up
+  real-hardware run. A single-chunk transaction reassembled successfully
+  server-side (`server/receiver.py`'s `_on_message` logged "Reassembly
+  successful" instantly), but the client's final result was `Transaction
+  failed: Internal server error` - not the RPC-specific NACK that
+  scenario actually has (`_broadcast()`, `server/receiver.py:298`, sends
+  the clear, dedicated `"Bitcoin RPC not connected"` NACK when
+  `rpc_client is None`, confirmed by reading that code path directly).
+  The server's own log explains why: sending the per-chunk
+  `BTC_CHUNK_ACK` back (`self._send(ack, sender_id)`, `server/receiver.py:228`)
+  hit the same `_SEND_TIMEOUT_SECONDS` timeout this issue is about,
+  raising `TransportSendError` *before* the RPC-connection check was ever
+  reached. That exception isn't caught locally - it falls through to
+  `_on_message`'s generic `except Exception` catch-all
+  (`server/receiver.py:254-261`), which sends the client a NACK reading
+  `"Internal server error"` instead of anything indicating a transport
+  timeout. The chunk ACK apparently still went out shortly after
+  (`MeshCoreSerialTransport.send()`'s bridge abandons the wait but can't
+  cancel the underlying coroutine - same "abandoned, not killed" shape as
+  `MeshtasticSerialTransport.send()`'s Issue 21 fix - the client did
+  receive `BTC_CHUNK_ACK` a moment later), but by then the server-side
+  code had already moved on to the generic-error branch. Whatever fix
+  addresses this issue's core timeout problem should also make sure a
+  timed-out *outgoing* ACK is reported accurately rather than folded into
+  the generic "Internal server error" catch-all.
 - Related: [[Issue 50]].
 
 ---
