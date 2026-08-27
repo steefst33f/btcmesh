@@ -174,6 +174,16 @@ class BaseTransport(ABC):
 
     @property
     @abstractmethod
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character payload size this transport can carry in a
+        single chunk message, accounting for this transport's own
+        per-message size limit and BTCMesh's wire-format framing overhead
+        (Issue 51 - a size tuned for one transport can be silently rejected
+        outright by another's stricter per-message cap)."""
+        ...
+
+    @property
+    @abstractmethod
     def is_connected(self) -> bool:
         """Whether the transport is currently connected to a device."""
         ...

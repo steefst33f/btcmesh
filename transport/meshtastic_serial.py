@@ -9,6 +9,7 @@ import logging
 import threading
 from typing import Any, List, Optional
 
+from core.constants import DEFAULT_CHUNK_SIZE
 from transport.base import (
     BaseTransport,
     MessageHandler,
@@ -365,6 +366,11 @@ class MeshtasticSerialTransport(BaseTransport):
             for d in scan_meshtastic_devices_detailed()
             if probe_relay_board_id(d.path) is None
         ]
+
+    @property
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character payload size per chunk (Issue 51)."""
+        return DEFAULT_CHUNK_SIZE
 
     @property
     def is_connected(self) -> bool:

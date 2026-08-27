@@ -17,6 +17,7 @@ import threading
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, List, Optional
 
+from core.constants import MESHCORE_MAX_CHUNK_SIZE
 from core.protocol import is_valid_hex
 from transport.base import (
     BaseTransport,
@@ -276,6 +277,13 @@ class MeshCoreSerialTransport(BaseTransport):
         rather than requiring every transport to support discovery.
         """
         return []
+
+    @property
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character payload size per chunk (Issue 51) - well
+        under MeshCore's own MAX_TEXT_LEN cap once wire-format overhead is
+        accounted for; see core.constants.MESHCORE_MAX_CHUNK_SIZE."""
+        return MESHCORE_MAX_CHUNK_SIZE
 
     @property
     def is_connected(self) -> bool:

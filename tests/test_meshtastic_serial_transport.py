@@ -1097,5 +1097,17 @@ class TestMeshtasticSerialTransportValidateDestination(unittest.TestCase):
             MeshtasticSerialTransport().validate_destination(None)
 
 
+class TestMeshtasticSerialTransportMaxChunkSize(unittest.TestCase):
+    """Issue 51: chunk size is now transport-specific - Meshtastic keeps
+    its existing value, no behavior change."""
+
+    def test_max_chunk_size_matches_default_chunk_size(self):
+        from core.constants import DEFAULT_CHUNK_SIZE
+
+        self.assertEqual(
+            MeshtasticSerialTransport().max_chunk_size, DEFAULT_CHUNK_SIZE
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -664,5 +664,45 @@ class TestMeshCoreSerialTransportValidateDestination(unittest.TestCase):
             MeshCoreSerialTransport().validate_destination("abc")
 
 
+class TestMeshCoreSerialTransportMaxChunkSize(unittest.TestCase):
+    """Issue 51: MeshCore needs its own, smaller chunk size - the default
+    170 (Meshtastic-tuned) exceeds MeshCore's MAX_TEXT_LEN and is rejected
+    outright by the firmware (confirmed via real hardware)."""
+
+    def test_max_chunk_size_matches_meshcore_constant(self):
+        from core.constants import MESHCORE_MAX_CHUNK_SIZE
+
+        self.assertEqual(
+            MeshCoreSerialTransport().max_chunk_size, MESHCORE_MAX_CHUNK_SIZE
+        )
+
+    def test_max_chunk_size_stays_under_meshcore_text_limit(self):
+        """Documents (and guards) the invariant the constant depends on -
+        if MAX_TOTAL_CHUNKS or the wire format ever changes such that this
+        no longer holds, this test fails loudly instead of silently
+        repeating Issue 51."""
+        from core.constants import (
+            CHUNK_DELIMITER,
+            CHUNK_INDEX_DELIMITER,
+            MAX_TOTAL_CHUNKS,
+            MESHCORE_MAX_CHUNK_SIZE,
+            MESHCORE_MAX_TEXT_LEN,
+            MSG_BTC_TX,
+            SESSION_ID_LENGTH,
+        )
+
+        worst_case_digits = len(str(MAX_TOTAL_CHUNKS))
+        worst_case_overhead = (
+            len(MSG_BTC_TX)
+            + 3 * len(CHUNK_DELIMITER)
+            + SESSION_ID_LENGTH
+            + len(CHUNK_INDEX_DELIMITER)
+            + 2 * worst_case_digits
+        )
+        self.assertLessEqual(
+            MESHCORE_MAX_CHUNK_SIZE + worst_case_overhead, MESHCORE_MAX_TEXT_LEN
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

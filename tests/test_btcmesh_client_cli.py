@@ -155,6 +155,24 @@ class TestCliMainDryRun(unittest.TestCase):
         self.assertEqual(code, 0)
         mock_run_send.assert_not_called()
 
+    def test_dry_run_meshcore_uses_meshcore_chunk_size(self):
+        """Issue 51: --transport meshcore's dry-run preview must reflect
+        MeshCore's own (smaller) chunk size, not Meshtastic's - a tx_hex
+        sized to be a single chunk under Meshtastic's 170 shows as two
+        chunks under MeshCore's 120."""
+        tx_hex = "a" * 150  # 1 chunk at 170 (meshtastic), 2 chunks at 120 (meshcore)
+        with patch("builtins.print") as mock_print:
+            code = cli.cli_main([
+                "-d", "aabbccddeeff", "-tx", tx_hex,
+                "--transport", "meshcore", "--dry-run",
+            ])
+        self.assertEqual(code, 0)
+        printed_lines = [
+            str(c.args[0]) for c in mock_print.call_args_list
+            if str(c.args[0]).startswith("BTC_TX|")
+        ]
+        self.assertEqual(len(printed_lines), 2)
+
 
 class TestRunSendConnection(unittest.TestCase):
     """Tests for run_send()'s device connection / port resolution."""

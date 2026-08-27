@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Dict, Set, Callable
 
+from core.constants import DEFAULT_CHUNK_SIZE
 from core.protocol import (
     create_session,
     get_chunk_message,
@@ -65,7 +66,9 @@ class TransactionPreview:
     chunks: list  # type: list[PreviewChunk]
 
 
-def create_preview(tx_hex: str) -> TransactionPreview:
+def create_preview(
+    tx_hex: str, chunk_size: int = DEFAULT_CHUNK_SIZE
+) -> TransactionPreview:
     """Create a preview of how a transaction would be chunked.
 
     This is a UI-only feature that shows what chunks would be sent
@@ -73,6 +76,10 @@ def create_preview(tx_hex: str) -> TransactionPreview:
 
     Args:
         tx_hex: Raw transaction hex to preview
+        chunk_size: Hex characters per chunk (Issue 51 - defaults to
+            Meshtastic's size; callers that know which transport will
+            actually send should pass that transport's own
+            max_chunk_size instead, so the preview matches reality).
 
     Returns:
         TransactionPreview with session_id, total_chunks, and chunk details
@@ -88,7 +95,7 @@ def create_preview(tx_hex: str) -> TransactionPreview:
 
     # Create session (this does the chunking)
     try:
-        session = create_session(tx_hex)
+        session = create_session(tx_hex, chunk_size=chunk_size)
     except ValueError as e:
         raise ValueError(f"Failed to create preview session: {e}")
 
@@ -298,7 +305,9 @@ class TransactionSender:
 
         # Create protocol session (does chunking)
         try:
-            protocol_session = create_session(tx_hex)
+            protocol_session = create_session(
+                tx_hex, chunk_size=self.transport.max_chunk_size
+            )
         except ValueError as e:
             return SendResult(
                 success=False,
