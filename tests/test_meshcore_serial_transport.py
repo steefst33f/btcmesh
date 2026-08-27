@@ -53,6 +53,8 @@ class MockMeshCoreClient:
         )
         self.disconnect = AsyncMock()
         self.subscribe = MagicMock(return_value=MagicMock())
+        self.start_auto_message_fetching = AsyncMock(return_value=MagicMock())
+        self.stop_auto_message_fetching = AsyncMock()
 
 
 def _install_mock_meshcore(mock_client):
@@ -247,6 +249,7 @@ class TestMeshCoreSerialTransportDisconnect(unittest.TestCase):
         transport.disconnect()
 
         mock_subscription.unsubscribe.assert_called_once()
+        mock_client.stop_auto_message_fetching.assert_awaited_once()
 
     def test_reconnect_after_disconnect_starts_a_fresh_loop(self):
         """Regression guard: disconnect() tears down the background loop
@@ -419,6 +422,39 @@ class TestMeshCoreSerialTransportMessageHandler(unittest.TestCase):
 
         mock_subscription.unsubscribe.assert_called_once()
         self.assertIsNone(transport._handler)
+        transport.disconnect()
+
+    def test_remove_handler_stops_auto_message_fetching(self):
+        """Issue 50: the active-pull mechanism started by _subscribe()
+        must be torn down symmetrically, not just the CONTACT_MSG_RECV
+        subscription."""
+        mock_client = MockMeshCoreClient()
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport.set_message_handler(lambda m, s: None)
+
+        transport.remove_message_handler()
+
+        mock_client.stop_auto_message_fetching.assert_awaited_once()
+        transport.disconnect()
+
+    def test_subscribe_starts_auto_message_fetching(self):
+        """Issue 50: MeshCore's companion protocol only fires
+        CONTACT_MSG_RECV as the reply to an explicit pull - subscribing
+        must also start that pull (meshcore_py's
+        start_auto_message_fetching()), or a real incoming message never
+        reaches the registered handler even though it reaches the radio
+        (confirmed via real hardware)."""
+        mock_client = MockMeshCoreClient()
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport.set_message_handler(lambda m, s: None)
+
+        mock_client.start_auto_message_fetching.assert_awaited_once()
         transport.disconnect()
 
 
