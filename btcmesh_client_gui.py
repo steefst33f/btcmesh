@@ -77,7 +77,7 @@ from transport.power_control import probe_relay_board_id
 
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
-from core.protocol import is_valid_hex, validate_destination
+from core.protocol import is_valid_hex
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
@@ -271,10 +271,10 @@ def validate_send_inputs(dest: str, tx_hex: str) -> Optional[str]:
         An error message string if validation fails, or None if inputs are valid
     """
     try:
-        validate_destination(dest)
+        MeshtasticSerialTransport().validate_destination(dest)
     except ValueError as e:
-        # Issue 30: the actual validation rule lives in core.protocol's
-        # shared validate_destination() (also used by the CLI and
+        # Issue 30: the actual validation rule lives on
+        # MeshtasticSerialTransport (also used by the CLI and
         # client/sender.py) - only the empty-destination message differs
         # here, to keep this GUI's existing user-facing copy unchanged.
         return "Enter destination node ID" if not dest else str(e)

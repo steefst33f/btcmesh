@@ -233,22 +233,28 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIsNotNone(result.error)
 
-    def test_empty_destination_returns_error(self):
-        """Issue 30: empty/malformed destination is rejected before ever
-        touching the transport, same as invalid tx hex already was."""
+    def test_send_transaction_validates_destination_via_transport(self):
+        """Story 30.2: destination format is transport-specific, so
+        send_transaction() delegates to the transport's own
+        validate_destination() rather than a hardcoded rule."""
         transport = Mock(spec=BaseTransport)
+        sender = TransactionSender(transport)
+
+        sender.send_transaction("deadbeef" * 20, "!dest1234")
+        transport.validate_destination.assert_called_once_with("!dest1234")
+
+    def test_invalid_destination_returns_error_without_sending(self):
+        """Issue 30: a malformed destination is rejected before ever
+        touching transport.send(), same as invalid tx hex already was -
+        now driven by whatever the transport's own validate_destination()
+        raises, instead of a hardcoded Meshtastic-shaped rule."""
+        transport = Mock(spec=BaseTransport)
+        transport.validate_destination.side_effect = ValueError(
+            "Destination cannot be empty"
+        )
         sender = TransactionSender(transport)
 
         result = sender.send_transaction("deadbeef" * 20, "")
-        self.assertFalse(result.success)
-        self.assertIn("Destination", result.error)
-        transport.send.assert_not_called()
-
-    def test_destination_missing_bang_prefix_returns_error(self):
-        transport = Mock(spec=BaseTransport)
-        sender = TransactionSender(transport)
-
-        result = sender.send_transaction("deadbeef" * 20, "notanodeid")
         self.assertFalse(result.success)
         self.assertIn("Destination", result.error)
         transport.send.assert_not_called()

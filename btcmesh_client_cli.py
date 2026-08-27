@@ -11,7 +11,7 @@ import os
 
 from core.config_loader import get_meshtastic_serial_port, load_app_config, load_log_level
 from core.logger_setup import setup_logger, set_logger_level
-from core.protocol import validate_destination, validate_transaction_hex
+from core.protocol import validate_transaction_hex
 from client.sender import TransactionSender, create_preview
 from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLAY_NAMES
 from transport.base import TransportConnectionError
@@ -123,18 +123,11 @@ def cli_main(argv=None) -> int:
 
     args = parse_args(argv)
 
-    if args.transport == "meshtastic":
-        # MeshCore's destination format (a public-key prefix) is different
-        # from Meshtastic's "!hex8" - generalizing validate_destination()
-        # onto BaseTransport is Story 30.2's job, deliberately kept separate
-        # from this transport-selection story. Until then, MeshCore
-        # destinations pass through unchecked here; meshcore_py's send_msg()
-        # itself rejects a malformed destination on send.
-        try:
-            validate_destination(args.destination)
-        except ValueError as e:
-            print(f"Invalid destination: {e}", file=sys.stderr)
-            return 1
+    try:
+        get_transport(args.transport).validate_destination(args.destination)
+    except ValueError as e:
+        print(f"Invalid destination: {e}", file=sys.stderr)
+        return 1
 
     try:
         validate_transaction_hex(args.tx)

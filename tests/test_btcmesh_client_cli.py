@@ -73,10 +73,10 @@ class TestCliMainValidation(unittest.TestCase):
         self.assertIn("Invalid raw transaction hex", printed)
 
     def test_invalid_hex_does_not_attempt_connection(self):
-        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             cli.cli_main(["-d", "!abcdef12", "-tx", "zz"])
-        mock_get_transport.assert_not_called()
+        mock_run_send.assert_not_called()
 
     def test_missing_bang_prefix_prints_error_and_returns_1(self):
         """Issue 30: destination is now validated same as tx hex."""
@@ -94,15 +94,16 @@ class TestCliMainValidation(unittest.TestCase):
         self.assertIn("Invalid destination", printed)
 
     def test_invalid_destination_does_not_attempt_connection(self):
-        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             cli.cli_main(["-d", "notanodeid", "-tx", "deadbeef"])
-        mock_get_transport.assert_not_called()
+        mock_run_send.assert_not_called()
 
-    def test_meshcore_transport_skips_bang_prefix_validation(self):
-        """Story 30.3: destination-format validation is Meshtastic-specific
-        until Story 30.2 generalizes it - a non-'!' destination must be
-        allowed through when --transport meshcore is selected."""
+    def test_meshcore_transport_accepts_its_own_hex_format(self):
+        """Story 30.2: MeshCore's own hex-based destination format (no '!'
+        prefix required) is validated - and accepted - via
+        MeshCoreSerialTransport.validate_destination(), dispatched through
+        get_transport(args.transport)."""
         with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
              patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
              patch("builtins.print"):
@@ -113,7 +114,22 @@ class TestCliMainValidation(unittest.TestCase):
                 "-d", "aabbccddeeff", "-tx", "deadbeef", "--transport", "meshcore",
             ])
         self.assertEqual(code, 0)
-        mock_get_transport.assert_called_once_with("meshcore")
+        mock_get_transport.assert_called_with("meshcore")
+
+    def test_meshcore_transport_rejects_malformed_destination(self):
+        """Story 30.2: a MeshCore destination that fails its own hex-format
+        check is now rejected up front - previously (the Story 30.1 stopgap)
+        it passed through unchecked here and would only fail, if at all, at
+        send time inside meshcore_py itself."""
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
+             patch("builtins.print") as mock_print:
+            code = cli.cli_main([
+                "-d", "not-hex!", "-tx", "deadbeef", "--transport", "meshcore",
+            ])
+        self.assertEqual(code, 1)
+        printed = "\n".join(str(c.args[0]) for c in mock_print.call_args_list)
+        self.assertIn("Invalid destination", printed)
+        mock_run_send.assert_not_called()
 
 
 class TestCliMainDryRun(unittest.TestCase):
@@ -133,11 +149,11 @@ class TestCliMainDryRun(unittest.TestCase):
             self.assertIn(f"|{i}/3|", line)
 
     def test_dry_run_does_not_connect_to_device(self):
-        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             code = cli.cli_main(["-d", "!abcdef12", "-tx", "deadbeef", "--dry-run"])
         self.assertEqual(code, 0)
-        mock_get_transport.assert_not_called()
+        mock_run_send.assert_not_called()
 
 
 class TestRunSendConnection(unittest.TestCase):
