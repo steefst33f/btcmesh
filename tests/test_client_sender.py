@@ -7,10 +7,10 @@ async server responses.
 import unittest
 import threading
 import time
-from unittest.mock import Mock, call, ANY
+from unittest.mock import Mock, call, ANY, patch
 from dataclasses import dataclass
 
-from client.sender import SendResult, SendSession, TransactionSender
+from client.sender import SendResult, SendSession, TransactionSender, create_preview
 from transport.base import BaseTransport
 from core.message_types import ChunkAckMessage, AckMessage, NackMessage
 
@@ -130,7 +130,7 @@ class TestTransactionSenderInit(unittest.TestCase):
 
     def test_init_with_defaults(self):
         """Initialize with default timeout and retries."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
         self.assertEqual(sender.timeout_seconds, 30)
         self.assertEqual(sender.max_retries, 3)
@@ -138,26 +138,26 @@ class TestTransactionSenderInit(unittest.TestCase):
 
     def test_init_with_custom_values(self):
         """Initialize with custom timeout and retries."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=60, max_retries=5)
         self.assertEqual(sender.timeout_seconds, 60)
         self.assertEqual(sender.max_retries, 5)
 
     def test_init_invalid_timeout(self):
         """Negative timeout raises ValueError."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         with self.assertRaises(ValueError):
             TransactionSender(transport, timeout_seconds=-1)
 
     def test_init_invalid_retries(self):
         """Negative retries raises ValueError."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         with self.assertRaises(ValueError):
             TransactionSender(transport, max_retries=-1)
 
     def test_init_registers_handler(self):
         """Initialization calls set_message_handler on transport."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
         transport.set_message_handler.assert_called_once()
 
@@ -167,7 +167,7 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
 
     def test_single_chunk_success(self):
         """Send single-chunk transaction successfully."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         # Capture the handler callback
@@ -215,7 +215,7 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
 
     def test_invalid_hex_returns_error(self):
         """Invalid hex returns error in SendResult."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         result = sender.send_transaction("deadbeefZZZ", "!dest1234")
@@ -226,7 +226,7 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
 
     def test_empty_hex_returns_error(self):
         """Empty hex returns error in SendResult."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         result = sender.send_transaction("", "!dest1234")
@@ -237,18 +237,36 @@ class TestTransactionSenderSingleChunk(unittest.TestCase):
         """Story 30.2: destination format is transport-specific, so
         send_transaction() delegates to the transport's own
         validate_destination() rather than a hardcoded rule."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         sender.send_transaction("deadbeef" * 20, "!dest1234")
         transport.validate_destination.assert_called_once_with("!dest1234")
+
+    def test_send_transaction_uses_transport_max_chunk_size(self):
+        """Issue 51: chunk size is transport-specific too - a size safe for
+        one transport (e.g. Meshtastic's 170) can be rejected outright by
+        another's stricter per-message cap (confirmed via real hardware
+        against MeshCore), so send_transaction() must chunk using the
+        transport's own max_chunk_size, not a hardcoded default."""
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
+        transport.max_chunk_size = 42
+        sender = TransactionSender(transport)
+
+        with patch("client.sender.create_session") as mock_create_session:
+            mock_create_session.side_effect = ValueError("stop here")
+            sender.send_transaction("deadbeef" * 20, "!dest1234")
+
+        mock_create_session.assert_called_once_with(
+            "deadbeef" * 20, chunk_size=42
+        )
 
     def test_invalid_destination_returns_error_without_sending(self):
         """Issue 30: a malformed destination is rejected before ever
         touching transport.send(), same as invalid tx hex already was -
         now driven by whatever the transport's own validate_destination()
         raises, instead of a hardcoded Meshtastic-shaped rule."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         transport.validate_destination.side_effect = ValueError(
             "Destination cannot be empty"
         )
@@ -265,7 +283,7 @@ class TestTransactionSenderMultiChunk(unittest.TestCase):
 
     def test_three_chunks_success(self):
         """Send three-chunk transaction successfully."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=5)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -319,7 +337,7 @@ class TestTransactionSenderRetry(unittest.TestCase):
 
     def test_retry_then_success(self):
         """Chunk times out, retries, then succeeds."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=1, max_retries=3)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -364,7 +382,7 @@ class TestTransactionSenderRetry(unittest.TestCase):
 
     def test_max_retries_exhausted(self):
         """Chunk times out after max retries, returns error."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=0.1, max_retries=1)
 
         # Don't send ACKs - let everything timeout
@@ -394,7 +412,7 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
 
     def test_nack_message_fails_transaction(self):
         """Receiving NACK fails the transaction."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -430,7 +448,7 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
 
     def test_nack_on_final_ack(self):
         """NACK received after all chunks sent."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -480,7 +498,7 @@ class TestTransactionSenderErrorHandling(unittest.TestCase):
         covered by test_nack_message_fails_transaction(). This test
         forces an actual retry first (no ACK on attempt 1) before
         sending the NACK on attempt 2, to prove that specifically."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -518,7 +536,7 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
 
     def test_ignore_wrong_session(self):
         """Ignore ACK for different session ID."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=1, max_retries=1)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -548,7 +566,7 @@ class TestTransactionSenderMessageFiltering(unittest.TestCase):
 
     def test_ignore_malformed_message(self):
         """Ignore completely malformed messages."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=1, max_retries=1)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -582,7 +600,7 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
 
     def test_progress_callback_called(self):
         """Progress callback is called for each chunk ACK."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -635,7 +653,7 @@ class TestTransactionSenderProgressCallback(unittest.TestCase):
 
     def test_progress_callback_optional(self):
         """Progress callback can be None."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=2)
 
         handler = transport.set_message_handler.call_args[0][0]
@@ -678,7 +696,7 @@ class TestTransactionSenderAbort(unittest.TestCase):
     concurrently on one instance."""
 
     def test_abort_stops_an_in_progress_send(self):
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=5)
         handler = transport.set_message_handler.call_args[0][0]
 
@@ -712,7 +730,7 @@ class TestTransactionSenderAbort(unittest.TestCase):
         no ACK is ever delivered and abort() is called during the first
         wait, Then the send stops with "Aborted by user" after (at most)
         one timeout cycle, not after exhausting all retries."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
 
         tx_hex = "deadbeef" * 20  # 1 chunk
@@ -738,14 +756,14 @@ class TestTransactionSenderAbort(unittest.TestCase):
         self.assertEqual(result.error, "Aborted by user")
 
     def test_abort_before_any_send_does_not_raise(self):
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport)
         sender.abort()  # Should not raise even with nothing in flight
 
     def test_abort_event_is_cleared_at_the_start_of_each_send(self):
         """A prior send's abort state must not leak into the next send on
         the same instance - each send_transaction() call starts clean."""
-        transport = Mock(spec=BaseTransport)
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=5)
         handler = transport.set_message_handler.call_args[0][0]
 
@@ -775,6 +793,23 @@ class TestTransactionSenderAbort(unittest.TestCase):
         result = result_holder[0]
         self.assertTrue(result.success)
         self.assertEqual(result.txid, "secondsendtxid")
+
+
+class TestCreatePreviewChunkSize(unittest.TestCase):
+    """Issue 51: create_preview() takes an optional chunk_size so a caller
+    previewing for a specific transport (e.g. the CLI's --dry-run) sees
+    accurate chunk counts, not just Meshtastic's default."""
+
+    def test_default_chunk_size_matches_meshtastic(self):
+        from core.constants import DEFAULT_CHUNK_SIZE
+
+        preview = create_preview("ab" * 100)  # 200 hex chars
+        expected_chunks = -(-200 // DEFAULT_CHUNK_SIZE)  # ceil division
+        self.assertEqual(preview.total_chunks, expected_chunks)
+
+    def test_custom_chunk_size_changes_total_chunks(self):
+        preview = create_preview("ab" * 100, chunk_size=50)  # 200 hex chars
+        self.assertEqual(preview.total_chunks, 4)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,22 @@ CHUNK_INDEX_DELIMITER = "/"
 DEFAULT_CHUNK_SIZE = 170  # hex characters per chunk (85 bytes)
 SESSION_ID_LENGTH = 5  # hex characters in session ID
 
+# MeshCore's own hard cap on a single companion-protocol text message:
+# MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160 bytes (meshcore-dev/MeshCore's
+# src/helpers/BaseChatMesh.h / src/MeshCore.h) - far smaller than the limit
+# Meshtastic's DEFAULT_CHUNK_SIZE was tuned for (Issue 51).
+MESHCORE_MAX_TEXT_LEN = 160  # bytes, external MeshCore firmware constant
+
+# MESHCORE_MAX_CHUNK_SIZE (Issue 51): the wire format
+# "BTC_TX|<5-char session>|<n>/<total>|<payload>" adds up to 19 bytes of
+# overhead in the worst case (6 + 1 + 5 + 1 + 2 + 1 + 2 + 1, bounding
+# chunk/total digit counts by MAX_TOTAL_CHUNKS=50's 2 digits), leaving
+# MESHCORE_MAX_TEXT_LEN - 19 = 141 bytes theoretically safe. 120 leaves
+# real margin below that edge - confirmed via real hardware that the
+# default 170 fails outright (MeshCore's ERR_CODE_TABLE_FULL) while 100
+# sends cleanly.
+MESHCORE_MAX_CHUNK_SIZE = 120  # hex characters per chunk (60 bytes)
+
 # --- Reassembly limits (Issue 26) ---
 # Caps on server-side reassembly state, to bound worst-case memory growth
 # from a misbehaving/malicious sender rather than growing unboundedly

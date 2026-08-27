@@ -52,9 +52,9 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def run_preview(tx_hex: str) -> int:
+def run_preview(tx_hex: str, chunk_size: int) -> int:
     """Show how the transaction would be chunked, without sending."""
-    preview = create_preview(tx_hex)
+    preview = create_preview(tx_hex, chunk_size=chunk_size)
     print(f"Preview: {preview.total_chunks} chunk(s)")
     for chunk in preview.chunks:
         print(chunk.wire_format)
@@ -136,7 +136,7 @@ def cli_main(argv=None) -> int:
         return 1
 
     if args.dry_run:
-        return run_preview(args.tx)
+        return run_preview(args.tx, get_transport(args.transport).max_chunk_size)
     return run_send(args.destination, args.tx, args.transport, args.port)
 
 

@@ -2653,16 +2653,17 @@ transport never makes** Open
   bridge - the same pattern `connect()`/`send()`/`check_alive()` already
   use to call into the background asyncio loop from synchronous
   `BaseTransport` methods.
-- Related: [[Issue 51]] - found in the same session; both block a real
+- Related: [[Issue 51]] - found alongside it; both block a real
   end-to-end MeshCore relay, but are independent root causes needing
   independent fixes (and, per existing practice in this repo, independent
   branches/PRs even though planned together here).
 
 **Issue 51: `core/constants.py`'s `DEFAULT_CHUNK_SIZE` (170, tuned for
 Meshtastic) exceeds MeshCore's hard per-message cap, so every `BTC_TX`
-chunk is rejected outright over MeshCore** Open
+chunk is rejected outright over MeshCore** ✅ FIXED (2026-08-27)
 
-- Found 2026-08-26, same real-hardware session as Issue 50.
+- Found 2026-08-26, alongside Issue 50, during the first real-hardware
+  MeshCore↔MeshCore test.
 - **Root cause**: `DEFAULT_CHUNK_SIZE=170` was sized against Meshtastic's
   LongFast airtime budget (per its own docstring in
   `core/constants.py`) - `project/plans/story_30_1.md`'s Critical Files
@@ -2690,20 +2691,26 @@ chunk is rejected outright over MeshCore** Open
   size (117-byte wire message, well under the 160-byte cap) sent
   successfully with no send-side error at all - isolating the cause to
   message length, not a hardware or radio problem.
-- **Proposed fix**: needs a transport-aware chunk size, not one global
-  `DEFAULT_CHUNK_SIZE` - same shape as Story 30.2's
-  `BaseTransport.validate_destination()`. Add a
-  `max_chunk_payload_size`-style property (name TBD) to `BaseTransport`;
-  `MeshtasticSerialTransport` keeps returning the existing 170;
-  `MeshCoreSerialTransport` returns a conservative value safely under the
-  160-byte `MAX_TEXT_LEN` ceiling, leaving margin for the wire-format
-  overhead's worst case (larger chunk-total digit counts) rather than
-  shaving right up to the edge - per [[feedback_ground_caps_in_physical_constraints]]
-  ("derive LoRa-transport caps from real constraints, lean conservative").
-  `client/sender.py`'s `create_session()` call would need to consult
-  `self.transport`'s cap instead of `core.protocol`'s hardcoded
-  `DEFAULT_CHUNK_SIZE` default.
-- Related: [[Issue 50]].
+- **Fix**: added a transport-aware `max_chunk_size` abstract property to
+  `BaseTransport` - same shape as Story 30.2's `validate_destination()`.
+  `MeshtasticSerialTransport.max_chunk_size` returns the existing
+  `DEFAULT_CHUNK_SIZE` (170, no behavior change);
+  `MeshCoreSerialTransport.max_chunk_size` returns a new
+  `MESHCORE_MAX_CHUNK_SIZE = 120` (`core/constants.py`) - safely under the
+  160-byte `MAX_TEXT_LEN` ceiling with real margin below the theoretical
+  141-byte edge, per [[feedback_ground_caps_in_physical_constraints]].
+  `client/sender.py::TransactionSender.send_transaction()` now chunks via
+  `self.transport.max_chunk_size` instead of the hardcoded default;
+  `create_preview()` (used by both the CLI's `--dry-run` and the GUI's
+  preview button) takes an optional `chunk_size` parameter, defaulting to
+  `DEFAULT_CHUNK_SIZE` so the Meshtastic-only GUI needed zero changes.
+  `btcmesh_client_cli.py`'s dry-run path now resolves the selected
+  transport's cap before previewing. **Confirmed via real hardware**:
+  re-ran the exact send that previously failed immediately with
+  `ERR_CODE_TABLE_FULL` - it now sends every chunk cleanly at the new
+  default size, retrying only on ACK timeout (Issue 50's separate,
+  still-open bug), never on the send itself.
+- Related: [[Issue 50]] (still open - tracked and planned independently).
 
 ---
 
@@ -2758,4 +2765,4 @@ chunk is rejected outright over MeshCore** Open
 | 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | **FIXED** |
 | 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |
 | 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | Open |
-| 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | Open |
+| 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
