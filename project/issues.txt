@@ -3001,6 +3001,17 @@ in `connect()`'s port-open step** Open
   no change to the code, confirming Issue 53's fix itself is sound; this
   is a separate, pre-existing bug that happened to be visible at the same
   time.
+- **Reproduced a second time, independently, same result**: on another
+  fresh instance, the device scan launched on startup never finished
+  ("Identifying devices..." stayed up indefinitely - user-observed as
+  "endlessly scanning"). Sampled again: 1449/1449 samples over the
+  window, same thread, same exact stack (`Thread-2 (probe_thread)` →
+  `os_open` → `__open`). Meanwhile the *rest* of the app kept working
+  normally in the same run (a separate connect/disconnect cycle for
+  Start Server completed and logged normally) - confirming this one
+  specific background probe thread is what's genuinely stuck, silently,
+  while everything else keeps working; the user-visible symptom is just
+  that the scan's busy indicator never clears.
 - **Where**: `"Thread-2 (probe_thread)"` is the inner closure inside
   `gui/gui_common.py`'s `probe_devices_in_background()` - the background
   device-identity scan both GUIs run after finding multiple candidate
