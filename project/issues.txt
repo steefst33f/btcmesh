@@ -3086,10 +3086,16 @@ third occurrence of Issues 21/53's "unbounded blocking call" pattern**
   `test_connect_raises_timeout_error_when_port_open_blocks` mirroring
   `send()`'s existing timeout-test pattern) passes. Real-hardware
   confirmation against the actual wedged Seeed device from this session
-  (the same device the bug was caught on) hit a second, separate bug
-  before this fix's code path was ever reached - logged and fixed
-  separately as Issue 57 below. Once Issue 57 unblocks the probe loop,
-  this fix's own 20s bound should finally get exercised for real.
+  (the same device the bug was caught on) initially hit a second,
+  separate bug before this fix's code path was ever reached - logged and
+  fixed separately as Issue 57 below. With Issue 57 also fixed: selected
+  a Heltec device the scan itself hadn't managed to identify (likely
+  just asleep, not wedged) and pressed Start Server - watched the
+  physical device visibly wake from sleep, `connect()` succeed, and the
+  server go into listening for incoming transactions; Stop Server then
+  returned immediately. Confirms both this fix's 20s bound (no more
+  indefinite hang on a slow-to-wake device) and Issue 53's `disconnect()`
+  fix are holding up together on real hardware.
 
 ---
 
@@ -3149,13 +3155,19 @@ site earlier than Issue 56, same underlying pattern a fourth time**
   safe-to-call/best-effort - so like `disconnect()`'s Issue 53 fix (not
   `connect()`'s Issue 56 fix), a timeout swallows and logs a warning
   rather than raising.
-- Verified: full unit test suite passes, including a new
-  `tests/test_power_control_probe_relay.py` covering the existing
-  identify/reject/exception behavior plus a new
-  `test_returns_none_when_serial_open_blocks` mirroring the timeout-test
-  pattern used for Issues 21/53/56. Real-hardware confirmation that this
-  actually unblocks the scan and lets Issue 56's fix be exercised is
-  still pending, next step.
+- Verified: full unit test suite passes (946 tests), including a new
+  `test_open_blocking_forever_returns_none_not_hang` added to the
+  existing `tests/test_power_control.py::TestProbeRelayBoardId`
+  (mirroring the timeout-test pattern used for Issues 21/53/56), plus
+  updates to that class's existing mocks to match the fix no longer
+  using the `with serial.Serial(...) as ser:` context-manager form.
+  Real-hardware confirmed on the same session's wedged devices: the
+  scan hit this exact 5s bound on a candidate that had wedged in
+  `probe_relay_board_id()`'s port-open (logged the warning, moved on to
+  `transport.connect()` for it instead of hanging forever), and the
+  scan itself finally completed (`device_probe_complete` fired) instead
+  of hanging indefinitely on this call site the way it had every time
+  before this fix.
 
 ---
 
@@ -3215,4 +3227,5 @@ site earlier than Issue 56, same underlying pattern a fourth time**
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
-| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED** (real-hardware confirmation against the wedged device still pending) |
+| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
+| 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
