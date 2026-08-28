@@ -2979,10 +2979,11 @@ Meshtastic relay - not yet root-caused** Open
   path-routing behavior) rather than just accepting the retry-and-wait
   behavior as a given.
 
-**Issue 56: Background device-identity probe can hang forever inside the
-raw OS `open()` syscall when opening a candidate serial port - a third
-occurrence of Issues 21/53's "unbounded blocking call" pattern, this time
-in `connect()`'s port-open step** Open
+**Issue 56: `connect()` has no timeout on its port-open step - can hang
+the primary Start Server flow, not just the background device scan - a
+third occurrence of Issues 21/53's "unbounded blocking call" pattern**
+**Major** (upgraded from initial write-up - confirmed to hang Start
+Server directly, not just a background scan)
 
 - Found 2026-08-29 while doing the real-hardware smoke check for Issue
   53's fix: the server GUI's Stop Server appeared to hang on a couple of
@@ -3028,6 +3029,18 @@ in `connect()`'s port-open step** Open
   from ever being probed, silently, with no error/warning surfaced. In
   practice this can mean the entire device dropdown stays unlabeled raw
   paths indefinitely, not just a single missing entry.
+- **Third reproduction - confirmed on the primary Start Server flow
+  itself, not just the background scan**: same session, user selected a
+  candidate device (Seeed-VID) and pressed Start Server; both the scan
+  *and* Start Server appeared stuck at the same time. Sampled again:
+  `Thread-3 (run_server)` - `btcmesh_server_gui.py`'s
+  `on_start_pressed()`'s own server thread, a completely different call
+  site than the scan's `probe_thread` - showed 1572/1572 samples in the
+  identical stack (`os_open` → `open` → `__open`). This confirms the real
+  severity: it's not only a background-scan cosmetic issue, `connect()`'s
+  missing timeout can hang the actual primary workflow (Start Server)
+  exactly the way Issue 21's missing `send()` timeout used to hang Send -
+  raising this to Major.
 - **Same class of bug as Issues 21 and 53, one level down**: `send()` had
   no bound on the underlying library call (Issue 21, fixed); `disconnect()`
   had no bound on `iface.close()` (Issue 53, fixed); `connect()` has no
@@ -3100,4 +3113,4 @@ in `connect()`'s port-open step** Open
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
-| 56    | Background device-identity probe can hang forever in the raw OS `open()` syscall opening a candidate serial port - Issues 21/53's pattern, third occurrence | **Major (found via real-hardware smoke test, confirmed not Issue 53)** | Open |
+| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | Open |
