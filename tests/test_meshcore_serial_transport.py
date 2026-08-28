@@ -555,6 +555,22 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
         handler.assert_not_called()
         transport.disconnect()
 
+    def test_receive_ignores_event_without_sender(self):
+        """The handler is useless without knowing who to reply to - a
+        text payload with no pubkey_prefix must be dropped too, not just
+        one with no text."""
+        mock_client = MockMeshCoreClient()
+        handler = MagicMock()
+        transport, callback = self._connect_and_capture_callback(mock_client, handler)
+
+        event = FakeEvent(
+            FakeEventType.CONTACT_MSG_RECV, payload={"text": "Hello World"}
+        )
+        asyncio.run(callback(event))
+
+        handler.assert_not_called()
+        transport.disconnect()
+
     def test_receive_handles_handler_exception(self):
         mock_client = MockMeshCoreClient()
         done = threading.Event()

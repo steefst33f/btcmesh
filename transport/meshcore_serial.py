@@ -3,11 +3,20 @@
 Wraps the asyncio-native `meshcore` Python client library into the
 synchronous BaseTransport API. A dedicated background thread runs the
 client's asyncio event loop for the lifetime of the connection; every
-public method bridges into it via `asyncio.run_coroutine_threadsafe()`
+call that needs to `await` something bridges into that loop via
+`_run_coro()` (a thin wrapper over `asyncio.run_coroutine_threadsafe()`)
 bounded by an explicit timeout, mirroring the "bounded wait on a
 background worker" shape MeshtasticSerialTransport.send() already uses
 for the same reason (Issue 21 - never block the caller forever on a
-wedged device).
+wedged device). Calls that don't need to await anything (e.g.
+`meshcore.MeshCore.subscribe()`, a plain synchronous list-append under
+the hood) can be called directly, from any thread, with no bridge at
+all - `_run_coro()` exists for awaiting, not as a blanket rule about
+touching `self._mc`. Issue 52: never call `_run_coro()`-bridged methods
+synchronously from inside code that is itself already running on
+`self._loop`'s own thread (e.g. from within the CONTACT_MSG_RECV
+callback) - that thread would be blocked waiting on a result only it
+can produce, deadlocking for the full timeout every time.
 """
 from __future__ import annotations
 
@@ -394,7 +403,16 @@ class MeshCoreSerialTransport(BaseTransport):
             data = event.payload or {}
             text = data.get("text")
             sender = data.get("pubkey_prefix")
-            if not text or self._handler is None:
+            # Missing text isn't necessarily malformed data - CONTACT_MSG_RECV
+            # also fires for non-text payload types (e.g. binary/command
+            # data) that this transport doesn't handle, so this is routine
+            # filtering, not an error worth logging. Missing sender would be
+            # a genuine anomaly (this event is specifically for private/
+            # direct messages, not the separate CHANNEL_MSG_RECV this
+            # transport never subscribes to, so pubkey_prefix should always
+            # be present) - checked anyway since the handler is useless
+            # without knowing who to reply to.
+            if not text or not sender or self._handler is None:
                 return
             self._dispatch_queue.put((text, sender))
 
