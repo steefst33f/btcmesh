@@ -2824,7 +2824,7 @@ delay** ✅ FIXED (2026-08-28)
 **Issue 53: `disconnect()` has no timeout guard, unlike `send()` (Issue 21) -
 Server GUI's Stop Server hung indefinitely on real hardware, stuck printing
 the `meshtastic` library's own "Waiting for free space in TX Queue" debug
-line** Open
+line** ✅ FIXED
 
 - Observed 2026-08-28 during Story 30.4's manual GUI verification: server
   GUI connected fine to a real Meshtastic device (default transport,
@@ -2853,11 +2853,54 @@ line** Open
   concrete transport - a device with a stuck/backed-up queue at
   disconnect time can hang the caller (GUI or CLI) exactly the way
   `send()` used to.
-- Not root-caused further or fixed here (out of scope for Story 30.4) -
-  logged so the same bounded-worker-thread pattern Issue 21 established
-  can be applied to `disconnect()` too, in both `MeshtasticSerialTransport`
-  and (untested for this specific failure mode, but likely the same
-  shape) `MeshCoreSerialTransport`.
+- **Fix**: `MeshtasticSerialTransport.disconnect()` now runs
+  `iface.close()` on a daemon worker thread and
+  `join(timeout=_SEND_TIMEOUT_SECONDS)`s it, mirroring `send()`'s Issue
+  21 fix exactly - but on timeout, `disconnect()` logs a warning and
+  continues rather than raising. `send()` raises because callers expect
+  to handle a failed send; `disconnect()` never raises anywhere today,
+  confirmed by auditing every real call site (`core/device_watchdog.py`'s
+  `_recover_once()` calls it mid-recovery with zero exception handling;
+  every GUI/CLI call site calls it unguarded, several in a `finally`
+  block) - none of them are prepared to catch an exception from it, and
+  `disconnect()`'s own docstring already promises "safe to call". On
+  timeout the underlying library connection is abandoned (leaked), the
+  same way `send()`'s worker thread is abandoned - Python has no API to
+  forcibly stop a thread.
+- **`MeshCoreSerialTransport.disconnect()`**: its `_mc.disconnect()` call
+  was already bounded via `_run_coro()`'s `future.result(timeout=...)`,
+  and reading `_ensure_loop()` confirmed `self._loop.stop()` (scheduled
+  via `call_soon_threadsafe`, which wakes the loop's selector) reliably
+  makes `run_forever()` return even with the just-abandoned
+  `_mc.disconnect()` coroutine still pending - so this transport was
+  never actually exposed to the observed hang. Found one real gap while
+  verifying that, though: `self._loop.close()` was called unconditionally
+  after the loop-thread `join()`, which raises `RuntimeError: Cannot
+  close a running event loop` if that join ever genuinely timed out (a
+  low-probability race, not the bug observed here, but a real violation
+  of "never raises" all the same) - now guarded: `close()` is skipped
+  (with a warning logged) whenever the loop thread is still alive after
+  its bounded join.
+- Real-hardware repro of the *exact* observed hang wasn't attempted -
+  unlike Issue 21's dedicated relay-power-cut script
+  (`send_timeout_test.py`), there's no equivalent way to force a backed-up
+  TX queue on demand. Verified instead: the full unit test suite (944
+  tests, including new timeout-simulation tests for both transports
+  mirroring `send()`'s existing `test_send_raises_timeout_error_when_*_blocks`
+  pattern) stays green, and a real Start Server → Stop Server smoke check
+  on real hardware (Meshtastic device, `!7c5b4418`) confirmed no
+  regression - `disconnect()` completed cleanly and immediately.
+- **A different real hang surfaced during that same smoke check, at
+  first looking like a possible regression**: a couple of runs appeared
+  to hang after clicking Stop. Caught directly with `sample` (see Issue
+  56) - it was a background device-identity-probe thread stuck in the
+  OS's own `open()` syscall trying to open a candidate serial port,
+  unrelated to this fix. The main thread's own sample at that same
+  moment showed normal, responsive Kivy activity, and a subsequent Stop
+  Server on a fresh instance completed immediately with no code changes -
+  confirming this fix is not the cause. Logged separately as Issue 56
+  rather than folded in here, since it's a different call site
+  (`connect()`'s port-open step, not `disconnect()`).
 
 **Issue 54: MeshCore device dropdown shows configured name + node ID, but
 never the physical hardware/board model - harder to tell devices apart at
@@ -2936,6 +2979,82 @@ Meshtastic relay - not yet root-caused** Open
   path-routing behavior) rather than just accepting the retry-and-wait
   behavior as a given.
 
+**Issue 56: `connect()` has no timeout on its port-open step - can hang
+the primary Start Server flow, not just the background device scan - a
+third occurrence of Issues 21/53's "unbounded blocking call" pattern**
+**Major** (upgraded from initial write-up - confirmed to hang Start
+Server directly, not just a background scan)
+
+- Found 2026-08-29 while doing the real-hardware smoke check for Issue
+  53's fix: the server GUI's Stop Server appeared to hang on a couple of
+  runs, closely enough after Issue 53's fix to look like a regression at
+  first. Caught directly with macOS's `sample` tool (no `py-spy`/`sudo`
+  needed for a process the current user owns) while genuinely reproduced:
+  `Thread_8766651: Thread-2 (probe_thread)` showed 264/264 samples over a
+  3-second window all sitting in the exact same raw syscall stack:
+  `os_open` (Python) → `open` → `__open` (`libsystem_kernel.dylib`) -
+  i.e. still blocked in the kernel's own `open()` call, not anywhere in
+  Python/BTCMesh code at all.
+- **Confirmed not Issue 53**: the main thread's own sample, taken at the
+  same moment, showed completely normal Kivy rendering/event-loop
+  activity (`SDL_WaitEventTimeout_REAL`, GL drawing) - not stuck. A
+  subsequent Stop Server on a fresh instance completed immediately, with
+  no change to the code, confirming Issue 53's fix itself is sound; this
+  is a separate, pre-existing bug that happened to be visible at the same
+  time.
+- **Reproduced a second time, independently, same result**: on another
+  fresh instance, the device scan launched on startup never finished
+  ("Identifying devices..." stayed up indefinitely - user-observed as
+  "endlessly scanning"). Sampled again: 1449/1449 samples over the
+  window, same thread, same exact stack (`Thread-2 (probe_thread)` →
+  `os_open` → `__open`). Meanwhile the *rest* of the app kept working
+  normally in the same run (a separate connect/disconnect cycle for
+  Start Server completed and logged normally) - confirming this one
+  specific background probe thread is what's genuinely stuck, silently,
+  while everything else keeps working; the user-visible symptom is just
+  that the scan's busy indicator never clears.
+- **Where**: `"Thread-2 (probe_thread)"` is the inner closure inside
+  `gui/gui_common.py`'s `probe_devices_in_background()` - the background
+  device-identity scan both GUIs run after finding multiple candidate
+  ports (`probe_device_identity()` in `core/meshtastic_utils.py`/
+  `core/meshcore_utils.py`). Somewhere under `transport.connect(path)`
+  for one of the scanned candidates, the underlying serial library's
+  `open()` call on that port never returns.
+- **Worse than "one candidate stays unresolved"**: user-confirmed on the
+  second repro - *none* of the scanned devices got identity labels, not
+  just the stuck one. `probe_devices_in_background()`'s probe loop
+  (`for device in list(devices): ... identity = probe_device_identity(...)`)
+  is strictly sequential and has no per-candidate bound - one candidate
+  stuck in `open()` blocks every candidate after it in the same batch
+  from ever being probed, silently, with no error/warning surfaced. In
+  practice this can mean the entire device dropdown stays unlabeled raw
+  paths indefinitely, not just a single missing entry.
+- **Third reproduction - confirmed on the primary Start Server flow
+  itself, not just the background scan**: same session, user selected a
+  candidate device (Seeed-VID) and pressed Start Server; both the scan
+  *and* Start Server appeared stuck at the same time. Sampled again:
+  `Thread-3 (run_server)` - `btcmesh_server_gui.py`'s
+  `on_start_pressed()`'s own server thread, a completely different call
+  site than the scan's `probe_thread` - showed 1572/1572 samples in the
+  identical stack (`os_open` → `open` → `__open`). This confirms the real
+  severity: it's not only a background-scan cosmetic issue, `connect()`'s
+  missing timeout can hang the actual primary workflow (Start Server)
+  exactly the way Issue 21's missing `send()` timeout used to hang Send -
+  raising this to Major.
+- **Same class of bug as Issues 21 and 53, one level down**: `send()` had
+  no bound on the underlying library call (Issue 21, fixed); `disconnect()`
+  had no bound on `iface.close()` (Issue 53, fixed); `connect()` has no
+  bound on the initial port-`open()` step either - all three are the same
+  "an OS/library call can block forever, and nothing here stops it"
+  pattern applied to a third call site.
+- Not root-caused further (exactly which candidate port, or why that
+  specific `open()` blocks, wasn't isolated - lsof at the time showed
+  nothing else on this machine holding that port, so simple lock
+  contention from another process doesn't obviously explain it) or fixed
+  here - out of scope for Issue 53's PR. Logged so the same bounded-
+  worker-thread pattern can be applied to `connect()`'s port-open step
+  too, in both transports.
+
 ---
 
 ## Summary
@@ -2991,6 +3110,7 @@ Meshtastic relay - not yet root-caused** Open
 | 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
-| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | Open |
+| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
+| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | Open |

@@ -284,6 +284,56 @@ class TestMeshCoreSerialTransportDisconnect(unittest.TestCase):
         self.assertTrue(transport.is_connected)
         transport.disconnect()
 
+    def test_disconnect_does_not_hang_or_raise_when_mc_disconnect_blocks(self):
+        """Issue 53: mirrors the Meshtastic fix for the same class of bug -
+        mc.disconnect() blocking indefinitely must not hang disconnect()
+        forever, and - since every real caller treats disconnect() as
+        safe-to-call - must not raise either."""
+        async def blocking_disconnect():
+            await asyncio.sleep(3600)
+
+        mock_client = MockMeshCoreClient()
+        mock_client.disconnect = AsyncMock(side_effect=blocking_disconnect)
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport._SEND_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        transport.disconnect()  # must return, not hang or raise
+
+        self.assertFalse(transport.is_connected)
+        self.assertIsNone(transport._mc)
+
+    def test_disconnect_skips_loop_close_when_loop_thread_still_alive(self):
+        """Issue 53: loop.close() raises RuntimeError if the loop thread
+        is still actually running - disconnect() must never raise, so it
+        must skip close() rather than call it unguarded in that case.
+        Simulates the loop thread outliving its join() timeout directly
+        (real repro is a low-probability race - see the plan's write-up).
+
+        Only join()/is_alive() are patched on the real thread instance,
+        and close() is patched (via patch.object, auto-restored) on the
+        real loop instance - self._mc.disconnect()'s own _run_coro() call
+        still needs a genuine event loop to run against, so self._loop
+        itself is never replaced."""
+        mock_client = MockMeshCoreClient()
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        transport._loop_thread.join = MagicMock()  # no-op: simulates a timed-out join
+        transport._loop_thread.is_alive = MagicMock(return_value=True)
+
+        with patch.object(transport._loop, 'close') as mock_close:
+            transport.disconnect()  # must return, not raise
+            mock_close.assert_not_called()
+
+        self.assertIsNone(transport._loop)
+        self.assertIsNone(transport._loop_thread)
+        self.assertIsNone(transport._mc)
+
 
 # ---------------------------------------------------------------------------
 # Send tests
