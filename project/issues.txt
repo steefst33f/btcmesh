@@ -2886,6 +2886,40 @@ a glance when several are connected** Open (enhancement)
   this would be a MeshCore-only asymmetry. Left as a follow-up rather
   than folded into an already-verified, already-scoped story.
 
+**Issue 55: MeshCore relay is noticeably slower than the equivalent
+Meshtastic relay - not yet root-caused** Open
+
+- Raised 2026-08-28, right after Story 30.4's real-hardware GUI
+  verification: a chunked send that completed via the GUI felt
+  "extremely slow" compared to how Meshtastic relays have felt in this
+  same environment.
+- **Not a Story 30.4 regression**: this story only added transport
+  selection UI, device scanning, and identity probing - it made no
+  changes anywhere in the actual send/receive/dispatch path
+  (`transport/meshcore_serial.py`'s `send()`/`_on_event()`/dispatch
+  thread, untouched here).
+- **Two known, already-documented contributors, neither fully
+  investigated as the actual explanation**:
+  1. MeshCore's `MESHCORE_MAX_CHUNK_SIZE` is 120 vs Meshtastic's
+     `DEFAULT_CHUNK_SIZE` 170 (Issue 51 - MeshCore's own protocol enforces
+     a stricter ~160-byte total message cap) - the same transaction needs
+     more chunks, hence more round trips, over MeshCore.
+  2. Real hardware runs earlier in this session (Story 30.5's
+     verification, and this story's own GUI testing) already showed
+     individual chunks frequently needing a second send attempt before
+     ACKing - each retry costs a full `_SEND_TIMEOUT_SECONDS` (10s) wait,
+     and a multi-chunk transaction with several such retries adds up
+     quickly (one logged run took ~2.5 minutes for 6 chunks; a different
+     run of the same script completed in ~12s with zero retries - real,
+     substantial run-to-run variability on the same hardware).
+- Not root-caused further here - logged for a future investigation into
+  *why* individual chunk sends need retries this often on MeshCore
+  specifically (radio config - `radio_sf`/`radio_bw`/`radio_freq` are all
+  present in `self_info` and not yet compared against Meshtastic's
+  defaults on the same boards; duty-cycle/airtime limits; MeshCore's own
+  path-routing behavior) rather than just accepting the retry-and-wait
+  behavior as a given.
+
 ---
 
 ## Summary
@@ -2943,3 +2977,4 @@ a glance when several are connected** Open (enhancement)
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | Open |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open |
+| 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
