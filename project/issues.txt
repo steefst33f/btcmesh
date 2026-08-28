@@ -3086,8 +3086,76 @@ third occurrence of Issues 21/53's "unbounded blocking call" pattern**
   `test_connect_raises_timeout_error_when_port_open_blocks` mirroring
   `send()`'s existing timeout-test pattern) passes. Real-hardware
   confirmation against the actual wedged Seeed device from this session
-  (the same device the bug was caught on) is the next step, still to be
-  done live.
+  (the same device the bug was caught on) hit a second, separate bug
+  before this fix's code path was ever reached - logged and fixed
+  separately as Issue 57 below. Once Issue 57 unblocks the probe loop,
+  this fix's own 20s bound should finally get exercised for real.
+
+---
+
+**Issue 57: `probe_relay_board_id()` has no timeout on its port-open
+step - the actual cause of the "endlessly scanning" symptom, one call
+site earlier than Issue 56, same underlying pattern a fourth time**
+✅ FIXED
+
+- Found 2026-08-29 while trying to real-hardware-verify Issue 56's fix.
+  The device scan was still stuck ("endlessly scanning", no device
+  identities resolved) even with Issue 56's `connect()` timeout in
+  place. A fresh `sample` of the live process showed the outer probe
+  thread itself (`Thread-2 (probe_thread)` - Python 3.14's new default
+  thread-naming convention, `Thread-N (target function name)`) directly
+  in the raw `os_open` → `open` → `__open` syscall stack, not blocked in
+  a `worker.join()` lock-wait the way Issue 56's fix would produce, and
+  with no second worker thread anywhere in the sample. Both facts rule
+  out Issue 56's fixed code path entirely: this call never got that far.
+- **Root cause**: `core/meshtastic_utils.py`'s (and
+  `core/meshcore_utils.py`'s) `probe_device_identity()` calls
+  `probe_relay_board_id(path)` *before* it ever reaches
+  `transport.connect(path)`. That function
+  (`transport/power_control.py`) did:
+  ```python
+  with serial.Serial(port, baudrate, timeout=timeout) as ser:
+      ser.write(b"ID\n")
+      response = ser.readline().decode(...).strip()
+  ```
+  `timeout=` only bounds the *read* (pyserial applies it to
+  `readline()`) - the port-*open* pyserial performs inside
+  `serial.Serial(...)`'s own constructor has no bound at all. Same "an
+  OS/library call can block forever, nothing stops it" pattern as
+  Issues 21 (`send()`), 53 (`disconnect()`), and 56 (`connect()`'s
+  port-open step) - a fourth occurrence, one call site earlier in the
+  same chain than Issue 56.
+- Confirmed pre-existing, not a regression: `git log -S "def
+  probe_relay_board_id"` shows this code unchanged since Issue 37's
+  follow-up commit (`f8e357e`), well before this epic.
+- **Wider blast radius than just the scan**: `probe_relay_board_id()` is
+  called directly from several other real code paths too -
+  `btcmesh_server_cli.py`, `btcmesh_client_gui.py` (three call sites),
+  `btcmesh_server_gui.py`, and both transports'
+  `scan_for_reconnect_candidates()`-style dedup guards
+  (`transport/meshtastic_serial.py`, `transport/meshcore_serial.py`).
+  Any of those could wedge the same way, not just the background
+  identity scan.
+- **Fix**: mirrors Issues 21/53/56's bounded-worker-thread pattern,
+  applied to just the `serial.Serial(port, baudrate, timeout=timeout)`
+  construction - the confirmed-unbounded step. The subsequent
+  `ser.write()`/`ser.readline()` is left untouched, since `readline()`
+  already has its own bound via the `timeout=` argument. New module
+  constant `_OPEN_TIMEOUT_SECONDS = 5.0` (generous relative to a
+  healthy port's near-instant open, far shorter than a full
+  connect/handshake bound, since this is just a raw port claim with no
+  protocol handshake). The function's own docstring already documents a
+  "never raises" contract - every real caller treats it as
+  safe-to-call/best-effort - so like `disconnect()`'s Issue 53 fix (not
+  `connect()`'s Issue 56 fix), a timeout swallows and logs a warning
+  rather than raising.
+- Verified: full unit test suite passes, including a new
+  `tests/test_power_control_probe_relay.py` covering the existing
+  identify/reject/exception behavior plus a new
+  `test_returns_none_when_serial_open_blocks` mirroring the timeout-test
+  pattern used for Issues 21/53/56. Real-hardware confirmation that this
+  actually unblocks the scan and lets Issue 56's fix be exercised is
+  still pending, next step.
 
 ---
 
