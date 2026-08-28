@@ -1865,5 +1865,24 @@ lora/
 
 - [x] **Story 30.5: Real-hardware verification script in `scripts/hw_tests/`** _(delivered as `scripts/hw_tests/meshcore_relay_test.py`: wires the real `TransactionSender`/`TransactionReceiver` classes directly to two real `MeshCoreSerialTransport` connections - no RPC client, since this verifies the mesh relay, not Bitcoin broadcast - and asserts the server's reassembled hex matches byte-for-byte, that the client- and server-reported NACK reasons agree, and (for the default placeholder hex, which is intentionally not a structurally valid transaction) that the server rejects it with `"Invalid transaction structure"` specifically, so the check stays deterministic regardless of the runner's own Bitcoin RPC configuration. An optional `--tx-hex` flag allows pointing it at a real signed transaction instead, in which case the outcome is reported informationally rather than hard-asserted. Run against the same T190 and V3 devices used to verify Issues 50/51/52: a 6-chunk send completed with every chunk ACKed and the reassembled hex an exact match, and the script correctly reported `PASS`. Full suite: 929 tests, all passing (script is standalone, not imported by tests).)_
 
+- [ ] **Story 30.6: Update user-facing documentation for MeshCore** _(README.md
+    is still written as if Meshtastic is the only transport, despite Epic 9
+    now being functionally complete - confirmed by direct read, not
+    assumed: the Description and Features sections only mention
+    Meshtastic; Setup Instructions/Configuration only document
+    `MESHTASTIC_SERIAL_PORT`; the `--transport {meshtastic,meshcore}` flag
+    (Story 30.3, both CLIs) isn't mentioned anywhere; "Running the
+    Server"/"Running the Client" sections show no MeshCore examples; both
+    GUI sections' "Usage Instructions"/"Features"/"Layout" subsections
+    describe device selection and status rows in Meshtastic-only terms,
+    with no mention of Story 30.4's Transport selector. Needs a pass
+    adding MeshCore alongside every one of those, plus a short note on
+    MeshCore's own device setup (no `.env`-based serial port fallback the
+    way Meshtastic has, no known-contacts destination picker in either
+    GUI - matches this epic's own deliberate scope decisions, not gaps to
+    "fix"). Also check `docs/` (if it holds anything beyond README) and
+    any docstring-level module descriptions that still say
+    "Meshtastic" unconditionally where they now serve both transports.)_
+
 ---
 
