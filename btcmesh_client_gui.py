@@ -63,13 +63,11 @@ from gui.gui_common import (
 
 # Import Meshtastic utilities from core
 from core.meshtastic_utils import (
-    scan_meshtastic_devices,
     get_own_node_name,
     get_known_nodes,
     format_node_display,
 )
-from core.device_scan import format_device_display
-from core.meshcore_utils import scan_meshcore_devices
+from core.device_scan import format_device_display, scan_serial_devices
 
 # Import transport layer
 from transport.meshtastic_serial import MeshtasticSerialTransport
@@ -599,24 +597,25 @@ class BTCMeshGUI(BoxLayout):
         self._scan_devices()
 
     def _scan_devices(self):
-        """Scan for available devices (of the currently selected
-        transport) in background."""
+        """Scan for available candidate serial devices in background.
+
+        Candidate-port enumeration (core.device_scan.scan_serial_devices())
+        has nothing transport-specific about it, so this scan itself
+        doesn't branch on self.selected_transport - only the subsequent
+        identity probe does (see on_transport_selected()/
+        probe_devices_in_background()'s transport_name dispatch)."""
         # Invalidates any probe batch still running from a previous scan
         # (e.g. one started under a transport the operator has since
         # switched away from) - see probe_devices_in_background()'s
         # should_abort and self._scan_generation's docstring in __init__.
         self._scan_generation += 1
-        transport_name = self.selected_transport
-        display_name = TRANSPORT_DISPLAY_NAMES[transport_name]
+        display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
         self.device_spinner.text = SCANNING_TEXT
         self.status_log.add_message(f"Scanning for {display_name} devices...")
         self.device_busy.start("Scanning devices...")
 
         def scan_thread():
-            if transport_name == "meshcore":
-                devices = scan_meshcore_devices()
-            else:
-                devices = scan_meshtastic_devices()
+            devices = scan_serial_devices()
             self.result_queue.put(('devices_found', devices))
 
         threading.Thread(target=scan_thread, daemon=True).start()

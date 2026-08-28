@@ -780,7 +780,7 @@ class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
     """Tests for scan_for_reconnect_candidates() (Story 30.4) - mirrors
     tests/test_meshtastic_serial_transport.py's equivalent class. Every
     test here mocks both the scan and the relay-board probe: the real
-    implementation calls core.meshcore_utils.scan_meshcore_devices_detailed()
+    implementation calls core.device_scan.scan_serial_devices_detailed()
     (a genuine serial.tools.list_ports.comports() scan) and
     transport.power_control.probe_relay_board_id() (a genuine serial
     connect attempt) - leaving either unmocked would exercise real
@@ -797,7 +797,7 @@ class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
             DeviceInfo(path="/dev/ttyUSB1", serial_number=None, description="y"),
         ]
         with patch(
-            "core.meshcore_utils.scan_meshcore_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
@@ -809,7 +809,7 @@ class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
     def test_returns_empty_list_when_no_devices(self):
         transport = MeshCoreSerialTransport()
         with patch(
-            "core.meshcore_utils.scan_meshcore_devices_detailed", return_value=[]
+            "core.device_scan.scan_serial_devices_detailed", return_value=[]
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
         ):
@@ -835,7 +835,7 @@ class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
             return "000E55D8" if path == "/dev/ttyRELAY" else None
 
         with patch(
-            "core.meshcore_utils.scan_meshcore_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", side_effect=fake_probe

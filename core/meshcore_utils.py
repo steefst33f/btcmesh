@@ -3,42 +3,15 @@
 BTCMesh MeshCore Utilities - Shared utilities for working with MeshCore
 devices.
 
-Mirrors core/meshtastic_utils.py's shape (candidate-port enumeration is
-shared, see core/device_scan.py; identity probing is transport-specific,
-since it means actually speaking each transport's own connect protocol).
-Used by CLI, GUI, and server components.
+Identity probing only - candidate-port enumeration has nothing
+transport-specific about it and lives directly in core/device_scan.py
+(callers use scan_serial_devices()/scan_serial_devices_detailed() for
+both transports). Probing genuinely differs per transport, since it
+means actually speaking each transport's own connect protocol - this
+mirrors core/meshtastic_utils.py's probe_device_identity() shape. Used
+by CLI, GUI, and server components.
 """
-from typing import List
-
-from core.device_scan import DeviceInfo, ProbedDevice, scan_serial_devices, scan_serial_devices_detailed
-
-
-def scan_meshcore_devices() -> List[str]:
-    """Scan for available MeshCore devices.
-
-    Thin wrapper: candidate-port enumeration itself has nothing
-    MeshCore-specific about it (see core/device_scan.py) - this name
-    exists so MeshCore call sites read symmetrically with
-    core.meshtastic_utils.scan_meshtastic_devices().
-
-    Returns:
-        List of device paths (e.g., ['/dev/ttyUSB0', '/dev/ttyACM0']).
-        Returns empty list if no devices found or meshtastic not installed.
-    """
-    return scan_serial_devices()
-
-
-def scan_meshcore_devices_detailed() -> List[DeviceInfo]:
-    """Like scan_meshcore_devices(), but also returns each device's
-    serial_number/description for stable-identity matching (mirrors
-    core.meshtastic_utils.scan_meshtastic_devices_detailed(), used the
-    same way by MeshCoreSerialTransport.scan_for_reconnect_candidates()).
-
-    Returns:
-        List of DeviceInfo. Empty list if no devices found or meshtastic
-        not installed.
-    """
-    return scan_serial_devices_detailed()
+from core.device_scan import ProbedDevice
 
 
 RELAY_BOARD_NAME = "Relay board (not a MeshCore device)"
@@ -50,7 +23,7 @@ def probe_device_identity(path: str) -> ProbedDevice:
     ProbedDevice(None, None) (never raises) if the path isn't a genuine
     MeshCore device, is already in use, or the connection attempt
     fails/times out - e.g. a false-positive candidate from
-    scan_meshcore_devices()'s VID-blacklist filtering.
+    core.device_scan's VID-blacklist filtering.
 
     First does a quick check for whether the candidate is specifically
     the Story 26.7 relay board (probe_relay_board_id()) - if so, returns
@@ -82,6 +55,11 @@ def probe_device_identity(path: str) -> ProbedDevice:
     transport = MeshCoreSerialTransport()
     try:
         transport.connect(path)
+        # hardware (ProbedDevice's third field) is left at its default
+        # None here - getting it means a separate DEVICE_INFO round-trip
+        # per device (Issue 54 in project/issues.txt), not done during
+        # scanning today. Meshtastic's probe_device_identity() populates
+        # it for free instead, from data it already reads.
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=transport.local_node_name,

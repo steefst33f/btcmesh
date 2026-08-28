@@ -67,9 +67,8 @@ from gui.gui_common import (
 
 from core.config_loader import load_app_config
 from core.device_watchdog import build_device_watchdog
-from core.meshtastic_utils import get_own_node_name, scan_meshtastic_devices
-from core.meshcore_utils import scan_meshcore_devices
-from core.device_scan import format_device_display
+from core.meshtastic_utils import get_own_node_name
+from core.device_scan import format_device_display, scan_serial_devices
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from transport.meshtastic_serial import MeshtasticSerialTransport
@@ -615,20 +614,22 @@ class BTCMeshServerGUI(BoxLayout):
         self._on_scan_devices(None)
 
     def _on_scan_devices(self, instance):
-        """Scan for available devices of the currently selected transport."""
+        """Scan for available candidate serial devices in background.
+
+        Candidate-port enumeration (core.device_scan.scan_serial_devices())
+        has nothing transport-specific about it, so this scan itself
+        doesn't branch on self.selected_transport - only the subsequent
+        identity probe does (see probe_devices_in_background()'s
+        transport_name dispatch, below in _handle_result)."""
         # Invalidates any probe batch still running from a previous scan
         # (e.g. one started under a transport the operator has since
         # switched away from) - see self._scan_generation's docstring in
         # __init__ and probe_devices_in_background()'s should_abort.
         self._scan_generation += 1
-        transport_name = self.selected_transport
         self.device_busy.start("Scanning devices...")
 
         def scan_thread():
-            if transport_name == "meshcore":
-                devices = scan_meshcore_devices()
-            else:
-                devices = scan_meshtastic_devices()
+            devices = scan_serial_devices()
             self.result_queue.put(('devices_found', devices))
 
         threading.Thread(target=scan_thread, daemon=True).start()

@@ -103,12 +103,20 @@ def scan_serial_devices_detailed() -> List[DeviceInfo]:
 @dataclass
 class ProbedDevice:
     """Result of probing a candidate serial port for its transport-specific
-    identity (node ID + configured name). Fields are None together (never
-    a bare None return from a probe_device_identity()) if the path isn't a
-    genuine/reachable device for the transport being probed - callers
-    never need a None-check before destructuring."""
+    identity (node ID + configured name). node_id/name are None together
+    (never a bare None return from a probe_device_identity()) if the path
+    isn't a genuine/reachable device for the transport being probed -
+    callers never need a None-check before destructuring those two.
+
+    hardware (the physical board/model, e.g. "HELTEC_V3") is best-effort
+    and independently optional: Meshtastic's probe_device_identity()
+    populates it for free (the node data it already reads carries an
+    hwModel field); MeshCore's currently always leaves it None, since
+    getting it means an extra per-device round-trip during scanning
+    (Issue 54 in project/issues.txt) not done today."""
     node_id: Optional[str]
     name: Optional[str]
+    hardware: Optional[str] = None
 
 
 def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:

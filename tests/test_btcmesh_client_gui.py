@@ -161,7 +161,6 @@ from btcmesh_client_gui import (
     process_result,
     validate_send_inputs,
     ResultAction,
-    scan_meshtastic_devices,
     NO_DEVICES_TEXT,
     SCANNING_TEXT,
     SELECT_DEVICE_TEXT,
@@ -450,35 +449,13 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
 # =============================================================================
 
 class TestDeviceSelectionStory111(unittest.TestCase):
-    """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown."""
+    """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown.
 
-    def test_scan_handles_import_error(self):
-        """Given serial port enumeration fails to import, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=ImportError):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_empty_list_on_exception(self):
-        """Given comports raises exception, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=Exception("Test error")):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_device_list(self):
-        """Given comports returns non-blacklisted devices, Then returns those devices."""
-        mock_ports = [
-            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x303a),
-            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x2886),
-        ]
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
-
-    def test_scan_returns_empty_list_when_no_devices(self):
-        """Given comports returns empty list, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
+    scan_serial_devices()'s own behavior (VID-blacklist filtering,
+    import/exception handling) is tested once, directly, in
+    tests/test_device_scan.py - btcmesh_client_gui.py no longer imports
+    it under a Meshtastic-specific name (Story 30.4 cleanup), so there's
+    nothing GUI-specific left to test here beyond these constants."""
 
     def test_no_devices_text_constant(self):
         """Verify NO_DEVICES_TEXT constant is defined correctly."""
@@ -1155,7 +1132,7 @@ class TestScanDevicesBusyIndicator(unittest.TestCase):
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.scan_meshtastic_devices', return_value=['/dev/ttyUSB0']
+                 'btcmesh_client_gui.scan_serial_devices', return_value=['/dev/ttyUSB0']
              ):
             btcmesh_client_gui.BTCMeshGUI._scan_devices(gui)
 

@@ -2861,7 +2861,8 @@ line** Open
 
 **Issue 54: MeshCore device dropdown shows configured name + node ID, but
 never the physical hardware/board model - harder to tell devices apart at
-a glance when several are connected** Open (enhancement)
+a glance when several are connected** Open (enhancement) - schema ready,
+MeshCore population and display wiring still pending
 
 - Raised 2026-08-28 during Story 30.4's real-hardware GUI verification:
   the device dropdown correctly showed `49CB2414 (49cb24147266)` and
@@ -2870,21 +2871,36 @@ a glance when several are connected** Open (enhancement)
   physical board type each one is - only the device's self-configured
   name (`self_info["name"]`, MeshCore's default auto-generated name is
   itself just an uppercased hex string, not a human hint) and its node ID.
-- **Confirmed feasible**: the `meshcore` library's `DEVICE_INFO` response
-  (from `commands.send_device_query()` - the same command
-  `MeshCoreSerialTransport.check_alive()` already sends) carries a
+- **Correction to the original write-up**: Meshtastic *does* have an
+  equivalent, and a free one - `core/device_scan.py`'s `ProbedDevice`
+  dataclass now carries a third field, `hardware: Optional[str] = None`,
+  and `core/meshtastic_utils.py`'s `probe_device_identity()` populates it
+  via a new `get_own_node_hardware(iface)` (mirrors `get_own_node_name()`'s
+  exact lookup shape) - the Meshtastic protobuf `User` message already
+  carries an `hw_model` field (confirmed via `mesh_pb2.User.DESCRIPTOR`),
+  part of the same node data `get_own_node_name()` already reads, so no
+  extra round-trip. `core/meshcore_utils.py`'s `probe_device_identity()`
+  leaves the field at its `None` default, with an inline comment pointing
+  back to this issue.
+- **Still not done for MeshCore**: getting it means the separate
+  `DEVICE_INFO` round-trip described below (an extra per-device query
+  during scanning, slower with several devices connected) - the schema
+  is ready to receive it, but the query itself isn't wired in.
+- **Still not done for either transport**: nothing propagates `hardware`
+  from `ProbedDevice` into the GUI layer yet -
+  `gui/gui_common.py`'s `probe_devices_in_background()` only pushes
+  `identity.node_id`/`identity.name` in its `'device_identity'` result
+  tuple, and `format_device_display()` only ever formats `name`/`node_id`.
+  Whether/how to surface hardware in the dropdown label is its own open
+  design question, not decided here.
+- **MeshCore side, confirmed feasible**: the `meshcore` library's
+  `DEVICE_INFO` response (from `commands.send_device_query()` - the same
+  command `MeshCoreSerialTransport.check_alive()` already sends) carries a
   `model` field (firmware-reported hardware/board string,
   `meshcore/reader.py`'s `DEVICE_INFO` packet parsing, gated behind
   `fw_ver >= 3`). This is a genuinely separate query from `self_info`
   (what `connect()`/`local_node_name` currently read) - not something
   already being fetched.
-- **Not done as part of Story 30.4**: wiring this in means an extra
-  round-trip per candidate device during `probe_device_identity()`
-  (slower device scans, more so with several devices connected), and it
-  has no Meshtastic equivalent - unlike everything else in this story,
-  which deliberately mirrors Meshtastic's existing device-scan UX 1:1,
-  this would be a MeshCore-only asymmetry. Left as a follow-up rather
-  than folded into an already-verified, already-scoped story.
 
 **Issue 55: MeshCore relay is noticeably slower than the equivalent
 Meshtastic relay - not yet root-caused** Open
@@ -2976,5 +2992,5 @@ Meshtastic relay - not yet root-caused** Open
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | Open |
-| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open |
+| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |

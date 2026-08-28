@@ -101,9 +101,9 @@ class SerialRelayPowerControl(BasePowerControl):
     One instance controls one channel (one device), mirroring how
     UhubctlPowerControl is constructed per hub/port. The serial port is
     always explicit - never auto-detected - since this project's own
-    device-scanning helper (core.meshtastic_utils.scan_meshtastic_devices(),
-    which filters candidates by a VID blacklist rather than a whitelist)
-    would otherwise treat this board's own serial port as a false-positive
+    device-scanning helper (core.device_scan.scan_serial_devices(), which
+    filters candidates by a VID blacklist rather than a whitelist) would
+    otherwise treat this board's own serial port as a false-positive
     device candidate.
     """
 
