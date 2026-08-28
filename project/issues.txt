@@ -2982,8 +2982,7 @@ Meshtastic relay - not yet root-caused** Open
 **Issue 56: `connect()` has no timeout on its port-open step - can hang
 the primary Start Server flow, not just the background device scan - a
 third occurrence of Issues 21/53's "unbounded blocking call" pattern**
-**Major** (upgraded from initial write-up - confirmed to hang Start
-Server directly, not just a background scan)
+✅ FIXED
 
 - Found 2026-08-29 while doing the real-hardware smoke check for Issue
   53's fix: the server GUI's Stop Server appeared to hang on a couple of
@@ -3050,10 +3049,45 @@ Server directly, not just a background scan)
 - Not root-caused further (exactly which candidate port, or why that
   specific `open()` blocks, wasn't isolated - lsof at the time showed
   nothing else on this machine holding that port, so simple lock
-  contention from another process doesn't obviously explain it) or fixed
-  here - out of scope for Issue 53's PR. Logged so the same bounded-
-  worker-thread pattern can be applied to `connect()`'s port-open step
-  too, in both transports.
+  contention from another process doesn't obviously explain it) - the
+  underlying *why some devices wedge* remains an open hardware/driver
+  question (matching this project's other documented device-wedge
+  issues), but the missing-timeout bug itself is fixed below.
+- **Fix**: `MeshtasticSerialTransport.connect()`'s
+  `SerialInterface(connectNow=False)` construction now runs on a daemon
+  worker thread with a hard `join(timeout=_CONNECT_TIMEOUT_SECONDS)`
+  (20.0s - matching `_CHECK_ALIVE_TIMEOUT_SECONDS`'s existing precedent
+  in this file), mirroring `send()`'s Issue 21 fix exactly. Unlike
+  `disconnect()`'s Issue 53 fix, `connect()` already has a "raises on any
+  failure" contract every real caller expects, so a timeout raises
+  `TransportConnectionError` here rather than swallowing. The existing
+  `SystemExit` (Issue 41)/`NoDeviceError`/generic-exception dispatch is
+  preserved exactly, just moved to run after the worker thread completes.
+  Confirmed via git history (`git log -S`) that the vulnerable code
+  hasn't changed since commit `533eb49`, well before Issue 21 and
+  everything from this epic - not a regression, just newly exposed by
+  more real devices being connected simultaneously during this session's
+  testing than usual.
+- **`MeshCoreSerialTransport.connect()` deliberately not touched**: it
+  already wraps its equivalent `create_serial()` step in
+  `_run_coro(_do_connect(), self._CONNECT_TIMEOUT_SECONDS)` -
+  `future.result(timeout=...)` already bounds the *calling* thread's
+  wait, so a caller already gets a timely `TransportConnectionError`
+  rather than hanging, which is what was actually observed and confirmed
+  here (only ever on the Meshtastic path, never MeshCore). One smaller,
+  unconfirmed caveat noted for the record: if `create_serial()` does a
+  blocking (non-async) `open()` internally on the loop's own background
+  thread, that specific transport *instance*'s loop thread could stay
+  stuck forever afterward even though the caller recovers correctly -
+  every real caller constructs a fresh instance per attempt, so this
+  doesn't compound into a growing problem today, and speculatively
+  changing unconfirmed code wasn't warranted.
+- Verified: full unit test suite (942 tests, including a new
+  `test_connect_raises_timeout_error_when_port_open_blocks` mirroring
+  `send()`'s existing timeout-test pattern) passes. Real-hardware
+  confirmation against the actual wedged Seeed device from this session
+  (the same device the bug was caught on) is the next step, still to be
+  done live.
 
 ---
 
@@ -3113,4 +3147,4 @@ Server directly, not just a background scan)
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
-| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | Open |
+| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED** (real-hardware confirmation against the wedged device still pending) |

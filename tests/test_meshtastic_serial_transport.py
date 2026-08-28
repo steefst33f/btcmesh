@@ -165,6 +165,32 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
             transport.connect(None)
         self.assertIn("Multiple Meshtastic devices detected", str(ctx.exception))
 
+    def test_connect_raises_timeout_error_when_port_open_blocks(self):
+        """Issue 56: SerialInterface(connectNow=False) still does a
+        blocking OS-level open() internally, which can hang indefinitely
+        against a wedged device (confirmed via real-hardware sampling -
+        the underlying call never raises on its own, so nothing could
+        previously time it out). connect() must give up after
+        _CONNECT_TIMEOUT_SECONDS rather than hanging forever, and (unlike
+        disconnect()'s Issue 53 fix) must raise, matching connect()'s
+        existing "raises on any failure" contract."""
+        release_event = threading.Event()
+
+        def blocking_construction(*args, **kwargs):
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        self.mock_meshtastic.serial_interface.SerialInterface.side_effect = blocking_construction
+
+        transport = MeshtasticSerialTransport()
+        transport._CONNECT_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertRaises(TransportConnectionError) as ctx:
+            transport.connect("/dev/ttyUSB0")
+        self.assertIn("timed out", str(ctx.exception))
+        self.assertFalse(transport.is_connected)
+
+        release_event.set()  # let the abandoned worker thread finish, tidy shutdown
+
     def test_connect_closes_iface_when_handshake_times_out(self):
         """Test that a failure during the handshake (connect()/waitForConfig(),
         which runs after the serial port is already open) still closes the
