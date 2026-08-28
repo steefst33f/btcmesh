@@ -3171,6 +3171,40 @@ site earlier than Issue 56, same underlying pattern a fourth time**
 
 ---
 
+**Issue 58: MeshCore Send Transaction shows a raw error dict instead of
+a readable message when the destination node ID is unknown**
+Open
+
+- Found 2026-08-29 during real-hardware client GUI testing (MeshCore
+  transport): sending to a validly-formatted but non-existent/unknown
+  destination node ID surfaces in the Activity Log as `Error: Chunk 1:
+  Failed to send message: {'error_code': 2, 'code_string':
+  'ERR_CODE_NOT_FOUND'}` - the raw payload dict from the `meshcore`
+  library, not a message that tells the operator what actually went
+  wrong.
+- **Where**: `transport/meshcore_serial.py`'s `send()` -
+  `self._mc.commands.send_msg(...)` returns a result with
+  `result.type == EventType.ERROR`, and the current code just dumps
+  `result.payload` straight into the `TransportSendError` message:
+  ```python
+  if result is None or result.type == EventType.ERROR:
+      raise TransportSendError(
+          f"Failed to send message: {getattr(result, 'payload', None)}"
+      )
+  ```
+  No translation of known `code_string` values (e.g.
+  `ERR_CODE_NOT_FOUND` - the destination node isn't known to this
+  device's contact list/routing table) into operator-facing language.
+- **Suggested fix** (not yet implemented): map known `code_string`
+  values to a descriptive message (e.g. `ERR_CODE_NOT_FOUND` → "Unknown
+  destination node ID - not found in this device's contacts"),
+  falling back to the current raw-payload message for any
+  unrecognized code so nothing is silently swallowed.
+- Not yet scoped whether other MeshCore error codes need the same
+  treatment - only `ERR_CODE_NOT_FOUND` has been observed so far.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3229,3 +3263,4 @@ site earlier than Issue 56, same underlying pattern a fourth time**
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
+| 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
