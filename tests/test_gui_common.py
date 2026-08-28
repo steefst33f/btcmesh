@@ -674,7 +674,7 @@ class TestProbeDevicesInBackground(unittest.TestCase):
 
         with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
              unittest.mock.patch(
-                 'gui.gui_common.probe_device_identity',
+                 'gui.gui_common.probe_meshtastic_device_identity',
                  side_effect=[
                      ProbedDevice(node_id='!11111111', name='Node One'),
                      ProbedDevice(node_id=None, name=None),
@@ -706,7 +706,7 @@ class TestProbeDevicesInBackground(unittest.TestCase):
 
         with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
              unittest.mock.patch(
-                 'gui.gui_common.probe_device_identity',
+                 'gui.gui_common.probe_meshtastic_device_identity',
                  return_value=ProbedDevice(node_id='!22222222', name='Node Two'),
              ) as mock_probe:
             gui_common.probe_devices_in_background(
@@ -734,13 +734,121 @@ class TestProbeDevicesInBackground(unittest.TestCase):
 
         with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
              unittest.mock.patch(
-                 'gui.gui_common.probe_device_identity',
+                 'gui.gui_common.probe_meshtastic_device_identity',
                  side_effect=RuntimeError("serial error"),
              ):
             with self.assertRaises(RuntimeError):
                 gui_common.probe_devices_in_background(devices, result_queue)
 
         self.assertEqual(_drain(result_queue), [('device_probe_complete',)])
+
+    def test_default_dispatches_to_meshtastic_probe(self):
+        """Given transport_name is omitted, Then probe_meshtastic_device_identity()
+        is used (Story 30.4 - default stays "meshtastic", zero behavior
+        change for existing callers)."""
+        import queue
+        from gui import gui_common
+        from core.device_scan import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshtastic_device_identity',
+                 return_value=ProbedDevice(node_id='!11111111', name='Node One'),
+             ) as mock_meshtastic_probe, \
+             unittest.mock.patch('gui.gui_common.probe_meshcore_device_identity') as mock_meshcore_probe:
+            gui_common.probe_devices_in_background(devices, result_queue)
+
+        mock_meshtastic_probe.assert_called_once_with('/dev/ttyUSB0')
+        mock_meshcore_probe.assert_not_called()
+
+    def test_meshcore_transport_name_dispatches_to_meshcore_probe(self):
+        """Given transport_name="meshcore", Then probe_meshcore_device_identity()
+        is used instead of the Meshtastic one (Story 30.4)."""
+        import queue
+        from gui import gui_common
+        from core.device_scan import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch('gui.gui_common.probe_meshtastic_device_identity') as mock_meshtastic_probe, \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshcore_device_identity',
+                 return_value=ProbedDevice(node_id='a1b2c3d4e5f6', name='MC Node'),
+             ) as mock_meshcore_probe:
+            gui_common.probe_devices_in_background(devices, result_queue, transport_name='meshcore')
+
+        mock_meshcore_probe.assert_called_once_with('/dev/ttyUSB0')
+        mock_meshtastic_probe.assert_not_called()
+        self.assertEqual(
+            _drain(result_queue),
+            [
+                ('device_identity', '/dev/ttyUSB0', 'a1b2c3d4e5f6', 'MC Node'),
+                ('device_probe_complete',),
+            ],
+        )
+
+    def test_should_abort_true_from_the_start_probes_nothing(self):
+        """Story 30.4: given should_abort() is already True before the
+        first device, Then no probe is attempted at all, but
+        device_probe_complete still fires - a caller's busy-indicator
+        start()/stop() pairing (ref-counted, Issue 39) must stay balanced
+        even on an immediately-stale batch (e.g. the operator flipped the
+        transport selector again before this batch's own thread even got
+        scheduled)."""
+        import queue
+        from gui import gui_common
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch('gui.gui_common.probe_meshtastic_device_identity') as mock_probe:
+            gui_common.probe_devices_in_background(
+                devices, result_queue, should_abort=lambda: True
+            )
+
+        mock_probe.assert_not_called()
+        self.assertEqual(_drain(result_queue), [('device_probe_complete',)])
+
+    def test_should_abort_mid_batch_stops_remaining_devices(self):
+        """Story 30.4: given should_abort() flips to True after the first
+        device, Then the second device is never probed, but the first
+        device's already-fetched result and the completion sentinel both
+        still arrive - mirrors an operator switching transports while a
+        multi-device probe batch is partway through."""
+        import queue
+        from gui import gui_common
+        from core.device_scan import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+        abort_after_first = iter([False, True])
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshtastic_device_identity',
+                 return_value=ProbedDevice(node_id='!11111111', name='Node One'),
+             ) as mock_probe:
+            gui_common.probe_devices_in_background(
+                devices, result_queue, should_abort=lambda: next(abort_after_first)
+            )
+
+        mock_probe.assert_called_once_with('/dev/ttyUSB0')
+        self.assertEqual(
+            _drain(result_queue),
+            [
+                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
+                ('device_probe_complete',),
+            ],
+        )
 
 
 class TestDedupeDevicesByNodeId(unittest.TestCase):

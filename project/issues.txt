@@ -2821,6 +2821,73 @@ delay** ✅ FIXED (2026-08-28)
 
 ---
 
+**Issue 53: `disconnect()` has no timeout guard, unlike `send()` (Issue 21) -
+Server GUI's Stop Server hung indefinitely on real hardware, stuck printing
+the `meshtastic` library's own "Waiting for free space in TX Queue" debug
+line** Open
+
+- Observed 2026-08-28 during Story 30.4's manual GUI verification: server
+  GUI connected fine to a real Meshtastic device (default transport,
+  unrelated to Story 30.4's new selector), then Stop Server was pressed.
+  The process hung, repeatedly printing `[DEBUG] Waiting for free space in
+  TX Queue` to the terminal with no end in sight - required a manual
+  Ctrl+C to recover.
+- **Confirmed not a Story 30.4 regression**: `MeshtasticSerialTransport.disconnect()`
+  (`transport/meshtastic_serial.py:180-196`) is untouched by this story -
+  the only change anywhere near it was swapping a direct
+  `MeshtasticSerialTransport()` construction for
+  `get_transport("meshtastic")`, which returns the exact same class
+  instance via `transport/factory.py`. Confirmed by reading the method
+  directly, not inferred.
+- **Where it's actually stuck**: `disconnect()` calls `self._iface.close()`
+  (the `meshtastic` PyPI library's own interface object), wrapped in a
+  bare `try/except Exception: pass` - which only guards against `close()`
+  *raising*, not against it *hanging*. The observed debug line comes from
+  inside the library itself, suggesting `close()` is internally trying to
+  flush a backed-up outgoing packet queue on the physical device before
+  it will return, with no timeout of its own either.
+- **Same class of bug as Issue 21**, just on the opposite end of the
+  connection lifecycle: Issue 21 found `send()` had no bound and fixed it
+  with a dedicated bounded worker thread. `disconnect()`/`close()` still
+  has no equivalent bound anywhere in `BaseTransport`'s contract or either
+  concrete transport - a device with a stuck/backed-up queue at
+  disconnect time can hang the caller (GUI or CLI) exactly the way
+  `send()` used to.
+- Not root-caused further or fixed here (out of scope for Story 30.4) -
+  logged so the same bounded-worker-thread pattern Issue 21 established
+  can be applied to `disconnect()` too, in both `MeshtasticSerialTransport`
+  and (untested for this specific failure mode, but likely the same
+  shape) `MeshCoreSerialTransport`.
+
+**Issue 54: MeshCore device dropdown shows configured name + node ID, but
+never the physical hardware/board model - harder to tell devices apart at
+a glance when several are connected** Open (enhancement)
+
+- Raised 2026-08-28 during Story 30.4's real-hardware GUI verification:
+  the device dropdown correctly showed `49CB2414 (49cb24147266)` and
+  `4E8760A3 (4e8760a398ee)` for the two real MeshCore devices used
+  throughout Epic 9 (a V3 and a T190), but nothing there indicates which
+  physical board type each one is - only the device's self-configured
+  name (`self_info["name"]`, MeshCore's default auto-generated name is
+  itself just an uppercased hex string, not a human hint) and its node ID.
+- **Confirmed feasible**: the `meshcore` library's `DEVICE_INFO` response
+  (from `commands.send_device_query()` - the same command
+  `MeshCoreSerialTransport.check_alive()` already sends) carries a
+  `model` field (firmware-reported hardware/board string,
+  `meshcore/reader.py`'s `DEVICE_INFO` packet parsing, gated behind
+  `fw_ver >= 3`). This is a genuinely separate query from `self_info`
+  (what `connect()`/`local_node_name` currently read) - not something
+  already being fetched.
+- **Not done as part of Story 30.4**: wiring this in means an extra
+  round-trip per candidate device during `probe_device_identity()`
+  (slower device scans, more so with several devices connected), and it
+  has no Meshtastic equivalent - unlike everything else in this story,
+  which deliberately mirrors Meshtastic's existing device-scan UX 1:1,
+  this would be a MeshCore-only asymmetry. Left as a follow-up rather
+  than folded into an already-verified, already-scoped story.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -2874,3 +2941,5 @@ delay** ✅ FIXED (2026-08-28)
 | 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
+| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | Open |
+| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open |

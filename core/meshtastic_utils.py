@@ -5,51 +5,29 @@ BTCMesh Meshtastic Utilities - Shared utilities for working with Meshtastic devi
 This module provides device scanning, node information retrieval, and formatting
 functions used by CLI, GUI, and server components.
 """
-from dataclasses import dataclass
 from typing import Optional, List, Dict
+
+from core.device_scan import (
+    DeviceInfo,
+    ProbedDevice,
+    format_device_display,
+    scan_serial_devices,
+    scan_serial_devices_detailed,
+)
 
 
 def scan_meshtastic_devices() -> List[str]:
     """Scan for available Meshtastic devices.
 
+    Thin wrapper: candidate-port enumeration itself has nothing
+    Meshtastic-specific about it (see core/device_scan.py) - this name is
+    kept so existing callers/tests don't need to change.
+
     Returns:
         List of device paths (e.g., ['/dev/ttyUSB0', '/dev/ttyACM0']).
         Returns empty list if no devices found or meshtastic not installed.
     """
-    try:
-        from meshtastic.util import blacklistVids, eliminate_duplicate_port
-        import serial.tools.list_ports
-
-        # meshtastic.util.findPorts() only falls back to "not blacklisted" ports
-        # when zero whitelisted-VID ports are found, so a whitelisted device
-        # (e.g. Espressif's 0x303a) silently hides any other connected device
-        # whose VID isn't on the whitelist (e.g. Seeed's 0x2886). Filter by the
-        # (narrow) blacklist ourselves instead, so all real devices are found.
-        ports = sorted(
-            port.device
-            for port in serial.tools.list_ports.comports()
-            if port.vid is not None and port.vid not in blacklistVids
-        )
-        return eliminate_duplicate_port(ports)
-    except ImportError:
-        return []
-    except Exception:
-        return []
-
-
-@dataclass
-class DeviceInfo:
-    """A Meshtastic-candidate serial port and its identifying info.
-
-    serial_number is best-effort, not guaranteed-unique or even present -
-    reliability is chip-dependent (confirmed empirically: CH340-based
-    boards report None; some CP2102 boards share an identical factory-
-    default value across multiple physical devices). Callers must not
-    assume it uniquely identifies a device on its own.
-    """
-    path: str
-    serial_number: Optional[str]
-    description: Optional[str]
+    return scan_serial_devices()
 
 
 def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
@@ -58,48 +36,14 @@ def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
     DeviceWatchdog, to recognize a device across re-enumeration after a
     power cycle even if its OS-assigned path changes).
 
+    Thin wrapper around core.device_scan.scan_serial_devices_detailed() -
+    kept under this name so existing callers/tests don't need to change.
+
     Returns:
         List of DeviceInfo. Empty list if no devices found or meshtastic
         not installed.
     """
-    try:
-        from meshtastic.util import blacklistVids, eliminate_duplicate_port
-        import serial.tools.list_ports
-
-        candidates = [
-            port
-            for port in serial.tools.list_ports.comports()
-            if port.vid is not None and port.vid not in blacklistVids
-        ]
-        candidates.sort(key=lambda p: p.device)
-
-        surviving_paths = set(
-            eliminate_duplicate_port([p.device for p in candidates])
-        )
-        return [
-            DeviceInfo(
-                path=p.device,
-                serial_number=p.serial_number,
-                description=p.description,
-            )
-            for p in candidates
-            if p.device in surviving_paths
-        ]
-    except ImportError:
-        return []
-    except Exception:
-        return []
-
-
-@dataclass
-class ProbedDevice:
-    """Result of probing a candidate serial port for its Meshtastic
-    identity. Fields are None (never a bare None return from
-    probe_device_identity()) if the path isn't a genuine/reachable
-    Meshtastic device - callers never need a None-check before
-    destructuring."""
-    node_id: Optional[str]
-    name: Optional[str]
+    return scan_serial_devices_detailed()
 
 
 RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"

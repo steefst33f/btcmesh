@@ -9,7 +9,7 @@ functions to maintain visual consistency across BTCMesh applications.
 import logging
 import threading
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.widget import Widget
@@ -22,7 +22,9 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.utils import get_color_from_hex
 
-from core.meshtastic_utils import probe_device_identity, format_device_display
+from core.device_scan import format_device_display
+from core.meshtastic_utils import probe_device_identity as probe_meshtastic_device_identity
+from core.meshcore_utils import probe_device_identity as probe_meshcore_device_identity
 
 
 # =============================================================================
@@ -609,22 +611,47 @@ def create_input_row(label_text: str, initial_value: str = '',
 # =============================================================================
 
 def probe_devices_in_background(devices: List[dict], result_queue,
-                                 skip_paths: frozenset = frozenset()) -> None:
+                                 skip_paths: frozenset = frozenset(),
+                                 transport_name: str = "meshtastic",
+                                 should_abort: Optional[Callable[[], bool]] = None) -> None:
     """Start a background thread that briefly connects to each device in
-    `devices` to learn its Meshtastic node ID and name (probe_device_identity()
-    - connect, read identity, disconnect), pushing
-    ('device_identity', path, node_id, name) onto result_queue for each one
-    not in skip_paths, followed by a final ('device_probe_complete',)
-    once the whole batch is done (in a finally, so it still fires even
-    if a probe raises) - the only reliable "all done" signal a caller
-    has, e.g. to stop a busy indicator (Issue 39).
+    `devices` to learn its node ID and name (probe_device_identity() -
+    connect, read identity, disconnect - dispatched by transport_name),
+    pushing ('device_identity', path, node_id, name) onto result_queue for
+    each one not in skip_paths, followed by a final
+    ('device_probe_complete',) once the whole batch is done (in a
+    finally, so it still fires even if a probe raises) - the only
+    reliable "all done" signal a caller has, e.g. to stop a busy
+    indicator (Issue 39).
+
+    transport_name dispatch is resolved by name inside the thread body
+    (not a module-level dict built once at import time) so
+    unittest.mock.patch('gui.gui_common.probe_meshtastic_device_identity', ...)
+    -style patching keeps working, the same way the previous single-
+    transport bare call already resolved through this module's namespace.
+
+    should_abort (Story 30.4): an optional callable the caller can use to
+    invalidate an already-running batch - e.g. after the operator flips
+    the transport selector while this batch (started under the previous
+    transport) is still mid-flight. Checked before each device's probe;
+    once it returns True, remaining devices are skipped without probing
+    (real device connects, one per device, aren't cheap to let run to
+    completion just to discard the result). device_probe_complete still
+    always fires in the finally either way, so a caller's busy-indicator
+    start()/stop() pairing (ref-counted, Issue 39) stays balanced even on
+    an aborted batch.
     """
     def probe_thread():
         try:
             for device in list(devices):
+                if should_abort is not None and should_abort():
+                    break
                 if device['path'] in skip_paths:
                     continue
-                identity = probe_device_identity(device['path'])
+                if transport_name == "meshcore":
+                    identity = probe_meshcore_device_identity(device['path'])
+                else:
+                    identity = probe_meshtastic_device_identity(device['path'])
                 result_queue.put((
                     'device_identity', device['path'], identity.node_id, identity.name
                 ))

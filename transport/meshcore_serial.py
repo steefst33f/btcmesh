@@ -76,6 +76,7 @@ class MeshCoreSerialTransport(BaseTransport):
         self._mc: Any = None
         self._handler: Optional[MessageHandler] = None
         self._my_public_key: Optional[str] = None
+        self._my_node_name: Optional[str] = None
         self._subscription: Any = None
         self._dispatch_thread: Optional[threading.Thread] = None
         self._dispatch_queue: Optional["queue.Queue"] = None
@@ -137,6 +138,7 @@ class MeshCoreSerialTransport(BaseTransport):
 
         self._mc = mc
         self._my_public_key = public_key
+        self._my_node_name = (mc.self_info or {}).get("name") or None
 
         # If handler was set before connect, start listening now
         if self._handler is not None:
@@ -161,6 +163,7 @@ class MeshCoreSerialTransport(BaseTransport):
             self._mc = None
 
         self._my_public_key = None
+        self._my_node_name = None
 
         # Tear down the background loop/thread too - otherwise repeated
         # connect()/disconnect() cycles (e.g. DeviceWatchdog recovery
@@ -281,14 +284,29 @@ class MeshCoreSerialTransport(BaseTransport):
             )
 
     def scan_for_reconnect_candidates(self) -> List[str]:
-        """Not yet implemented for MeshCore - returns an empty list.
+        """Serial ports to try reconnecting to, for DeviceWatchdog's
+        post-power-cycle recovery. Reuses
+        core.meshcore_utils.scan_meshcore_devices_detailed() (the stable-
+        identity-aware scan, mirroring Story 26.3's Meshtastic version),
+        returning just the paths - identity verification against the
+        expected device happens in DeviceWatchdog via local_node_id, not
+        here.
 
-        MeshCore device scanning/identity probing (the equivalent of
-        core/meshtastic_utils.py) is separate, deferred work (Story 30.4).
-        BaseTransport's contract explicitly allows an empty list here
-        rather than requiring every transport to support discovery.
+        Excludes any Story 26.7 relay board's own control port via
+        probe_relay_board_id() - the same guard MeshtasticSerialTransport's
+        equivalent method uses (Issue 37/Issue 48): without it,
+        DeviceWatchdog._try_candidate() (transport-agnostic by design, so
+        it has no way to know about relay boards itself) would send the
+        relay board a full MeshCore connect attempt during recovery.
         """
-        return []
+        from core.meshcore_utils import scan_meshcore_devices_detailed
+        from transport.power_control import probe_relay_board_id
+
+        return [
+            d.path
+            for d in scan_meshcore_devices_detailed()
+            if probe_relay_board_id(d.path) is None
+        ]
 
     @property
     def max_chunk_size(self) -> int:
@@ -308,6 +326,13 @@ class MeshCoreSerialTransport(BaseTransport):
         if self._my_public_key is None:
             return None
         return self._my_public_key[: self._PUBKEY_PREFIX_BYTES * 2]
+
+    @property
+    def local_node_name(self) -> Optional[str]:
+        """The local device's configured name (from self_info["name"] at
+        connect time), or None if not connected or the device has no name
+        configured."""
+        return self._my_node_name
 
     # --- Internal helpers ---
 
