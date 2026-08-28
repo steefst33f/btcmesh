@@ -3019,6 +3019,15 @@ in `connect()`'s port-open step** Open
   `core/meshcore_utils.py`). Somewhere under `transport.connect(path)`
   for one of the scanned candidates, the underlying serial library's
   `open()` call on that port never returns.
+- **Worse than "one candidate stays unresolved"**: user-confirmed on the
+  second repro - *none* of the scanned devices got identity labels, not
+  just the stuck one. `probe_devices_in_background()`'s probe loop
+  (`for device in list(devices): ... identity = probe_device_identity(...)`)
+  is strictly sequential and has no per-candidate bound - one candidate
+  stuck in `open()` blocks every candidate after it in the same batch
+  from ever being probed, silently, with no error/warning surfaced. In
+  practice this can mean the entire device dropdown stays unlabeled raw
+  paths indefinitely, not just a single missing entry.
 - **Same class of bug as Issues 21 and 53, one level down**: `send()` had
   no bound on the underlying library call (Issue 21, fixed); `disconnect()`
   had no bound on `iface.close()` (Issue 53, fixed); `connect()` has no
