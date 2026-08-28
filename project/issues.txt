@@ -3205,6 +3205,53 @@ Open
 
 ---
 
+**Issue 59: `MeshCoreSerialTransport.disconnect()`'s loop teardown
+leaves the `meshcore` library's own background tasks to fail noisily
+during garbage collection**
+Open
+
+- Found 2026-08-29 during real-hardware client GUI testing: a single
+  MeshCore connect/disconnect cycle (a background identity probe) logged
+  five separate `Exception ignored while closing generator ...
+  RuntimeError: Event loop is closed` tracebacks - all non-fatal (caught
+  by Python during garbage collection, nothing actually crashed or
+  raised up to the caller), but noisy and pointing at a real gap in
+  cleanup ordering.
+- **Where**: `transport/meshcore_serial.py`'s `disconnect()` (lines
+  ~172-197) tears down the background event loop via
+  `self._loop.call_soon_threadsafe(self._loop.stop)` then, once the loop
+  thread has stopped, `self._loop.close()`. `loop.stop()` only makes
+  `run_forever()` return after its current iteration - it does not
+  cancel whatever tasks are still scheduled on the loop. The `meshcore`
+  library's own internal tasks (confirmed via one observed traceback:
+  `EventDispatcher._process_events`, blocked in `await
+  self.queue.get()`) are still pending at that point and are never
+  explicitly cancelled.
+- Once nothing references those abandoned task/coroutine objects
+  anymore, Python's garbage collector calls their generator `close()`,
+  which runs the coroutine's own cleanup code - `queue.get()`'s
+  `getter.cancel()` internally calls `loop.call_soon()`, which raises
+  `RuntimeError: Event loop is closed` since `disconnect()` already
+  closed it by then. Python reports this as an ignored exception during
+  GC, not a normal raised exception, which is why it doesn't propagate
+  or break the actual connect/disconnect flow - confirmed working
+  correctly in the same test session despite these appearing.
+- Likely surfaced specifically by Issue 53's fix, which added the
+  `self._loop.close()` call in the first place (previously the loop was
+  presumably just abandoned, never explicitly closed) - not a
+  regression in the sense of breaking anything, but a new visible
+  side-effect of that fix.
+- **Suggested fix direction** (not yet implemented): before calling
+  `loop.stop()`/`loop.close()`, cancel any tasks still pending on the
+  loop (e.g. via `asyncio.all_tasks(loop)` scheduled through
+  `call_soon_threadsafe`) and give them a moment to unwind, so nothing
+  is left for the garbage collector to clean up against an
+  already-closed loop. Not yet investigated whether the `meshcore`
+  library exposes its own explicit shutdown/cleanup hook that should be
+  called instead of relying on task cancellation from the outside.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3264,3 +3311,4 @@ Open
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
+| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - likely surfaced by Issue 53's added `loop.close()` | Minor (noisy logs, non-fatal - confirmed nothing actually breaks) | Open |
