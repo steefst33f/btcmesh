@@ -1884,5 +1884,28 @@ lora/
     any docstring-level module descriptions that still say
     "Meshtastic" unconditionally where they now serve both transports.)_
 
+- [ ] **Story 30.7: GUI cleanup/consistency pass, both GUIs but especially
+    the server GUI's status section** _(raised 2026-08-28, after Story
+    30.4's real-hardware GUI testing: both GUIs could be cleaner and
+    simpler, the server GUI's Connection Status section especially, and
+    GUI components should be visually/structurally consistent between the
+    two rather than diverging. One concrete,
+    directly-observed inconsistency already: the client GUI's
+    label+dropdown pairs (`_build_ui()` in `btcmesh_client_gui.py`) use
+    `create_section_label()` above a full-width `Spinner`, while the
+    server GUI's equivalents (`_build_device_settings()` in
+    `btcmesh_server_gui.py`, e.g. its "Transport:"/"Device:" rows) use an
+    inline `Label` beside a narrower `Spinner` in one horizontal row -
+    two different patterns for the same kind of control. Story 30.4's own
+    Transport-selector addition to the server GUI followed that file's
+    existing local convention rather than unifying it with the client's,
+    so the divergence is now duplicated across three rows instead of two.
+    The server GUI's Connection Status section itself (`Network:`/
+    `Bitcoin RPC:`/`Mesh:` status rows, `_build_status_section()`) is
+    called out specifically as needing its own look, separate from the
+    general consistency pass - not yet scoped further; needs a proper
+    design pass (mockup/direction agreement) before implementation, not a
+    unilateral redesign.)_
+
 ---
 
