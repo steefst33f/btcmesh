@@ -2824,7 +2824,7 @@ delay** ✅ FIXED (2026-08-28)
 **Issue 53: `disconnect()` has no timeout guard, unlike `send()` (Issue 21) -
 Server GUI's Stop Server hung indefinitely on real hardware, stuck printing
 the `meshtastic` library's own "Waiting for free space in TX Queue" debug
-line** Open
+line** ✅ FIXED
 
 - Observed 2026-08-28 during Story 30.4's manual GUI verification: server
   GUI connected fine to a real Meshtastic device (default transport,
@@ -2853,11 +2853,43 @@ line** Open
   concrete transport - a device with a stuck/backed-up queue at
   disconnect time can hang the caller (GUI or CLI) exactly the way
   `send()` used to.
-- Not root-caused further or fixed here (out of scope for Story 30.4) -
-  logged so the same bounded-worker-thread pattern Issue 21 established
-  can be applied to `disconnect()` too, in both `MeshtasticSerialTransport`
-  and (untested for this specific failure mode, but likely the same
-  shape) `MeshCoreSerialTransport`.
+- **Fix**: `MeshtasticSerialTransport.disconnect()` now runs
+  `iface.close()` on a daemon worker thread and
+  `join(timeout=_SEND_TIMEOUT_SECONDS)`s it, mirroring `send()`'s Issue
+  21 fix exactly - but on timeout, `disconnect()` logs a warning and
+  continues rather than raising. `send()` raises because callers expect
+  to handle a failed send; `disconnect()` never raises anywhere today,
+  confirmed by auditing every real call site (`core/device_watchdog.py`'s
+  `_recover_once()` calls it mid-recovery with zero exception handling;
+  every GUI/CLI call site calls it unguarded, several in a `finally`
+  block) - none of them are prepared to catch an exception from it, and
+  `disconnect()`'s own docstring already promises "safe to call". On
+  timeout the underlying library connection is abandoned (leaked), the
+  same way `send()`'s worker thread is abandoned - Python has no API to
+  forcibly stop a thread.
+- **`MeshCoreSerialTransport.disconnect()`**: its `_mc.disconnect()` call
+  was already bounded via `_run_coro()`'s `future.result(timeout=...)`,
+  and reading `_ensure_loop()` confirmed `self._loop.stop()` (scheduled
+  via `call_soon_threadsafe`, which wakes the loop's selector) reliably
+  makes `run_forever()` return even with the just-abandoned
+  `_mc.disconnect()` coroutine still pending - so this transport was
+  never actually exposed to the observed hang. Found one real gap while
+  verifying that, though: `self._loop.close()` was called unconditionally
+  after the loop-thread `join()`, which raises `RuntimeError: Cannot
+  close a running event loop` if that join ever genuinely timed out (a
+  low-probability race, not the bug observed here, but a real violation
+  of "never raises" all the same) - now guarded: `close()` is skipped
+  (with a warning logged) whenever the loop thread is still alive after
+  its bounded join.
+- Real-hardware repro of the *exact* observed hang wasn't attempted -
+  unlike Issue 21's dedicated relay-power-cut script
+  (`send_timeout_test.py`), there's no equivalent way to force a backed-up
+  TX queue on demand. Verified instead: the full unit test suite (944
+  tests, including new timeout-simulation tests for both transports
+  mirroring `send()`'s existing `test_send_raises_timeout_error_when_*_blocks`
+  pattern) stays green. A normal Start Server → Stop Server cycle on real
+  hardware (T190/V3) still needs a manual smoke check post-fix to confirm
+  no regression - not yet done as of this write-up.
 
 **Issue 54: MeshCore device dropdown shows configured name + node ID, but
 never the physical hardware/board model - harder to tell devices apart at
@@ -2991,6 +3023,6 @@ Meshtastic relay - not yet root-caused** Open
 | 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
-| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | Open |
+| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED** (real-hardware smoke check still pending) |
 | 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |

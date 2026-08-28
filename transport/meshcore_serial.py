@@ -171,9 +171,28 @@ class MeshCoreSerialTransport(BaseTransport):
         # replacing it on the next connect()'s _ensure_loop() call.
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._loop.stop)
+            # call_soon_threadsafe() wakes the loop's selector, so
+            # run_forever() reliably returns even with the just-abandoned
+            # _mc.disconnect() coroutine above still pending (Issue 53) -
+            # this join is a low-probability-timeout safety net, not the
+            # primary bound. It matters because loop.close() raises
+            # RuntimeError ("Cannot close a running event loop") if the
+            # loop thread is still actually running - disconnect() must
+            # never raise (see docstring), so skip close() in that case
+            # rather than let it happen unguarded.
             if self._loop_thread is not None:
                 self._loop_thread.join(timeout=self._SEND_TIMEOUT_SECONDS)
-            self._loop.close()
+                still_running = self._loop_thread.is_alive()
+            else:
+                still_running = False
+            if still_running:
+                logger.warning(
+                    "MeshCore event loop thread did not stop within %ss - "
+                    "abandoning it without closing the loop",
+                    self._SEND_TIMEOUT_SECONDS,
+                )
+            else:
+                self._loop.close()
             self._loop = None
             self._loop_thread = None
 

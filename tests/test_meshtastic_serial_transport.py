@@ -294,6 +294,36 @@ class TestMeshtasticSerialTransportDisconnect(unittest.TestCase):
         # Verify unsubscribe was called
         self.mock_pubsub.pub.unsubscribe.assert_called()
 
+    def test_disconnect_does_not_hang_or_raise_when_close_blocks(self):
+        """Issue 53: a device with a backed-up outgoing queue can make
+        iface.close() block indefinitely (observed on real hardware -
+        the meshtastic library's own "Waiting for free space in TX
+        Queue" debug loop). disconnect() must give up after
+        _SEND_TIMEOUT_SECONDS rather than hanging forever, and - unlike
+        send() - must not raise either, since every real caller treats
+        disconnect() as safe-to-call with no exception handling of its
+        own (e.g. DeviceWatchdog._recover_once())."""
+        release_event = threading.Event()
+
+        def blocking_close():
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        mock_iface = MockSerialInterface()
+        mock_iface.close = MagicMock(side_effect=blocking_close)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport._SEND_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertLogs('transport.meshtastic_serial', level='WARNING') as ctx:
+            transport.disconnect()  # must return, not hang or raise
+
+        self.assertFalse(transport.is_connected)
+        self.assertTrue(any('did not return' in msg for msg in ctx.output))
+
+        release_event.set()  # let the abandoned worker thread finish, tidy shutdown
+
 
 # ---------------------------------------------------------------------------
 # Send tests

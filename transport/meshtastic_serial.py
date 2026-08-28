@@ -180,17 +180,45 @@ class MeshtasticSerialTransport(BaseTransport):
     def disconnect(self) -> None:
         """Disconnect from the Meshtastic device.
 
-        Safe to call even if not currently connected.
+        Safe to call even if not currently connected - never raises,
+        including if close() itself hangs (Issue 53: a device with a
+        backed-up outgoing queue can make the meshtastic library's
+        iface.close() block indefinitely; bounded the same way send()
+        already is - Issue 21 - since every real caller of disconnect()
+        treats it as safe-to-call with no exception handling of its own,
+        e.g. DeviceWatchdog._recover_once()).
         Does NOT clear the message handler (preserved for reconnect).
         """
         if self._subscribed:
             self._unsubscribe()
 
         if self._iface is not None:
-            try:
-                self._iface.close()
-            except Exception:
-                pass
+            iface = self._iface
+            outcome: dict = {}
+
+            def _do_close() -> None:
+                try:
+                    iface.close()
+                except Exception as exc:
+                    outcome["error"] = exc
+
+            worker = threading.Thread(target=_do_close, daemon=True)
+            worker.start()
+            worker.join(timeout=self._SEND_TIMEOUT_SECONDS)
+
+            if worker.is_alive():
+                # Can't forcibly stop the underlying blocked call - it's
+                # abandoned, not killed, same as send()'s worker thread.
+                # disconnect() must never raise (see docstring), so just
+                # log and move on to the state cleanup below.
+                logger.warning(
+                    "iface.close() did not return within %ss - device may "
+                    "be unresponsive; abandoning the close and continuing",
+                    self._SEND_TIMEOUT_SECONDS,
+                )
+            elif "error" in outcome:
+                logger.warning("iface.close() raised: %s", outcome["error"])
+
             self._iface = None
 
         self._my_node_num = None
