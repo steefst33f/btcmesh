@@ -1905,7 +1905,15 @@ lora/
     called out specifically as needing its own look, separate from the
     general consistency pass - not yet scoped further; needs a proper
     design pass (mockup/direction agreement) before implementation, not a
-    unilateral redesign.)_
+    unilateral redesign. Also in scope: surface `ProbedDevice.hardware`
+    (added after this story was raised - see Issue 54 in
+    `project/issues.txt`) in the device dropdown itself, not just carry
+    it in the data. Currently nothing propagates it that far -
+    `gui/gui_common.py`'s `probe_devices_in_background()` only pushes
+    `identity.node_id`/`identity.name` in its `'device_identity'` result
+    tuple, and `format_device_display()` only ever formats `name`/
+    `node_id`. Meshtastic already populates the field for free today;
+    MeshCore's still needs Issue 54's separate `DEVICE_INFO` query first.)_
 
 ---
 
