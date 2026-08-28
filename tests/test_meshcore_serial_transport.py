@@ -777,13 +777,72 @@ class TestMeshCoreSerialTransportCheckAlive(unittest.TestCase):
 
 
 class TestMeshCoreSerialTransportScanForReconnectCandidates(unittest.TestCase):
-    """MeshCore device discovery is deferred (Story 30.4) - this must
-    return an empty list rather than raising, per BaseTransport's
-    contract."""
+    """Tests for scan_for_reconnect_candidates() (Story 30.4) - mirrors
+    tests/test_meshtastic_serial_transport.py's equivalent class. Every
+    test here mocks both the scan and the relay-board probe: the real
+    implementation calls core.device_scan.scan_serial_devices_detailed()
+    (a genuine serial.tools.list_ports.comports() scan) and
+    transport.power_control.probe_relay_board_id() (a genuine serial
+    connect attempt) - leaving either unmocked would exercise real
+    hardware I/O against whatever's actually plugged into the machine
+    running the tests, which can hang indefinitely instead of failing
+    fast."""
 
-    def test_returns_empty_list(self):
+    def test_returns_paths_from_detailed_scan(self):
+        from core.device_scan import DeviceInfo
+
         transport = MeshCoreSerialTransport()
-        self.assertEqual(transport.scan_for_reconnect_candidates(), [])
+        devices = [
+            DeviceInfo(path="/dev/ttyUSB0", serial_number="A1", description="x"),
+            DeviceInfo(path="/dev/ttyUSB1", serial_number=None, description="y"),
+        ]
+        with patch(
+            "core.device_scan.scan_serial_devices_detailed",
+            return_value=devices,
+        ), patch(
+            "transport.power_control.probe_relay_board_id", return_value=None
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, ["/dev/ttyUSB0", "/dev/ttyUSB1"])
+
+    def test_returns_empty_list_when_no_devices(self):
+        transport = MeshCoreSerialTransport()
+        with patch(
+            "core.device_scan.scan_serial_devices_detailed", return_value=[]
+        ), patch(
+            "transport.power_control.probe_relay_board_id", return_value=None
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, [])
+
+    def test_excludes_relay_board_port(self):
+        """Issue 48's fix, mirrored for MeshCore: DeviceWatchdog._try_candidate()
+        has no relay-board awareness of its own (transport-agnostic by
+        design), so the filtering has to happen here - otherwise recovery
+        sends the relay board a MeshCore connect attempt it can never
+        answer correctly."""
+        from core.device_scan import DeviceInfo
+
+        transport = MeshCoreSerialTransport()
+        devices = [
+            DeviceInfo(path="/dev/ttyUSB0", serial_number="A1", description="x"),
+            DeviceInfo(path="/dev/ttyRELAY", serial_number="B2", description="y"),
+        ]
+
+        def fake_probe(path, *args, **kwargs):
+            return "000E55D8" if path == "/dev/ttyRELAY" else None
+
+        with patch(
+            "core.device_scan.scan_serial_devices_detailed",
+            return_value=devices,
+        ), patch(
+            "transport.power_control.probe_relay_board_id", side_effect=fake_probe
+        ):
+            result = transport.scan_for_reconnect_candidates()
+
+        self.assertEqual(result, ["/dev/ttyUSB0"])
 
 
 class TestMeshCoreSerialTransportValidateDestination(unittest.TestCase):

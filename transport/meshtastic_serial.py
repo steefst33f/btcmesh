@@ -343,10 +343,12 @@ class MeshtasticSerialTransport(BaseTransport):
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Serial ports to try reconnecting to, for DeviceWatchdog's
         post-power-cycle recovery. Reuses
-        core.meshtastic_utils.scan_meshtastic_devices_detailed() (the
-        stable-identity-aware scan from Story 26.3), returning just the
-        paths - identity verification against the expected device happens
-        in DeviceWatchdog via local_node_id, not here.
+        core.device_scan.scan_serial_devices_detailed() (the
+        stable-identity-aware scan from Story 26.3 - candidate-port
+        enumeration has nothing Meshtastic-specific about it, so it's
+        shared with MeshCoreSerialTransport's equivalent method), returning
+        just the paths - identity verification against the expected device
+        happens in DeviceWatchdog via local_node_id, not here.
 
         Excludes any Story 26.7 relay board's own control port via
         probe_relay_board_id() - the same guard Issue 37 already put in
@@ -358,12 +360,12 @@ class MeshtasticSerialTransport(BaseTransport):
         next power_control.power_cycle() call (Issue 48, confirmed via
         real-hardware test - reproduced twice in a row before this fix).
         """
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        from core.device_scan import scan_serial_devices_detailed
         from transport.power_control import probe_relay_board_id
 
         return [
             d.path
-            for d in scan_meshtastic_devices_detailed()
+            for d in scan_serial_devices_detailed()
             if probe_relay_board_id(d.path) is None
         ]
 

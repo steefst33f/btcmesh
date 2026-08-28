@@ -2,104 +2,16 @@
 """
 BTCMesh Meshtastic Utilities - Shared utilities for working with Meshtastic devices.
 
-This module provides device scanning, node information retrieval, and formatting
-functions used by CLI, GUI, and server components.
+Identity probing only - candidate-port enumeration has nothing
+transport-specific about it and lives directly in core/device_scan.py
+(callers use scan_serial_devices()/scan_serial_devices_detailed() for
+both transports). This module provides Meshtastic-specific identity
+probing, node information retrieval, and formatting functions used by
+CLI, GUI, and server components.
 """
-from dataclasses import dataclass
 from typing import Optional, List, Dict
 
-
-def scan_meshtastic_devices() -> List[str]:
-    """Scan for available Meshtastic devices.
-
-    Returns:
-        List of device paths (e.g., ['/dev/ttyUSB0', '/dev/ttyACM0']).
-        Returns empty list if no devices found or meshtastic not installed.
-    """
-    try:
-        from meshtastic.util import blacklistVids, eliminate_duplicate_port
-        import serial.tools.list_ports
-
-        # meshtastic.util.findPorts() only falls back to "not blacklisted" ports
-        # when zero whitelisted-VID ports are found, so a whitelisted device
-        # (e.g. Espressif's 0x303a) silently hides any other connected device
-        # whose VID isn't on the whitelist (e.g. Seeed's 0x2886). Filter by the
-        # (narrow) blacklist ourselves instead, so all real devices are found.
-        ports = sorted(
-            port.device
-            for port in serial.tools.list_ports.comports()
-            if port.vid is not None and port.vid not in blacklistVids
-        )
-        return eliminate_duplicate_port(ports)
-    except ImportError:
-        return []
-    except Exception:
-        return []
-
-
-@dataclass
-class DeviceInfo:
-    """A Meshtastic-candidate serial port and its identifying info.
-
-    serial_number is best-effort, not guaranteed-unique or even present -
-    reliability is chip-dependent (confirmed empirically: CH340-based
-    boards report None; some CP2102 boards share an identical factory-
-    default value across multiple physical devices). Callers must not
-    assume it uniquely identifies a device on its own.
-    """
-    path: str
-    serial_number: Optional[str]
-    description: Optional[str]
-
-
-def scan_meshtastic_devices_detailed() -> List[DeviceInfo]:
-    """Like scan_meshtastic_devices(), but also returns each device's
-    serial_number/description for stable-identity matching (Story 26.4's
-    DeviceWatchdog, to recognize a device across re-enumeration after a
-    power cycle even if its OS-assigned path changes).
-
-    Returns:
-        List of DeviceInfo. Empty list if no devices found or meshtastic
-        not installed.
-    """
-    try:
-        from meshtastic.util import blacklistVids, eliminate_duplicate_port
-        import serial.tools.list_ports
-
-        candidates = [
-            port
-            for port in serial.tools.list_ports.comports()
-            if port.vid is not None and port.vid not in blacklistVids
-        ]
-        candidates.sort(key=lambda p: p.device)
-
-        surviving_paths = set(
-            eliminate_duplicate_port([p.device for p in candidates])
-        )
-        return [
-            DeviceInfo(
-                path=p.device,
-                serial_number=p.serial_number,
-                description=p.description,
-            )
-            for p in candidates
-            if p.device in surviving_paths
-        ]
-    except ImportError:
-        return []
-    except Exception:
-        return []
-
-
-@dataclass
-class ProbedDevice:
-    """Result of probing a candidate serial port for its Meshtastic
-    identity. Fields are None (never a bare None return from
-    probe_device_identity()) if the path isn't a genuine/reachable
-    Meshtastic device - callers never need a None-check before
-    destructuring."""
-    node_id: Optional[str]
-    name: Optional[str]
+from core.device_scan import ProbedDevice
 
 
 RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"
@@ -107,11 +19,11 @@ RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"
 
 def probe_device_identity(path: str) -> ProbedDevice:
     """Briefly connect to a candidate serial port to learn its Meshtastic
-    node ID and configured name, then disconnect. Returns
-    ProbedDevice(None, None) (never raises) if the path isn't a genuine
-    Meshtastic device, is already in use, or the connection attempt
-    fails/times out - e.g. a false-positive candidate from
-    scan_meshtastic_devices()'s VID-blacklist filtering.
+    node ID, configured name, and hardware/board model, then disconnect.
+    Returns ProbedDevice(None, None) (never raises) if the path isn't a
+    genuine Meshtastic device, is already in use, or the connection
+    attempt fails/times out - e.g. a false-positive candidate from
+    core.device_scan's VID-blacklist filtering.
 
     First does a quick check for whether the candidate is specifically
     the Story 26.7 relay board (probe_relay_board_id(), Issue 37's
@@ -154,6 +66,7 @@ def probe_device_identity(path: str) -> ProbedDevice:
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=get_own_node_name(transport._iface),
+            hardware=get_own_node_hardware(transport._iface),
         )
     except TransportConnectionError:
         return ProbedDevice(node_id=None, name=None)
@@ -226,6 +139,41 @@ def get_own_node_name(iface) -> Optional[str]:
 
         name = long_name or short_name
         return name if name else None
+    except (AttributeError, TypeError, KeyError):
+        return None
+
+
+def get_own_node_hardware(iface) -> Optional[str]:
+    """Get the connected device's physical hardware/board model (e.g.
+    "HELTEC_V3"), mirroring get_own_node_name()'s exact lookup shape.
+
+    Free to read: it's the same node data get_own_node_name() already
+    pulls from, just a different field (hwModel) - no extra round-trip.
+    The meshtastic library's own dict conversion already renders this as
+    the enum's string name ("UNSET" when the device hasn't reported one),
+    not a raw integer.
+
+    Args:
+        iface: Meshtastic interface with nodes dictionary and myInfo
+
+    Returns:
+        The node's hwModel string, or None if not available/unset.
+    """
+    if not iface or not iface.myInfo:
+        return None
+
+    try:
+        own_node_num = iface.myInfo.my_node_num
+        own_node_id = f"!{own_node_num:08x}"
+
+        if not iface.nodes or own_node_id not in iface.nodes:
+            return None
+
+        node_data = iface.nodes[own_node_id]
+        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
+        hw_model = user.get('hwModel', '') if isinstance(user, dict) else ''
+
+        return hw_model if hw_model and hw_model != 'UNSET' else None
     except (AttributeError, TypeError, KeyError):
         return None
 

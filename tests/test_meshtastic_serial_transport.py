@@ -1017,10 +1017,10 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
 class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase):
     """Tests for scan_for_reconnect_candidates() - the BaseTransport method
     DeviceWatchdog (core/device_watchdog.py) uses instead of importing
-    core.meshtastic_utils directly, keeping it transport-agnostic."""
+    core.device_scan directly, keeping it transport-agnostic."""
 
     def test_returns_paths_from_detailed_scan(self):
-        from core.meshtastic_utils import DeviceInfo
+        from core.device_scan import DeviceInfo
 
         transport = MeshtasticSerialTransport()
         devices = [
@@ -1028,7 +1028,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
             DeviceInfo(path="/dev/ttyUSB1", serial_number=None, description="y"),
         ]
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
@@ -1040,7 +1040,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
     def test_returns_empty_list_when_no_devices(self):
         transport = MeshtasticSerialTransport()
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed", return_value=[]
+            "core.device_scan.scan_serial_devices_detailed", return_value=[]
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
         ):
@@ -1054,7 +1054,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
         filtering has to happen here - otherwise recovery sends the
         relay board a Meshtastic handshake, corrupting its serial
         buffer and breaking the next power_cycle() call."""
-        from core.meshtastic_utils import DeviceInfo
+        from core.device_scan import DeviceInfo
 
         transport = MeshtasticSerialTransport()
         devices = [
@@ -1066,7 +1066,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
             return "000E55D8" if path == "/dev/ttyRELAY" else None
 
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", side_effect=fake_probe
