@@ -3,16 +3,26 @@
 Wraps the asyncio-native `meshcore` Python client library into the
 synchronous BaseTransport API. A dedicated background thread runs the
 client's asyncio event loop for the lifetime of the connection; every
-public method bridges into it via `asyncio.run_coroutine_threadsafe()`
+call that needs to `await` something bridges into that loop via
+`_run_coro()` (a thin wrapper over `asyncio.run_coroutine_threadsafe()`)
 bounded by an explicit timeout, mirroring the "bounded wait on a
 background worker" shape MeshtasticSerialTransport.send() already uses
 for the same reason (Issue 21 - never block the caller forever on a
-wedged device).
+wedged device). Calls that don't need to await anything (e.g.
+`meshcore.MeshCore.subscribe()`, a plain synchronous list-append under
+the hood) can be called directly, from any thread, with no bridge at
+all - `_run_coro()` exists for awaiting, not as a blanket rule about
+touching `self._mc`. Issue 52: never call `_run_coro()`-bridged methods
+synchronously from inside code that is itself already running on
+`self._loop`'s own thread (e.g. from within the CONTACT_MSG_RECV
+callback) - that thread would be blocked waiting on a result only it
+can produce, deadlocking for the full timeout every time.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import threading
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, List, Optional
@@ -67,6 +77,8 @@ class MeshCoreSerialTransport(BaseTransport):
         self._handler: Optional[MessageHandler] = None
         self._my_public_key: Optional[str] = None
         self._subscription: Any = None
+        self._dispatch_thread: Optional[threading.Thread] = None
+        self._dispatch_queue: Optional["queue.Queue"] = None
 
     # --- BaseTransport implementation ---
 
@@ -318,6 +330,57 @@ class MeshCoreSerialTransport(BaseTransport):
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
+    def _ensure_dispatch_thread(self) -> None:
+        """Start the single background thread that invokes self._handler,
+        decoupled from the asyncio loop thread (Issue 52).
+
+        _on_event runs on self._loop's own thread (that's how the
+        meshcore library invokes every subscriber). Calling the handler
+        inline there deadlocked the moment the handler called back into
+        any _run_coro()-bridged method - e.g. send(), to ACK the message
+        it just received: _run_coro() needs that same loop thread to
+        schedule new work, but it's already blocked running the handler,
+        so it can never get back around to running what it just
+        scheduled. Confirmed via real hardware: send() called from within
+        the receive handler took exactly _SEND_TIMEOUT_SECONDS (10.00s)
+        before raising, every time, independent of routing/path state -
+        a same-thread reentrancy deadlock, not a network delay.
+
+        One dedicated worker thread, fed by a queue, keeps message
+        handling serialized (matching this protocol's stop-and-wait
+        shape - the community meshcore-mqtt bridge project applies the
+        same "decouple receive from handling" principle via an
+        asyncio.Queue, though in its fully-async architecture it never
+        needs the thread-bridging BaseTransport's synchronous contract
+        requires here) while freeing the loop thread immediately, so a
+        handler-triggered send() can actually run."""
+        if self._dispatch_thread is not None:
+            return
+        self._dispatch_queue = queue.Queue()
+
+        def _worker() -> None:
+            while True:
+                item = self._dispatch_queue.get()
+                if item is None:  # sentinel: shut down
+                    return
+                text, sender = item
+                try:
+                    self._handler(text, sender)
+                except Exception:
+                    logger.exception("Error in message handler")
+
+        self._dispatch_thread = threading.Thread(target=_worker, daemon=True)
+        self._dispatch_thread.start()
+
+    def _stop_dispatch_thread(self) -> None:
+        """Stop the dispatch thread started by _ensure_dispatch_thread()."""
+        if self._dispatch_thread is None:
+            return
+        self._dispatch_queue.put(None)  # sentinel
+        self._dispatch_thread.join(timeout=self._SEND_TIMEOUT_SECONDS)
+        self._dispatch_thread = None
+        self._dispatch_queue = None
+
     def _subscribe(self) -> None:
         """Subscribe to MeshCore contact-message events, and actively start
         pulling any queued ones (Issue 50).
@@ -334,16 +397,24 @@ class MeshCoreSerialTransport(BaseTransport):
         MESSAGES_WAITING fired, CONTACT_MSG_RECV never did)."""
         from meshcore import EventType
 
+        self._ensure_dispatch_thread()
+
         async def _on_event(event) -> None:
             data = event.payload or {}
             text = data.get("text")
             sender = data.get("pubkey_prefix")
-            if not text or self._handler is None:
+            # Missing text isn't necessarily malformed data - CONTACT_MSG_RECV
+            # also fires for non-text payload types (e.g. binary/command
+            # data) that this transport doesn't handle, so this is routine
+            # filtering, not an error worth logging. Missing sender would be
+            # a genuine anomaly (this event is specifically for private/
+            # direct messages, not the separate CHANNEL_MSG_RECV this
+            # transport never subscribes to, so pubkey_prefix should always
+            # be present) - checked anyway since the handler is useless
+            # without knowing who to reply to.
+            if not text or not sender or self._handler is None:
                 return
-            try:
-                self._handler(text, sender)
-            except Exception:
-                logger.exception("Error in message handler")
+            self._dispatch_queue.put((text, sender))
 
         self._subscription = self._mc.subscribe(EventType.CONTACT_MSG_RECV, _on_event)
         self._run_coro(
@@ -352,13 +423,15 @@ class MeshCoreSerialTransport(BaseTransport):
 
     def _unsubscribe(self) -> None:
         """Unsubscribe from MeshCore contact-message events and stop the
-        active message-pulling started by _subscribe() (Issue 50)."""
+        active message-pulling started by _subscribe() (Issue 50), and the
+        dispatch thread that invokes the handler (Issue 52)."""
         try:
             if self._subscription is not None:
                 self._subscription.unsubscribe()
         except Exception:
             pass
         self._subscription = None
+        self._stop_dispatch_thread()
         try:
             self._run_coro(
                 self._mc.stop_auto_message_fetching(), self._SEND_TIMEOUT_SECONDS

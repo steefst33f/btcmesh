@@ -8,7 +8,9 @@ Tests verify:
 - Handler management and subscription lifecycle
 - Liveness checking (check_alive)
 """
+import asyncio
 import sys
+import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -251,6 +253,22 @@ class TestMeshCoreSerialTransportDisconnect(unittest.TestCase):
         mock_subscription.unsubscribe.assert_called_once()
         mock_client.stop_auto_message_fetching.assert_awaited_once()
 
+    def test_disconnect_stops_dispatch_thread(self):
+        """Issue 52: disconnect() must join the dispatch thread promptly
+        (not hang) and leave the transport ready for a clean reconnect."""
+        mock_client = MockMeshCoreClient()
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport.set_message_handler(lambda msg, sender: None)
+        self.assertIsNotNone(transport._dispatch_thread)
+
+        transport.disconnect()
+
+        self.assertIsNone(transport._dispatch_thread)
+        self.assertIsNone(transport._dispatch_queue)
+
     def test_reconnect_after_disconnect_starts_a_fresh_loop(self):
         """Regression guard: disconnect() tears down the background loop
         thread entirely, so a subsequent connect() must be able to spin up
@@ -331,8 +349,6 @@ class TestMeshCoreSerialTransportSend(unittest.TestCase):
     def test_send_raises_timeout_error_when_send_msg_blocks(self):
         """Same guarantee as Issue 21's Meshtastic fix: send() must give up
         after _SEND_TIMEOUT_SECONDS rather than hanging forever."""
-        import asyncio
-
         async def blocking_send_msg(*args, **kwargs):
             await asyncio.sleep(3600)
 
@@ -424,6 +440,22 @@ class TestMeshCoreSerialTransportMessageHandler(unittest.TestCase):
         self.assertIsNone(transport._handler)
         transport.disconnect()
 
+    def test_remove_handler_stops_dispatch_thread(self):
+        """Issue 52: remove_message_handler() must join the dispatch
+        thread too, not just unsubscribe CONTACT_MSG_RECV."""
+        mock_client = MockMeshCoreClient()
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport.set_message_handler(lambda m, s: None)
+        self.assertIsNotNone(transport._dispatch_thread)
+
+        transport.remove_message_handler()
+
+        self.assertIsNone(transport._dispatch_thread)
+        transport.disconnect()
+
     def test_remove_handler_stops_auto_message_fetching(self):
         """Issue 50: the active-pull mechanism started by _subscribe()
         must be torn down symmetrically, not just the CONTACT_MSG_RECV
@@ -479,17 +511,23 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
 
     def test_receive_text_message_calls_handler(self):
         mock_client = MockMeshCoreClient()
-        handler = MagicMock()
+        received = []
+        done = threading.Event()
+
+        def handler(text, sender):
+            received.append((text, sender))
+            done.set()
+
         transport, callback = self._connect_and_capture_callback(mock_client, handler)
 
         event = FakeEvent(
             FakeEventType.CONTACT_MSG_RECV,
             payload={"text": "Hello World", "pubkey_prefix": "112233445566"},
         )
-        import asyncio
         asyncio.run(callback(event))
 
-        handler.assert_called_once_with("Hello World", "112233445566")
+        self.assertTrue(done.wait(timeout=2), "handler was not called")
+        self.assertEqual(received, [("Hello World", "112233445566")])
         transport.disconnect()
 
     def test_receive_with_no_handler(self):
@@ -503,7 +541,6 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
             FakeEventType.CONTACT_MSG_RECV,
             payload={"text": "Hello", "pubkey_prefix": "112233445566"},
         )
-        import asyncio
         asyncio.run(callback(event))  # Should not raise
         transport.disconnect()
 
@@ -513,7 +550,22 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
         transport, callback = self._connect_and_capture_callback(mock_client, handler)
 
         event = FakeEvent(FakeEventType.CONTACT_MSG_RECV, payload={})
-        import asyncio
+        asyncio.run(callback(event))
+
+        handler.assert_not_called()
+        transport.disconnect()
+
+    def test_receive_ignores_event_without_sender(self):
+        """The handler is useless without knowing who to reply to - a
+        text payload with no pubkey_prefix must be dropped too, not just
+        one with no text."""
+        mock_client = MockMeshCoreClient()
+        handler = MagicMock()
+        transport, callback = self._connect_and_capture_callback(mock_client, handler)
+
+        event = FakeEvent(
+            FakeEventType.CONTACT_MSG_RECV, payload={"text": "Hello World"}
+        )
         asyncio.run(callback(event))
 
         handler.assert_not_called()
@@ -521,9 +573,13 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
 
     def test_receive_handles_handler_exception(self):
         mock_client = MockMeshCoreClient()
+        done = threading.Event()
 
         def bad_handler(msg, sender):
-            raise ValueError("Handler error")
+            try:
+                raise ValueError("Handler error")
+            finally:
+                done.set()
 
         transport, callback = self._connect_and_capture_callback(
             mock_client, bad_handler
@@ -533,8 +589,68 @@ class TestMeshCoreSerialTransportReceive(unittest.TestCase):
             FakeEventType.CONTACT_MSG_RECV,
             payload={"text": "Hello", "pubkey_prefix": "112233445566"},
         )
-        import asyncio
         asyncio.run(callback(event))  # Should not raise
+
+        self.assertTrue(done.wait(timeout=2), "handler never ran")
+        transport.disconnect()
+
+    def test_multiple_messages_dispatched_in_order(self):
+        """Issue 52: the dispatch queue must preserve message order, the
+        property a naive thread-per-message approach would risk losing."""
+        mock_client = MockMeshCoreClient()
+        received = []
+        all_done = threading.Event()
+
+        def handler(text, sender):
+            received.append(text)
+            if len(received) == 3:
+                all_done.set()
+
+        transport, callback = self._connect_and_capture_callback(mock_client, handler)
+        for i in range(3):
+            event = FakeEvent(
+                FakeEventType.CONTACT_MSG_RECV,
+                payload={"text": f"msg-{i}", "pubkey_prefix": "112233445566"},
+            )
+            asyncio.run(callback(event))
+
+        self.assertTrue(all_done.wait(timeout=2), "not all messages were dispatched")
+        self.assertEqual(received, ["msg-0", "msg-1", "msg-2"])
+        transport.disconnect()
+
+    def test_handler_calling_send_does_not_deadlock(self):
+        """Issue 52: a handler that calls transport.send() (e.g. a server
+        ACKing a received chunk) must not deadlock against _on_event's own
+        background loop thread. Reproduced against real hardware as an
+        exact, repeatable 10s hang before this fix; runs the callback ON
+        the transport's own loop (transport._loop), not an ad-hoc one, to
+        faithfully reproduce the thread the real library actually invokes
+        subscribers on - a plain asyncio.run() in the test's own thread
+        would not exercise the reentrancy this guards against."""
+        mock_client = MockMeshCoreClient()
+        done = threading.Event()
+        outcome = {}
+
+        def handler(text, sender):
+            try:
+                transport.send("ACK", sender)
+            except Exception as e:
+                outcome["error"] = e
+            finally:
+                done.set()
+
+        transport, callback = self._connect_and_capture_callback(mock_client, handler)
+        event = FakeEvent(
+            FakeEventType.CONTACT_MSG_RECV,
+            payload={"text": "Hello", "pubkey_prefix": "112233445566"},
+        )
+        future = asyncio.run_coroutine_threadsafe(callback(event), transport._loop)
+        future.result(timeout=5)
+
+        self.assertTrue(done.wait(timeout=2), "handler never completed")
+        self.assertNotIn(
+            "error", outcome, f"send() from handler raised: {outcome.get('error')}"
+        )
         transport.disconnect()
 
 
@@ -639,8 +755,6 @@ class TestMeshCoreSerialTransportCheckAlive(unittest.TestCase):
         transport.disconnect()
 
     def test_returns_false_on_timeout(self):
-        import asyncio
-
         async def blocking_query():
             await asyncio.sleep(3600)
 

@@ -2720,9 +2720,9 @@ chunk is rejected outright over MeshCore** ✅ FIXED (2026-08-27)
   since fixed), never on the send itself.
 - Related: [[Issue 50]] (fixed).
 
-**Issue 52: a MeshCore send to a not-yet-pathed contact can exceed
-`MeshCoreSerialTransport`'s own 10s send timeout, eating into the
-server's 30s reassembly budget enough to lose a later chunk** Open
+**Issue 52: `_on_event` deadlocks against its own transport when the
+receive handler sends - misdiagnosed at first as a MeshCore routing
+delay** ✅ FIXED (2026-08-28)
 
 - Found 2026-08-27, verifying the [[Issue 50]] fix on real hardware: a
   clean 3-chunk send got a real `BTC_CHUNK_ACK` back for chunk 1 - proving
@@ -2736,23 +2736,56 @@ server's 30s reassembly budget enough to lose a later chunk** Open
   `core/constants.py::DEFAULT_REASSEMBLY_TIMEOUT`'s 300; the two aren't
   the same constant despite the similar name) fired having only received
   1 of 3 chunks, and the session was discarded with a NACK.
-- **Likely root cause**: `transport/meshcore_serial.py::MeshCoreSerialTransport.send()`'s
-  `_SEND_TIMEOUT_SECONDS = 10.0` bound was sized against Meshtastic's
-  send-latency characteristics (Issue 21's original wedge-protection
-  work), not against MeshCore's own routing cost. A destination with no
-  cached path yet (`out_path_len == OUT_PATH_UNKNOWN`, see
-  `MeshCoreSerialTransport.send()`'s docstring) requires a flood send,
-  which is meaningfully slower than a routed one - plausibly explaining
-  a ~10s-plus first send in either direction on a fresh contact pair. Not
-  yet confirmed by direct measurement (e.g. timing a flood send vs. a
-  routed one back-to-back); this is the most likely explanation given
-  what the logs show, not a certainty.
-- Not yet fixed - needs more direct measurement before deciding whether
-  the right fix is a longer `_SEND_TIMEOUT_SECONDS` for MeshCore
-  specifically, a longer default reassembly timeout, path pre-warming
-  (e.g. exchanging a message before the timed protocol run starts, so
-  the flood-routing cost isn't on the critical path), or some
-  combination - deliberately left open rather than guessed at.
+- **Initial hypothesis was wrong, and disproven by direct measurement**:
+  the write-up above guessed flood-routing cost as the "likely root
+  cause." A standalone `commands.send_msg()` call (with or without the
+  auto-fetch loop active) measured under 0.1s, even though the contacts'
+  cached path was already direct (`out_path_len=0`, not
+  `OUT_PATH_UNKNOWN`) - flood-routing was never the bottleneck.
+- **Confirmed root cause**: `MeshCoreSerialTransport._subscribe()`'s
+  `_on_event` callback runs on the transport's own background asyncio
+  loop thread (`self._loop`/`self._loop_thread`, from `_ensure_loop()`)
+  and called `self._handler(text, sender)` synchronously, inline. In real
+  usage that handler is `TransactionReceiver._on_message`
+  (`server/receiver.py`), which - to send a chunk ACK - calls
+  `self.transport.send(...)`. `send()` bridges through `_run_coro()`,
+  which does `asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=...)` -
+  scheduling new work onto `self._loop` and blocking the *calling* thread
+  until it completes. The calling thread here *is* `self._loop_thread`
+  itself (already inside the synchronous `self._handler()` call, invoked
+  from `_on_event`, running on that same loop) - it can never get back
+  around to running the coroutine it just scheduled, because it's blocked
+  waiting on a result only it can produce. Reproduced directly (not
+  inferred): a handler that calls `transport.send()` on the same
+  transport instance took exactly `_SEND_TIMEOUT_SECONDS` (10.00s) before
+  raising `TransportSendError`, every time, independent of routing/path
+  state - a same-thread reentrancy deadlock, not a network delay. Also
+  explains why `MeshtasticSerialTransport` never had this problem - its
+  `send()` spins up a fresh worker thread per call (Issue 21) rather than
+  sharing one loop thread for every bridged operation, so its receive
+  callback can never contend with a `send()` call this way.
+- **Fix**: `_on_event` no longer calls the handler inline. A single
+  dedicated dispatch thread, fed by a queue and started alongside the
+  `CONTACT_MSG_RECV` subscription, now invokes the handler; `_on_event`
+  itself just enqueues `(text, sender)` and returns immediately, freeing
+  the loop thread to actually run whatever the handler schedules via
+  `_run_coro()`. One worker thread (rather than one thread per message)
+  keeps handling serialized, matching this protocol's stop-and-wait
+  shape. Checked prior art first: `meshcore-cli` and the community
+  `meshcore-mqtt` bridge (the closest published analog to this
+  transport) both avoid this class of bug, but only because both are
+  pure `async def` applications with no sync/async bridge at all -
+  `meshcore-mqtt` does apply the same "decouple receive from handling"
+  principle via an `asyncio.Queue`, which is what this fix's queue design
+  borrows, even though its own fully-async architecture never needed the
+  thread-bridging `BaseTransport`'s synchronous contract requires here.
+- **Confirmed via real hardware**: the exact reproduction above now
+  returns in ~0.01s instead of a guaranteed 10.00s hang. A full 3-chunk
+  send/receive round trip then completed end-to-end for the first time -
+  all three chunks sent, ACKed, and reassembled server-side, ending in
+  the server's real, specific validation NACK (`"Invalid transaction
+  structure"`, correctly rejecting the test placeholder hex) rather than
+  the generic `"Internal server error"` catch-all from before.
 - **Also affects the server's outgoing ACK, not just client sends, and
   mislabels the failure when it does**: found 2026-08-27 in a follow-up
   real-hardware run. A single-chunk transaction reassembled successfully
@@ -2775,10 +2808,15 @@ server's 30s reassembly budget enough to lose a later chunk** Open
   cancel the underlying coroutine - same "abandoned, not killed" shape as
   `MeshtasticSerialTransport.send()`'s Issue 21 fix - the client did
   receive `BTC_CHUNK_ACK` a moment later), but by then the server-side
-  code had already moved on to the generic-error branch. Whatever fix
-  addresses this issue's core timeout problem should also make sure a
-  timed-out *outgoing* ACK is reported accurately rather than folded into
-  the generic "Internal server error" catch-all.
+  code had already moved on to the generic-error branch. Now that the
+  deadlock that triggered this specific timeout is fixed, this exact
+  scenario shouldn't recur - but `_on_message`'s generic catch-all itself
+  (`server/receiver.py:254-261`) still folds *any* unexpected exception
+  into the same opaque `"Internal server error"` string, for any future
+  cause. Left as-is here (out of scope for this fix, which only touched
+  `transport/meshcore_serial.py`) - worth a small follow-up in
+  `server/receiver.py` if it's ever worth the churn, not urgent enough to
+  warrant its own tracked issue on its own.
 - Related: [[Issue 50]].
 
 ---
@@ -2835,4 +2873,4 @@ server's 30s reassembly budget enough to lose a later chunk** Open
 | 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |
 | 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
-| 52    | A MeshCore send to a not-yet-pathed contact can exceed the transport's 10s send timeout, eating into the server's 30s reassembly budget | Medium (real-hardware reliability - confirmed once, root cause not yet measured) | Open |
+| 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
