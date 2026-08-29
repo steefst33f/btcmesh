@@ -717,7 +717,18 @@ class BTCMeshGUI(BoxLayout):
         Device Selection" section). Known nodes are per-device, so
         without this a stale list from a previously selected device would
         be actively misleading - a node reachable from one physical
-        device isn't necessarily reachable from another."""
+        device isn't necessarily reachable from another.
+
+        MeshCore has no "known contacts" destination-picker equivalent
+        (Story 30.4 scope decision), so this connect only mattered there
+        for re-fetching identity - but identity is already known from the
+        background scan that populated self.devices before the device
+        could even appear labeled in this dropdown (Issue 61: re-probing
+        it here is not just redundant, it's an extra connect/disconnect
+        cycle immediately before the operator typically presses Send,
+        directly increasing the odds of racing this fetch's own
+        still-settling port). MeshCore skips the connect entirely below
+        and reuses the already-known identity instead."""
         if text in (NO_DEVICES_TEXT, SCANNING_TEXT, SELECT_DEVICE_TEXT, ''):
             return
 
@@ -732,9 +743,18 @@ class BTCMeshGUI(BoxLayout):
         # before it completes - same staleness guard as _scan_devices()'s
         # probe batch, see self._scan_generation's docstring in __init__.
         generation = self._scan_generation
-        # MeshCore has no "known contacts" destination-picker equivalent
-        # this story (Story 30.4 scope decision) - only fetch identity.
         fetch_known_nodes = transport_name == "meshtastic"
+
+        if transport_name != "meshtastic":
+            device = next((d for d in self.devices if d['path'] == path), None)
+            if device:
+                self.result_queue.put((
+                    'device_identity', path, device.get('node_id'), device.get('name'),
+                    device.get('firmware_version'), device.get('hw_model'),
+                ))
+            self.result_queue.put(('device_and_nodes_fetch_complete',))
+            return
+
         self.status_log.add_message(
             "Fetching device info and known nodes..." if fetch_known_nodes
             else "Fetching device info..."
