@@ -1638,6 +1638,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyRelay', 'node_id': None, 'name': 'Relay board (not a Meshtastic device)'}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
@@ -1658,6 +1659,63 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         self.assertEqual(results[0][0], 'log')
         self.assertIn('relay board', results[0][1])
         self.assertEqual(results[1], ('device_and_nodes_fetch_complete',))
+
+    def test_meshcore_selection_reuses_scan_identity_without_connecting(self):
+        """Issue 61: MeshCore has no known-nodes fetch to justify a fresh
+        connect on selection, and the identity is already known from the
+        background scan that populated self.devices - re-probing it here
+        is a redundant connect/disconnect cycle that directly increases
+        the odds of racing this fetch's own still-settling port right
+        before the operator presses Send. Selecting a MeshCore device
+        must reuse the already-known identity and never call connect()
+        at all."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{
+            'path': '/dev/ttyUSB0', 'node_id': 'a1b2c3d4e5f6', 'name': 'MC Node',
+            'firmware_version': None, 'hw_model': 'Heltec V3',
+        }]
+        gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshcore"
+
+        with unittest.mock.patch('btcmesh_client_gui.get_transport') as mock_get_transport, \
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id') as mock_probe_relay:
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        mock_get_transport.assert_not_called()
+        mock_probe_relay.assert_not_called()
+        gui.device_busy.start.assert_not_called()
+        results = self._drain(gui.result_queue)
+        self.assertEqual(
+            results,
+            [
+                ('device_identity', '/dev/ttyUSB0', 'a1b2c3d4e5f6', 'MC Node', None, 'Heltec V3'),
+                ('device_and_nodes_fetch_complete',),
+            ],
+        )
+
+    def test_meshcore_selection_of_unknown_path_still_fires_completion(self):
+        """Given the selected path somehow isn't in self.devices (stale
+        list race), Then no device_identity result is pushed, but the
+        completion sentinel still fires - the busy-indicator stop() call
+        it triggers is itself a safe no-op without a matching start()
+        (see BusyIndicator.stop()), so this can't desync the ref count."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = []
+        gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshcore"
+
+        with unittest.mock.patch('btcmesh_client_gui.get_transport') as mock_get_transport:
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        mock_get_transport.assert_not_called()
+        self.assertEqual(
+            self._drain(gui.result_queue),
+            [('device_and_nodes_fetch_complete',)],
+        )
 
 
 # =============================================================================

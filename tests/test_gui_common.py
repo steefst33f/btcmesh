@@ -656,6 +656,13 @@ def _drain(q):
 class TestProbeDevicesInBackground(unittest.TestCase):
     """Tests for probe_devices_in_background()."""
 
+    def tearDown(self):
+        """_probing_paths is module-level, shared-state (Issue 61) -
+        clear it so a test that errors mid-probe can't leak a path into
+        the next test."""
+        from gui import gui_common
+        gui_common._probing_paths.clear()
+
     def test_pushes_one_result_per_device(self):
         """Given a list of devices, Then probe_device_identity() is called
         for each, a device_identity result is pushed per device, and a
@@ -849,6 +856,84 @@ class TestProbeDevicesInBackground(unittest.TestCase):
                 ('device_probe_complete',),
             ],
         )
+
+    def test_skips_path_already_being_probed_by_another_batch(self):
+        """Issue 61: given a path already registered in _probing_paths
+        (an older, still-in-flight batch is mid-probe on it -
+        should_abort only stops a batch from *starting* a new probe, not
+        from finishing one already running), Then this batch skips it
+        without probing and without a result, but the completion
+        sentinel still fires - prevents two overlapping batches from
+        opening concurrent connections to the same physical serial port
+        (confirmed real-hardware to cause "could not open port"
+        failures and orphaned per-connection background tasks)."""
+        import queue
+        from gui import gui_common
+        from core.device_scan import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [
+            {'path': '/dev/ttyUSB0', 'node_id': None, 'name': None},
+            {'path': '/dev/ttyACM0', 'node_id': None, 'name': None},
+        ]
+        gui_common._probing_paths.add('/dev/ttyUSB0')
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshtastic_device_identity',
+                 return_value=ProbedDevice(node_id='!22222222', name='Node Two'),
+             ) as mock_probe:
+            gui_common.probe_devices_in_background(devices, result_queue)
+
+        mock_probe.assert_called_once_with('/dev/ttyACM0')
+        self.assertEqual(
+            _drain(result_queue),
+            [
+                ('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two', None, None),
+                ('device_probe_complete',),
+            ],
+        )
+
+    def test_releases_path_after_probe_completes(self):
+        """Given a path this batch just finished probing, Then it's
+        removed from _probing_paths afterward - a later batch must be
+        able to probe it again (e.g. a fresh rescan)."""
+        import queue
+        from gui import gui_common
+        from core.device_scan import ProbedDevice
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshtastic_device_identity',
+                 return_value=ProbedDevice(node_id='!11111111', name='Node One'),
+             ):
+            gui_common.probe_devices_in_background(devices, result_queue)
+
+        self.assertNotIn('/dev/ttyUSB0', gui_common._probing_paths)
+
+    def test_releases_path_even_when_probe_raises(self):
+        """Given probe_device_identity() raises, Then the path is still
+        released from _probing_paths (finally, not just the happy path) -
+        otherwise one bad probe would permanently block that device from
+        ever being probed again."""
+        import queue
+        from gui import gui_common
+
+        result_queue = queue.Queue()
+        devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
+
+        with unittest.mock.patch('gui.gui_common.threading.Thread', _ImmediateThread), \
+             unittest.mock.patch(
+                 'gui.gui_common.probe_meshtastic_device_identity',
+                 side_effect=RuntimeError("boom"),
+             ):
+            with self.assertRaises(RuntimeError):
+                gui_common.probe_devices_in_background(devices, result_queue)
+
+        self.assertNotIn('/dev/ttyUSB0', gui_common._probing_paths)
 
 
 class TestDedupeDevicesByNodeId(unittest.TestCase):

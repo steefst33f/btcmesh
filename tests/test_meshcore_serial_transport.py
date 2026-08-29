@@ -398,7 +398,7 @@ class TestMeshCoreSerialTransportSend(unittest.TestCase):
 
     def test_send_raises_timeout_error_when_send_msg_blocks(self):
         """Same guarantee as Issue 21's Meshtastic fix: send() must give up
-        after _SEND_TIMEOUT_SECONDS rather than hanging forever."""
+        after _SEND_MSG_TIMEOUT_SECONDS rather than hanging forever."""
         async def blocking_send_msg(*args, **kwargs):
             await asyncio.sleep(3600)
 
@@ -408,7 +408,7 @@ class TestMeshCoreSerialTransportSend(unittest.TestCase):
 
         transport = MeshCoreSerialTransport()
         transport.connect("/dev/ttyUSB0")
-        transport._SEND_TIMEOUT_SECONDS = 0.05  # keep the test fast
+        transport._SEND_MSG_TIMEOUT_SECONDS = 0.05  # keep the test fast
 
         with self.assertRaises(TransportSendError) as ctx:
             transport.send("hello", "aabbccddeeff")

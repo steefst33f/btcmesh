@@ -77,6 +77,19 @@ class MeshCoreSerialTransport(BaseTransport):
     # to finish before we'd ever abandon it.
     _CONNECT_TIMEOUT_SECONDS: float = 25.0
     _SEND_TIMEOUT_SECONDS: float = 10.0
+    # Issue 61 (send-path counterpart to Issue 59's connect-path fix):
+    # send_msg() also uses the library's own 15.0s CommandHandler.DEFAULT_TIMEOUT
+    # unchanged (no explicit timeout= override, confirmed by reading
+    # commands/messaging.py), so bounding it at the shared, shorter
+    # _SEND_TIMEOUT_SECONDS (10.0s) abandons it before the library's own
+    # wait would even complete - confirmed real-hardware: a chunk-send
+    # retry still timed out at 10s. A dedicated constant, not a bump to
+    # _SEND_TIMEOUT_SECONDS itself, since that's also used for several
+    # unrelated operations (disconnect, subscribe/unsubscribe) with no
+    # evidence they need more time - 20.0s matches this file's existing
+    # _CHECK_ALIVE_TIMEOUT_SECONDS precedent for a genuine real-radio
+    # round-trip bound, comfortably above the library's 15.0s.
+    _SEND_MSG_TIMEOUT_SECONDS: float = 20.0
     _CHECK_ALIVE_TIMEOUT_SECONDS: float = 20.0
     # MeshCore addresses contacts by a 6-byte public-key prefix (12 hex
     # chars) throughout its protocol and companion apps - incoming
@@ -173,6 +186,21 @@ class MeshCoreSerialTransport(BaseTransport):
         if self._mc is not None:
             try:
                 self._run_coro(self._mc.disconnect(), self._SEND_TIMEOUT_SECONDS)
+                # Issue 61 (deeper residual): the meshcore library's
+                # SerialConnection.disconnect() calls asyncio Transport.close(),
+                # which only *schedules* the close - the underlying OS-level
+                # port fd isn't actually released until the loop processes
+                # the resulting connection_lost() callback on a later
+                # iteration. mc.disconnect() itself returns immediately once
+                # close() is called, without waiting for that - so without
+                # this, the very next connect() attempt on the same path can
+                # race a port that Python already considers "released" but
+                # the OS hasn't finished closing yet, raising a genuine
+                # "could not open port" failure. A brief real sleep (not
+                # asyncio.sleep(0), which only yields one scheduling tick -
+                # the actual OS-level close can take real wall-clock time)
+                # gives the loop the iterations it needs to actually finish.
+                self._run_coro(asyncio.sleep(0.3), self._SEND_TIMEOUT_SECONDS)
             except Exception:
                 pass
             self._mc = None
@@ -222,9 +250,9 @@ class MeshCoreSerialTransport(BaseTransport):
         Raises:
             TransportConnectionError: If not connected.
             TransportSendError: If the send operation fails, including
-                if it doesn't complete within _SEND_TIMEOUT_SECONDS (same
-                wedge protection as MeshtasticSerialTransport.send(), see
-                Issue 21).
+                if it doesn't complete within _SEND_MSG_TIMEOUT_SECONDS
+                (same wedge protection as
+                MeshtasticSerialTransport.send(), see Issue 21).
         """
         if self._mc is None:
             raise TransportConnectionError("Not connected")
@@ -233,10 +261,10 @@ class MeshCoreSerialTransport(BaseTransport):
             return await self._mc.commands.send_msg(destination, message)
 
         try:
-            result = self._run_coro(_do_send(), self._SEND_TIMEOUT_SECONDS)
+            result = self._run_coro(_do_send(), self._SEND_MSG_TIMEOUT_SECONDS)
         except FutureTimeoutError as exc:
             raise TransportSendError(
-                f"Send timed out after {self._SEND_TIMEOUT_SECONDS}s - "
+                f"Send timed out after {self._SEND_MSG_TIMEOUT_SECONDS}s - "
                 "device may be unresponsive"
             ) from exc
         except Exception as exc:

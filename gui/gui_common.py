@@ -8,6 +8,7 @@ functions to maintain visual consistency across BTCMesh applications.
 """
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
@@ -25,6 +26,52 @@ from kivy.utils import get_color_from_hex
 from core.device_scan import format_device_display
 from core.meshtastic_utils import probe_device_identity as probe_meshtastic_device_identity
 from core.meshcore_utils import probe_device_identity as probe_meshcore_device_identity
+
+
+# Issue 61: paths currently being connected to by an in-flight scan
+# probe, device-selection fetch, Send, or Start Server action - guards
+# against two of these racing the same physical serial port
+# concurrently (e.g. a background scan still mid-probe on a device when
+# the operator selects that same device and presses Send before the
+# scan's own probe finishes). Confirmed real-hardware to cause
+# "could not open port" failures and leave orphaned per-connection
+# background tasks. Module-level/process-wide, shared by both GUIs'
+# every real connect call site - should_abort's scan-generation check
+# only stops a batch from *starting* a new probe, not from finishing
+# one already in flight, so it alone can't prevent this.
+_probing_paths_lock = threading.Lock()
+_probing_paths: set = set()
+
+
+def acquire_probing_path(path: str, timeout: float = 30.0) -> bool:
+    """Block (polling) until `path` isn't already reserved by another
+    in-flight connect elsewhere in this process, then reserve it.
+    Returns True once reserved. Returns False if still held after
+    `timeout` - the caller should surface a clear "device busy" error
+    rather than racing a doomed concurrent connect. `timeout=0` is
+    non-blocking (skip immediately if already held) - used by the scan
+    loop, which shouldn't stall a whole batch waiting on one device.
+
+    Always release with release_probing_path() in a finally, on every
+    exit path (including when the caller's own connect attempt fails).
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with _probing_paths_lock:
+            if path not in _probing_paths:
+                _probing_paths.add(path)
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+
+
+def release_probing_path(path: str) -> None:
+    """Release a path reserved via acquire_probing_path(). Safe to call
+    even if the path was never actually reserved (e.g. acquire_probing_path()
+    itself timed out) - discard() is a no-op when the path isn't present."""
+    with _probing_paths_lock:
+        _probing_paths.discard(path)
 
 
 # =============================================================================
@@ -642,20 +689,34 @@ def probe_devices_in_background(devices: List[dict], result_queue,
     always fires in the finally either way, so a caller's busy-indicator
     start()/stop() pairing (ref-counted, Issue 39) stays balanced even on
     an aborted batch.
+
+    A path already reserved elsewhere (Issue 61 - another in-flight
+    scan batch, a device-selection fetch, Send, or Start Server -
+    should_abort only stops a batch from *starting* a new probe, not
+    from finishing one already running) is skipped without probing and
+    without a result - non-blocking, since one busy device shouldn't
+    stall the whole batch; whoever already holds it will publish its own
+    result when it finishes.
     """
     def probe_thread():
         try:
             for device in list(devices):
                 if should_abort is not None and should_abort():
                     break
-                if device['path'] in skip_paths:
+                path = device['path']
+                if path in skip_paths:
                     continue
-                if transport_name == "meshcore":
-                    identity = probe_meshcore_device_identity(device['path'])
-                else:
-                    identity = probe_meshtastic_device_identity(device['path'])
+                if not acquire_probing_path(path, timeout=0):
+                    continue
+                try:
+                    if transport_name == "meshcore":
+                        identity = probe_meshcore_device_identity(path)
+                    else:
+                        identity = probe_meshtastic_device_identity(path)
+                finally:
+                    release_probing_path(path)
                 result_queue.put((
-                    'device_identity', device['path'], identity.node_id, identity.name,
+                    'device_identity', path, identity.node_id, identity.name,
                     identity.firmware_version, identity.hw_model,
                 ))
         finally:
