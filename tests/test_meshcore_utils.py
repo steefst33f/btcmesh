@@ -19,12 +19,15 @@ class TestProbeDeviceIdentity(unittest.TestCase):
 
     def test_returns_node_id_and_name_on_successful_connect(self):
         """Given a transport that connects successfully, Then returns a
-        ProbedDevice with both node_id and name (read straight off
+        ProbedDevice with node_id, name (read straight off
         local_node_name - no separate call needed, unlike Meshtastic's
-        get_own_node_name(iface)), and disconnects afterward."""
+        get_own_node_name(iface)), and hw_model (Issue 54 -
+        get_device_model()'s DEVICE_INFO round-trip), and disconnects
+        afterward."""
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = 'a1b2c3d4e5f6'
         mock_transport.local_node_name = 'MC Node'
+        mock_transport.get_device_model.return_value = 'Heltec V3'
 
         with unittest.mock.patch(
             'transport.meshcore_serial.MeshCoreSerialTransport',
@@ -37,7 +40,9 @@ class TestProbeDeviceIdentity(unittest.TestCase):
 
         self.assertEqual(result.node_id, 'a1b2c3d4e5f6')
         self.assertEqual(result.name, 'MC Node')
+        self.assertEqual(result.hw_model, 'Heltec V3')
         mock_transport.connect.assert_called_once_with('/dev/cu.usbserial-0001')
+        mock_transport.get_device_model.assert_called_once()
         mock_transport.disconnect.assert_called_once()
 
     def test_returns_node_id_with_no_name_when_device_has_none_set(self):

@@ -2904,8 +2904,7 @@ line** ✅ FIXED
 
 **Issue 54: MeshCore device dropdown shows configured name + node ID, but
 never the physical hardware/board model - harder to tell devices apart at
-a glance when several are connected** Open (enhancement) - schema ready,
-MeshCore population and display wiring still pending
+a glance when several are connected** ✅ FIXED, real-hardware verified
 
 - Raised 2026-08-28 during Story 30.4's real-hardware GUI verification:
   the device dropdown correctly showed `49CB2414 (49cb24147266)` and
@@ -2914,36 +2913,40 @@ MeshCore population and display wiring still pending
   physical board type each one is - only the device's self-configured
   name (`self_info["name"]`, MeshCore's default auto-generated name is
   itself just an uppercased hex string, not a human hint) and its node ID.
-- **Correction to the original write-up**: Meshtastic *does* have an
-  equivalent, and a free one - `core/device_scan.py`'s `ProbedDevice`
-  dataclass now carries a third field, `hardware: Optional[str] = None`,
-  and `core/meshtastic_utils.py`'s `probe_device_identity()` populates it
-  via a new `get_own_node_hardware(iface)` (mirrors `get_own_node_name()`'s
-  exact lookup shape) - the Meshtastic protobuf `User` message already
-  carries an `hw_model` field (confirmed via `mesh_pb2.User.DESCRIPTOR`),
-  part of the same node data `get_own_node_name()` already reads, so no
-  extra round-trip. `core/meshcore_utils.py`'s `probe_device_identity()`
-  leaves the field at its `None` default, with an inline comment pointing
-  back to this issue.
-- **Still not done for MeshCore**: getting it means the separate
-  `DEVICE_INFO` round-trip described below (an extra per-device query
-  during scanning, slower with several devices connected) - the schema
-  is ready to receive it, but the query itself isn't wired in.
-- **Still not done for either transport**: nothing propagates `hardware`
-  from `ProbedDevice` into the GUI layer yet -
-  `gui/gui_common.py`'s `probe_devices_in_background()` only pushes
-  `identity.node_id`/`identity.name` in its `'device_identity'` result
-  tuple, and `format_device_display()` only ever formats `name`/`node_id`.
-  Whether/how to surface hardware in the dropdown label is its own open
-  design question, not decided here.
-- **MeshCore side, confirmed feasible**: the `meshcore` library's
-  `DEVICE_INFO` response (from `commands.send_device_query()` - the same
-  command `MeshCoreSerialTransport.check_alive()` already sends) carries a
-  `model` field (firmware-reported hardware/board string,
-  `meshcore/reader.py`'s `DEVICE_INFO` packet parsing, gated behind
-  `fw_ver >= 3`). This is a genuinely separate query from `self_info`
-  (what `connect()`/`local_node_name` currently read) - not something
-  already being fetched.
+- **Meshtastic side**: was already free - the connect handshake's
+  `waitForConfig()` metadata carries `hw_model` for no extra round-trip
+  (`extract_firmware_info()` in `core/meshtastic_utils.py`, arrived via
+  the 2026-08-28 master merge's Story 27.4 alongside `firmware_version`).
+- **Schema and GUI display wiring** (also from that same merge):
+  `core/device_scan.py`'s shared `ProbedDevice` carries `hw_model`/
+  `firmware_version`; `gui/gui_common.py`'s `probe_devices_in_background()`
+  pushes both in its `'device_identity'` result tuple for whichever
+  transport is selected; `format_device_display()` appends a `[HW_MODEL]`
+  bracketed suffix when present. All transport-agnostic already, no
+  MeshCore-specific changes needed here.
+- **MeshCore side, now implemented**: new
+  `MeshCoreSerialTransport.get_device_model()` sends the same
+  `commands.send_device_query()` command `check_alive()` already uses and
+  reads the `DEVICE_INFO` response's `model` field
+  (`meshcore/reader.py`'s packet parsing, gated behind `fw_ver >= 3` -
+  older firmware's response simply omits the key, read via `.get()`,
+  never assumed present). A genuinely separate query from `self_info`
+  (what `connect()`/`local_node_name` already read) - not something
+  already being fetched. Wired into `core/meshcore_utils.py`'s
+  `probe_device_identity()`. `firmware_version` deliberately left at
+  `None` for MeshCore - out of scope, the DEVICE_INFO payload's version
+  fields aren't the same shape and nothing displays it.
+- Verified: full unit test suite passes (962 tests), including new
+  `TestMeshCoreSerialTransportGetDeviceModel` coverage (success, not
+  connected, ERROR response, missing/empty `model`, exception, timeout).
+  Real-hardware confirmed 2026-08-29 on both GUIs (server, then client):
+  both of the session's MeshCore devices (the V3 and T190) show a
+  `[MODEL]` suffix in the dropdown after a successful scan, the same way
+  Meshtastic devices already do. One real-hardware wrinkle hit
+  repeatedly along the way, unrelated to this fix: Issue 59's noisy
+  teardown was confirmed to also leave both MeshCore devices genuinely
+  unresponsive until physically reconnected - see Issue 59's write-up,
+  escalated accordingly.
 
 **Issue 55: MeshCore relay is noticeably slower than the equivalent
 Meshtastic relay - not yet root-caused** Open
@@ -3234,13 +3237,31 @@ Open
   `RuntimeError: Event loop is closed` since `disconnect()` already
   closed it by then. Python reports this as an ignored exception during
   GC, not a normal raised exception, which is why it doesn't propagate
-  or break the actual connect/disconnect flow - confirmed working
-  correctly in the same test session despite these appearing.
+  or break the actual connect/disconnect flow *in the moment it happens*.
 - Likely surfaced specifically by Issue 53's fix, which added the
   `self._loop.close()` call in the first place (previously the loop was
   presumably just abandoned, never explicitly closed) - not a
   regression in the sense of breaking anything, but a new visible
   side-effect of that fix.
+- **Escalation - this has a real functional consequence, not just noisy
+  logs**: confirmed three times during 2026-08-29's Issue 54 real-
+  hardware testing. After several rapid connect/disconnect probe cycles
+  produced a run of these tracebacks, both MeshCore devices twice
+  stopped completing their handshake entirely (every subsequent connect
+  attempt hit the full 15s timeout) until physically disconnected and
+  reconnected. The third time, this actually blocked a genuine attempt
+  to Start Server against the V3 - the underlying `meshcore` library
+  logged its own explicit failure (`No response from meshcore node,
+  disconnecting` / `Are you sure your node is a serial companion?`) for
+  that connect attempt specifically, while the T190 (probed/connected
+  less recently at that point) connected successfully in the same
+  session. Strongly suggests the abandoned per-cycle tasks/loops
+  eventually leave the actual serial port or the device's own companion-
+  protocol state genuinely wedged, not just Python-side GC noise -
+  severity raised from "noisy logs, non-fatal" accordingly. Not yet
+  root-caused *why* accumulating abandoned loops/tasks would affect the
+  physical device's responsiveness rather than just this process's
+  Python state - worth investigating alongside the fix below.
 - **Suggested fix direction** (not yet implemented): before calling
   `loop.stop()`/`loop.close()`, cancel any tasks still pending on the
   loop (e.g. via `asyncio.all_tasks(loop)` scheduled through
@@ -3281,6 +3302,15 @@ Open
 - Not yet root-caught with `sample`/profiling the way Issues 21/53/56/57
   were - this is a live-observed timing race, not yet independently
   confirmed via a captured stack trace.
+- **Second, independent confirmation (2026-08-29, Issue 54's real-hardware
+  verification)**: the Heltec V3 went through the exact same
+  start/sleep/wake/shut-down cycle again, but this time did *not* block
+  the scan - the user's own observation was that this time it wasn't
+  first in the candidate list. Directly supports the "list position
+  matters" mechanism above: probed later, the device has had enough time
+  to either finish its sleep transition or wake back up on its own
+  before being reached, so the race window is simply missed rather than
+  hit.
 - No fix attempted yet. Possible directions for later: a short delay
   before the post-transport-switch rescan (to let a just-disconnected
   device finish its sleep transition rather than catching it mid-way),
@@ -3343,10 +3373,10 @@ Open
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
-| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | Open (schema + Meshtastic done, MeshCore query + display wiring pending) |
+| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | **FIXED**, real-hardware verified |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
-| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - likely surfaced by Issue 53's added `loop.close()` | Minor (noisy logs, non-fatal - confirmed nothing actually breaks) | Open |
+| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - confirmed 3x to also leave the device itself unresponsive until physically reconnected, once blocking a real Start Server attempt | **Medium-Major (can block a real connect, not just noisy logs)** | Open |
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
