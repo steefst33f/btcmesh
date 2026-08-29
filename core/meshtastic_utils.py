@@ -9,12 +9,31 @@ both transports). This module provides Meshtastic-specific identity
 probing, node information retrieval, and formatting functions used by
 CLI, GUI, and server components.
 """
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
-from core.device_scan import ProbedDevice
+from core.device_scan import ProbedDevice, format_device_display
 
 
 RELAY_BOARD_NAME = "Relay board (not a Meshtastic device)"
+
+
+def extract_firmware_info(iface) -> Tuple[Optional[str], Optional[str]]:
+    """Extract firmware version and hardware model name from a connected
+    interface's metadata, populated for free by the connect handshake's
+    waitForConfig() - no extra round-trip. Returns (None, None) on any
+    missing/unexpected metadata shape rather than raising: firmware info
+    is a nice-to-have for logging/display, never worth failing a
+    connection over.
+    """
+    if iface is None or getattr(iface, "metadata", None) is None:
+        return None, None
+    try:
+        from meshtastic import mesh_pb2
+        firmware_version = iface.metadata.firmware_version or None
+        hw_model = mesh_pb2.HardwareModel.Name(iface.metadata.hw_model) or None
+        return firmware_version, hw_model
+    except Exception:
+        return None, None
 
 
 def probe_device_identity(path: str) -> ProbedDevice:
@@ -63,36 +82,17 @@ def probe_device_identity(path: str) -> ProbedDevice:
     transport = MeshtasticSerialTransport()
     try:
         transport.connect(path)
+        firmware_version, hw_model = extract_firmware_info(transport._iface)
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=get_own_node_name(transport._iface),
-            hardware=get_own_node_hardware(transport._iface),
+            firmware_version=firmware_version,
+            hw_model=hw_model,
         )
     except TransportConnectionError:
         return ProbedDevice(node_id=None, name=None)
     finally:
         transport.disconnect()
-
-
-def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:
-    """Format a device path and its (possibly not-yet-known) identity for
-    display in a dropdown.
-
-    Returns:
-        'path' alone if neither is known yet; 'path (node_id)' if only
-        the node_id is known; 'name (node_id)' if both are known - e.g.
-        'Meshtastic 4418 (!7c5b4418)'; 'name' alone if only a name is
-        known with no node_id - e.g. probe_device_identity()'s Issue 37
-        relay-board result ('Relay board (not a Meshtastic device)'),
-        which has no Meshtastic protocol identity to show.
-    """
-    if node_id and name:
-        return f"{name} ({node_id})"
-    if node_id:
-        return f"{path} ({node_id})"
-    if name:
-        return name
-    return path
 
 
 def get_own_node_id(iface) -> Optional[str]:
@@ -139,41 +139,6 @@ def get_own_node_name(iface) -> Optional[str]:
 
         name = long_name or short_name
         return name if name else None
-    except (AttributeError, TypeError, KeyError):
-        return None
-
-
-def get_own_node_hardware(iface) -> Optional[str]:
-    """Get the connected device's physical hardware/board model (e.g.
-    "HELTEC_V3"), mirroring get_own_node_name()'s exact lookup shape.
-
-    Free to read: it's the same node data get_own_node_name() already
-    pulls from, just a different field (hwModel) - no extra round-trip.
-    The meshtastic library's own dict conversion already renders this as
-    the enum's string name ("UNSET" when the device hasn't reported one),
-    not a raw integer.
-
-    Args:
-        iface: Meshtastic interface with nodes dictionary and myInfo
-
-    Returns:
-        The node's hwModel string, or None if not available/unset.
-    """
-    if not iface or not iface.myInfo:
-        return None
-
-    try:
-        own_node_num = iface.myInfo.my_node_num
-        own_node_id = f"!{own_node_num:08x}"
-
-        if not iface.nodes or own_node_id not in iface.nodes:
-            return None
-
-        node_data = iface.nodes[own_node_id]
-        user = node_data.get('user', {}) if isinstance(node_data, dict) else {}
-        hw_model = user.get('hwModel', '') if isinstance(user, dict) else ''
-
-        return hw_model if hw_model and hw_model != 'UNSET' else None
     except (AttributeError, TypeError, KeyError):
         return None
 

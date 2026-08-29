@@ -73,7 +73,10 @@ def run_send(
 
     transport = get_transport(transport_name)
     try:
-        transport.connect(resolved_port)
+        if transport_name == "meshtastic":
+            transport.connect(resolved_port, log_firmware_info=True)
+        else:
+            transport.connect(resolved_port)
     except TransportConnectionError as e:
         print(f"Failed to connect to {display_name} device: {e}", file=sys.stderr)
         cli_logger.error(f"Failed to connect: {e}")

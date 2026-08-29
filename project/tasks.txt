@@ -1596,6 +1596,22 @@ lora/
         confirmed both fixes live (auto-populated dropdown, Auto-detect
         surviving a scan)._
 
+- [ ] **Story 27.4: Display firmware version and hardware model from device probing**
+- [ ] *   **As a** BTCMesh operator,
+- [ ] *   **I want** to see the Meshtastic firmware version and hardware model of a connected device,
+- [ ] *   **So that** I can quickly identify which firmware is running during debugging and when multiple devices with different firmware versions are in use.
+    - [ ] *   **Scenario:** Device probe (GUI dropdown scan)
+        - [ ] *   **Given** the GUI scans for devices via `probe_device_identity()`.
+        - [ ] *   **When** a Meshtastic device responds to the probe.
+        - [ ] *   **Then** its firmware version and hardware model are extracted from `iface.metadata` (free — already populated by the existing `waitForConfig()` handshake).
+        - [ ] *   **And** the hardware model is shown in the dropdown label alongside the node name (e.g. "Name (node_id) [HELTEC_V3]"), so multiple physically connected devices can be told apart at a glance during hardware testing.
+        - [ ] *   **And** nothing is written to the GUI's status log from this probe — scanning finds every device on the bus and probes each one, so logging here would repeat once per device on every scan (found noisy in real-hardware testing 2026-08-26).
+    - [ ] *   **Scenario:** Real connect (CLI send/server, GUI Send/Start Server)
+        - [ ] *   **Given** the transport layer makes a connection that represents the operator actually using the device — not a background identity probe.
+        - [ ] *   **When** `connect()` succeeds with `log_firmware_info=True`.
+        - [ ] *   **Then** the existing node-ID log line (and, in the GUIs, the existing "Connected to Meshtastic device" status-log line) is extended with firmware version and hardware model if `iface.metadata` is available.
+    *   _See `project/plans/story_27_4.md` for full design. Zero extra round-trips — `iface.metadata` is populated by the normal connect handshake. Relay board probes short-circuit before connect and get `firmware_version=None` naturally._
+
 ---
 
 # EPIC 7: Reliability Hardening from Overnight Field Testing

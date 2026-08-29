@@ -78,7 +78,10 @@ def run_server(transport_name: str = "meshtastic", port=None) -> int:
     server_logger.info(f"Connecting to {display_name} device{f' ({resolved_port})' if resolved_port else ' (auto-detect)'}...")
     transport = get_transport(transport_name)
     try:
-        transport.connect(resolved_port)
+        if transport_name == "meshtastic":
+            transport.connect(resolved_port, log_firmware_info=True)
+        else:
+            transport.connect(resolved_port)
     except TransportConnectionError as e:
         server_logger.error(f"Failed to connect to {display_name} device: {e}")
         return 2

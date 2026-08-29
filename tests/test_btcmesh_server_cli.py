@@ -114,7 +114,7 @@ class TestRunServerConnection(unittest.TestCase):
             code = cli.run_server(port="/dev/explicit_port")
 
         self.assertEqual(code, 0)
-        mock_transport.connect.assert_called_once_with("/dev/explicit_port")
+        mock_transport.connect.assert_called_once_with("/dev/explicit_port", log_firmware_info=True)
 
     def test_omitted_port_falls_back_to_env(self):
         self._patch_successful_startup()
@@ -125,7 +125,7 @@ class TestRunServerConnection(unittest.TestCase):
             code = cli.run_server()
 
         self.assertEqual(code, 0)
-        mock_transport.connect.assert_called_once_with("/dev/env_port")
+        mock_transport.connect.assert_called_once_with("/dev/env_port", log_firmware_info=True)
 
     def test_meshcore_transport_skips_relay_board_check_and_env_fallback(self):
         """The relay board check and MESHTASTIC_SERIAL_PORT fallback are

@@ -235,6 +235,35 @@ class TestFormatDeviceDisplay(unittest.TestCase):
         )
         self.assertEqual(result, 'Relay board (not a Meshtastic device)')
 
+    def test_hw_model_appended_as_bracketed_suffix_when_name_and_node_id_known(self):
+        """Story 27.4: hw_model is shown alongside node name so multiple
+        physically connected devices can be told apart at a glance during
+        hardware testing."""
+        from core.device_scan import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418', hw_model='HELTEC_V3'
+        )
+        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418) [HELTEC_V3]')
+
+    def test_hw_model_appended_when_only_node_id_known(self):
+        from core.device_scan import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', '!7c5b4418', hw_model='HELTEC_V3'
+        )
+        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418) [HELTEC_V3]')
+
+    def test_no_suffix_when_hw_model_omitted_reproduces_existing_strings(self):
+        """Regression guard: omitting hw_model (its default) must
+        reproduce today's exact label strings unchanged."""
+        from core.device_scan import format_device_display
+
+        result = format_device_display(
+            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418'
+        )
+        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418)')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -685,8 +685,8 @@ class TestProbeDevicesInBackground(unittest.TestCase):
         self.assertEqual(
             _drain(result_queue),
             [
-                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
-                ('device_identity', '/dev/ttyACM0', None, None),
+                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One', None, None),
+                ('device_identity', '/dev/ttyACM0', None, None, None, None),
                 ('device_probe_complete',),
             ],
         )
@@ -717,7 +717,7 @@ class TestProbeDevicesInBackground(unittest.TestCase):
         self.assertEqual(
             _drain(result_queue),
             [
-                ('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two'),
+                ('device_identity', '/dev/ttyACM0', '!22222222', 'Node Two', None, None),
                 ('device_probe_complete',),
             ],
         )
@@ -787,7 +787,7 @@ class TestProbeDevicesInBackground(unittest.TestCase):
         self.assertEqual(
             _drain(result_queue),
             [
-                ('device_identity', '/dev/ttyUSB0', 'a1b2c3d4e5f6', 'MC Node'),
+                ('device_identity', '/dev/ttyUSB0', 'a1b2c3d4e5f6', 'MC Node', None, None),
                 ('device_probe_complete',),
             ],
         )
@@ -845,7 +845,7 @@ class TestProbeDevicesInBackground(unittest.TestCase):
         self.assertEqual(
             _drain(result_queue),
             [
-                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One'),
+                ('device_identity', '/dev/ttyUSB0', '!11111111', 'Node One', None, None),
                 ('device_probe_complete',),
             ],
         )

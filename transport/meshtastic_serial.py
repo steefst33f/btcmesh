@@ -77,12 +77,20 @@ class MeshtasticSerialTransport(BaseTransport):
 
     # --- BaseTransport implementation ---
 
-    def connect(self, device_path: Optional[str] = None) -> None:
+    def connect(self, device_path: Optional[str] = None,
+                log_firmware_info: bool = False) -> None:
         """Connect to a Meshtastic device via serial.
 
         Args:
             device_path: Serial port path (e.g., '/dev/ttyUSB0').
                          If None, the meshtastic library will auto-detect.
+            log_firmware_info: Whether to extend the success log with
+                firmware version and hardware model (Story 27.4). Default
+                False so probe-only connects (device-dropdown scanning,
+                known-nodes refresh) stay quiet - callers making a real
+                operational connect (CLI send/server, GUI Send/Start
+                Server) opt in explicitly, so the log isn't repeated once
+                per probed device.
 
         Raises:
             TransportConnectionError: If connection fails.
@@ -219,9 +227,19 @@ class MeshtasticSerialTransport(BaseTransport):
         if self._handler is not None and not self._subscribed:
             self._subscribe()
 
+        firmware_suffix = ""
+        if log_firmware_info:
+            from core.meshtastic_utils import extract_firmware_info
+            firmware_version, hw_model = extract_firmware_info(iface)
+            if firmware_version or hw_model:
+                firmware_suffix = (
+                    f", Firmware: {firmware_version or 'unknown'}, "
+                    f"Hardware: {hw_model or 'unknown'}"
+                )
         logger.info(
-            "Connected to Meshtastic device. Node ID: %s",
+            "Connected to Meshtastic device. Node ID: %s%s",
             self._format_node_id(my_node_num),
+            firmware_suffix,
         )
 
     def disconnect(self) -> None:

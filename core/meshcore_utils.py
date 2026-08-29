@@ -55,11 +55,11 @@ def probe_device_identity(path: str) -> ProbedDevice:
     transport = MeshCoreSerialTransport()
     try:
         transport.connect(path)
-        # hardware (ProbedDevice's third field) is left at its default
-        # None here - getting it means a separate DEVICE_INFO round-trip
+        # firmware_version/hw_model are left at their defaults (None)
+        # here - getting them means a separate DEVICE_INFO round-trip
         # per device (Issue 54 in project/issues.txt), not done during
         # scanning today. Meshtastic's probe_device_identity() populates
-        # it for free instead, from data it already reads.
+        # both for free instead, from data it already reads.
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=transport.local_node_name,

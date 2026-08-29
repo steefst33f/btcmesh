@@ -12,6 +12,20 @@ import unittest.mock
 import time
 
 
+class TestProbedDevice(unittest.TestCase):
+    """Tests for the ProbedDevice dataclass (Story 27.4's firmware fields)."""
+
+    def test_firmware_fields_default_none(self):
+        """Given only node_id/name are passed, Then firmware_version and
+        hw_model default to None - existing callers that construct
+        ProbedDevice without them keep working unchanged."""
+        from core.meshtastic_utils import ProbedDevice
+
+        result = ProbedDevice(node_id=None, name=None)
+        self.assertIsNone(result.firmware_version)
+        self.assertIsNone(result.hw_model)
+
+
 class TestProbeDeviceIdentity(unittest.TestCase):
     """Tests for probe_device_identity (Story 27.1, extended to also
     fetch the node's configured name - see Issue 37 in
@@ -23,8 +37,8 @@ class TestProbeDeviceIdentity(unittest.TestCase):
 
     def test_returns_node_id_and_name_on_successful_connect(self):
         """Given a transport that connects successfully, Then returns a
-        ProbedDevice with node_id, name, and hardware, and disconnects
-        afterward."""
+        ProbedDevice with node_id, name, firmware_version, and hw_model,
+        and disconnects afterward."""
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
 
@@ -36,14 +50,16 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
         ) as mock_get_name, unittest.mock.patch(
-            'core.meshtastic_utils.get_own_node_hardware', return_value='HELTEC_V3'
+            'core.meshtastic_utils.extract_firmware_info',
+            return_value=('2.6.11.60ec05e', 'HELTEC_V3'),
         ):
             from core.meshtastic_utils import probe_device_identity
             result = probe_device_identity('/dev/cu.usbserial-0001')
 
         self.assertEqual(result.node_id, '!7c5b4418')
         self.assertEqual(result.name, 'Meshtastic 4418')
-        self.assertEqual(result.hardware, 'HELTEC_V3')
+        self.assertEqual(result.firmware_version, '2.6.11.60ec05e')
+        self.assertEqual(result.hw_model, 'HELTEC_V3')
         mock_transport.connect.assert_called_once_with('/dev/cu.usbserial-0001')
         mock_transport.disconnect.assert_called_once()
         mock_get_name.assert_called_once_with(mock_transport._iface)
@@ -118,6 +134,107 @@ class TestProbeDeviceIdentity(unittest.TestCase):
         self.assertEqual(result.node_id, '#246F28AECB34')
         self.assertEqual(result.name, RELAY_BOARD_NAME)
         mock_transport.connect.assert_not_called()
+
+    def test_extracts_firmware_and_hw_model_from_metadata(self):
+        """Story 27.4: given the connected iface exposes metadata
+        (populated for free by the connect handshake's waitForConfig()),
+        Then firmware_version and hw_model are included on the
+        ProbedDevice."""
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+        mock_transport._iface.metadata.firmware_version = '2.6.11.60ec05e'
+        mock_transport._iface.metadata.hw_model = 47
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value=None
+        ), unittest.mock.patch(
+            'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
+        ), unittest.mock.patch(
+            'meshtastic.mesh_pb2.HardwareModel.Name', return_value='HELTEC_V3'
+        ) as mock_name:
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-0001')
+
+        self.assertEqual(result.firmware_version, '2.6.11.60ec05e')
+        self.assertEqual(result.hw_model, 'HELTEC_V3')
+        mock_name.assert_called_once_with(47)
+
+    def test_tolerates_missing_metadata(self):
+        """Given the connected iface has no metadata (older firmware, or
+        an unexpected shape), Then probe still succeeds with
+        firmware_version/hw_model left None rather than raising."""
+        mock_transport = unittest.mock.MagicMock()
+        mock_transport.local_node_id = '!7c5b4418'
+        mock_transport._iface.metadata = None
+
+        with unittest.mock.patch(
+            'transport.meshtastic_serial.MeshtasticSerialTransport',
+            return_value=mock_transport,
+        ), unittest.mock.patch(
+            'transport.power_control.probe_relay_board_id', return_value=None
+        ), unittest.mock.patch(
+            'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
+        ):
+            from core.meshtastic_utils import probe_device_identity
+            result = probe_device_identity('/dev/cu.usbserial-0001')
+
+        self.assertEqual(result.node_id, '!7c5b4418')
+        self.assertIsNone(result.firmware_version)
+        self.assertIsNone(result.hw_model)
+
+
+class TestExtractFirmwareInfo(unittest.TestCase):
+    """Tests for extract_firmware_info (Story 27.4)."""
+
+    def test_extract_firmware_info_exists(self):
+        from core.meshtastic_utils import extract_firmware_info
+        self.assertTrue(callable(extract_firmware_info))
+
+    def test_extracts_from_metadata(self):
+        from core.meshtastic_utils import extract_firmware_info
+
+        iface = unittest.mock.MagicMock()
+        iface.metadata.firmware_version = '2.6.11.60ec05e'
+        iface.metadata.hw_model = 47
+
+        with unittest.mock.patch(
+            'meshtastic.mesh_pb2.HardwareModel.Name', return_value='HELTEC_V3'
+        ) as mock_name:
+            firmware_version, hw_model = extract_firmware_info(iface)
+
+        self.assertEqual(firmware_version, '2.6.11.60ec05e')
+        self.assertEqual(hw_model, 'HELTEC_V3')
+        mock_name.assert_called_once_with(47)
+
+    def test_returns_none_none_when_metadata_is_none(self):
+        from core.meshtastic_utils import extract_firmware_info
+
+        iface = unittest.mock.MagicMock()
+        iface.metadata = None
+
+        self.assertEqual(extract_firmware_info(iface), (None, None))
+
+    def test_returns_none_none_when_iface_is_none(self):
+        from core.meshtastic_utils import extract_firmware_info
+
+        self.assertEqual(extract_firmware_info(None), (None, None))
+
+    def test_returns_none_none_on_unexpected_metadata_shape(self):
+        """Given hw_model isn't a valid enum value (e.g. a stale/unknown
+        int from an untested firmware build), Then extraction fails
+        closed to (None, None) rather than propagating the exception -
+        firmware info is never worth failing a connection or probe
+        over."""
+        from core.meshtastic_utils import extract_firmware_info
+
+        iface = unittest.mock.MagicMock()
+        iface.metadata.firmware_version = '2.6.11.60ec05e'
+        iface.metadata.hw_model = 99999
+
+        self.assertEqual(extract_firmware_info(iface), (None, None))
 
 
 class TestGetOwnNodeId(unittest.TestCase):
@@ -241,67 +358,6 @@ class TestGetOwnNodeName(unittest.TestCase):
         }
 
         result = get_own_node_name(mock_iface)
-        self.assertIsNone(result)
-
-
-class TestGetOwnNodeHardware(unittest.TestCase):
-    """Tests for get_own_node_hardware function."""
-
-    def test_get_own_node_hardware_exists(self):
-        """Given meshtastic_utils module, Then get_own_node_hardware should be defined."""
-        from core.meshtastic_utils import get_own_node_hardware
-        self.assertTrue(callable(get_own_node_hardware))
-
-    def test_returns_none_for_none_iface(self):
-        """Given None interface, Then returns None."""
-        from core.meshtastic_utils import get_own_node_hardware
-        result = get_own_node_hardware(None)
-        self.assertIsNone(result)
-
-    def test_returns_none_when_no_myinfo(self):
-        """Given interface with no myInfo, Then returns None."""
-        from core.meshtastic_utils import get_own_node_hardware
-
-        mock_iface = unittest.mock.MagicMock()
-        mock_iface.myInfo = None
-
-        result = get_own_node_hardware(mock_iface)
-        self.assertIsNone(result)
-
-    def test_returns_hw_model(self):
-        """Given node with an hwModel, Then returns it."""
-        from core.meshtastic_utils import get_own_node_hardware
-
-        mock_iface = unittest.mock.MagicMock()
-        mock_iface.myInfo.my_node_num = 0xABCD1234
-        mock_iface.nodes = {
-            '!abcd1234': {
-                'user': {
-                    'hwModel': 'HELTEC_V3',
-                }
-            }
-        }
-
-        result = get_own_node_hardware(mock_iface)
-        self.assertEqual(result, 'HELTEC_V3')
-
-    def test_returns_none_when_hw_model_unset(self):
-        """Given the device hasn't reported a model (the library's own
-        "UNSET" placeholder), Then returns None rather than the literal
-        string "UNSET"."""
-        from core.meshtastic_utils import get_own_node_hardware
-
-        mock_iface = unittest.mock.MagicMock()
-        mock_iface.myInfo.my_node_num = 0xABCD1234
-        mock_iface.nodes = {
-            '!abcd1234': {
-                'user': {
-                    'hwModel': 'UNSET',
-                }
-            }
-        }
-
-        result = get_own_node_hardware(mock_iface)
         self.assertIsNone(result)
 
 

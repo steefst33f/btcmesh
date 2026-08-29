@@ -108,18 +108,21 @@ class ProbedDevice:
     isn't a genuine/reachable device for the transport being probed -
     callers never need a None-check before destructuring those two.
 
-    hardware (the physical board/model, e.g. "HELTEC_V3") is best-effort
-    and independently optional: Meshtastic's probe_device_identity()
-    populates it for free (the node data it already reads carries an
-    hwModel field); MeshCore's currently always leaves it None, since
-    getting it means an extra per-device round-trip during scanning
-    (Issue 54 in project/issues.txt) not done today."""
+    firmware_version/hw_model (Story 27.4) are both best-effort and
+    independently optional: Meshtastic's probe_device_identity()
+    populates both for free from the connect handshake's waitForConfig()
+    metadata (extract_firmware_info() in core/meshtastic_utils.py, no
+    extra round-trip); MeshCore's currently always leaves both None,
+    since getting them means an extra per-device round-trip during
+    scanning (Issue 54 in project/issues.txt) not done today."""
     node_id: Optional[str]
     name: Optional[str]
-    hardware: Optional[str] = None
+    firmware_version: Optional[str] = None
+    hw_model: Optional[str] = None
 
 
-def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None) -> str:
+def format_device_display(path: str, node_id: Optional[str], name: Optional[str] = None,
+                           hw_model: Optional[str] = None) -> str:
     """Format a device path and its (possibly not-yet-known) identity for
     display in a dropdown.
 
@@ -130,11 +133,17 @@ def format_device_display(path: str, node_id: Optional[str], name: Optional[str]
         known with no node_id - e.g. a probe_device_identity()'s relay-
         board result (RELAY_BOARD_NAME, per-transport), which has no mesh
         protocol identity to show.
+
+        If hw_model is known, it's appended as a bracketed suffix (e.g.
+        'Meshtastic 4418 (!7c5b4418) [HELTEC_V3]') so multiple physically
+        connected devices with similar names can be told apart at a
+        glance during hardware testing (Story 27.4).
     """
+    suffix = f" [{hw_model}]" if hw_model else ""
     if node_id and name:
-        return f"{name} ({node_id})"
+        return f"{name} ({node_id}){suffix}"
     if node_id:
-        return f"{path} ({node_id})"
+        return f"{path} ({node_id}){suffix}"
     if name:
-        return name
+        return f"{name}{suffix}"
     return path

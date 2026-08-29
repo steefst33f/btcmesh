@@ -615,10 +615,12 @@ def probe_devices_in_background(devices: List[dict], result_queue,
                                  transport_name: str = "meshtastic",
                                  should_abort: Optional[Callable[[], bool]] = None) -> None:
     """Start a background thread that briefly connects to each device in
-    `devices` to learn its node ID and name (probe_device_identity() -
-    connect, read identity, disconnect - dispatched by transport_name),
-    pushing ('device_identity', path, node_id, name) onto result_queue for
-    each one not in skip_paths, followed by a final
+    `devices` to learn its node ID, name, firmware version, and hardware
+    model (probe_device_identity() - connect, read identity, disconnect -
+    dispatched by transport_name; MeshCore's probe currently always
+    leaves firmware_version/hw_model None, see Issue 54), pushing
+    ('device_identity', path, node_id, name, firmware_version, hw_model)
+    onto result_queue for each one not in skip_paths, followed by a final
     ('device_probe_complete',) once the whole batch is done (in a
     finally, so it still fires even if a probe raises) - the only
     reliable "all done" signal a caller has, e.g. to stop a busy
@@ -653,7 +655,8 @@ def probe_devices_in_background(devices: List[dict], result_queue,
                 else:
                     identity = probe_meshtastic_device_identity(device['path'])
                 result_queue.put((
-                    'device_identity', device['path'], identity.node_id, identity.name
+                    'device_identity', device['path'], identity.node_id, identity.name,
+                    identity.firmware_version, identity.hw_model,
                 ))
         finally:
             result_queue.put(('device_probe_complete',))
@@ -704,7 +707,9 @@ def device_path_from_display(devices: List[dict], text: str) -> str:
     match any entry (sentinel values like "Auto-detect", or a path that
     hasn't been added to `devices` yet)."""
     for device in devices:
-        if format_device_display(device['path'], device['node_id'], device['name']) == text:
+        if format_device_display(
+            device['path'], device['node_id'], device['name'], device.get('hw_model')
+        ) == text:
             return device['path']
     return text
 
@@ -728,11 +733,14 @@ def refresh_device_spinner_labels(spinner, devices: List[dict], selection_handle
     if selection_handler is not None:
         spinner.unbind(text=selection_handler)
     spinner.values = list(extra_values) + [
-        format_device_display(d['path'], d['node_id'], d['name']) for d in devices
+        format_device_display(d['path'], d['node_id'], d['name'], d.get('hw_model'))
+        for d in devices
     ]
     for device in devices:
         if device['path'] == selected_path:
-            spinner.text = format_device_display(device['path'], device['node_id'], device['name'])
+            spinner.text = format_device_display(
+                device['path'], device['node_id'], device['name'], device.get('hw_model')
+            )
             break
     if selection_handler is not None:
         spinner.bind(text=selection_handler)
