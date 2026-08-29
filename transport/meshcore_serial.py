@@ -60,7 +60,22 @@ class MeshCoreSerialTransport(BaseTransport):
     """
 
     _BAUD_RATE: int = 115200
-    _CONNECT_TIMEOUT_SECONDS: float = 15.0
+    # Issue 59: the meshcore library's own CommandHandler.DEFAULT_TIMEOUT
+    # (commands/base.py) is 15.0s, and MeshCore.create_serial() uses it
+    # unchanged for send_appstart()'s internal wait during connect(). When
+    # a candidate never responds, create_serial() burns that full 15.0s
+    # internally, then does its OWN cleanup ("No response from meshcore
+    # node, disconnecting" -> await mc.disconnect()) - but our own
+    # _CONNECT_TIMEOUT_SECONDS previously matched at 15.0s too, so our
+    # outer bound fired at essentially the same moment and abandoned that
+    # in-progress internal cleanup, leaving the serial port not fully
+    # released (confirmed real-hardware: repeated failed connects left
+    # both MeshCore devices unresponsive until physically reconnected).
+    # 25.0s = the library's 15.0s internal wait + _SEND_TIMEOUT_SECONDS's
+    # existing 10.0s precedent for "how long a disconnect-style cleanup
+    # step is allowed to take" - gives that internal cleanup genuine room
+    # to finish before we'd ever abandon it.
+    _CONNECT_TIMEOUT_SECONDS: float = 25.0
     _SEND_TIMEOUT_SECONDS: float = 10.0
     _CHECK_ALIVE_TIMEOUT_SECONDS: float = 20.0
     # MeshCore addresses contacts by a 6-byte public-key prefix (12 hex
