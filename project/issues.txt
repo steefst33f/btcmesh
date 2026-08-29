@@ -2939,16 +2939,14 @@ a glance when several are connected** ✅ FIXED, real-hardware verified
 - Verified: full unit test suite passes (962 tests), including new
   `TestMeshCoreSerialTransportGetDeviceModel` coverage (success, not
   connected, ERROR response, missing/empty `model`, exception, timeout).
-  Real-hardware confirmed 2026-08-29: both of the session's MeshCore
-  devices (the V3 and T190) now show a `[MODEL]` suffix in the dropdown,
-  the same way Meshtastic devices already do. One real-hardware wrinkle
-  noted along the way, unrelated to this fix: after several rapid
-  connect/disconnect probe cycles (Issue 59's noisy teardown), both
-  MeshCore devices briefly stopped completing their handshake at all
-  (every candidate hit the full 15s connect timeout) until physically
-  disconnected and reconnected - possibly Issue 59's incomplete cleanup
-  having a real functional side effect beyond just log noise, not yet
-  confirmed as reproducible.
+  Real-hardware confirmed 2026-08-29 on both GUIs (server, then client):
+  both of the session's MeshCore devices (the V3 and T190) show a
+  `[MODEL]` suffix in the dropdown after a successful scan, the same way
+  Meshtastic devices already do. One real-hardware wrinkle hit
+  repeatedly along the way, unrelated to this fix: Issue 59's noisy
+  teardown was confirmed to also leave both MeshCore devices genuinely
+  unresponsive until physically reconnected - see Issue 59's write-up,
+  escalated accordingly.
 
 **Issue 55: MeshCore relay is noticeably slower than the equivalent
 Meshtastic relay - not yet root-caused** Open
