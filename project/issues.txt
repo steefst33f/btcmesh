@@ -2904,8 +2904,7 @@ line** ✅ FIXED
 
 **Issue 54: MeshCore device dropdown shows configured name + node ID, but
 never the physical hardware/board model - harder to tell devices apart at
-a glance when several are connected** ✅ FIXED (real-hardware confirmation
-still pending)
+a glance when several are connected** ✅ FIXED, real-hardware verified
 
 - Raised 2026-08-28 during Story 30.4's real-hardware GUI verification:
   the device dropdown correctly showed `49CB2414 (49cb24147266)` and
@@ -2940,8 +2939,16 @@ still pending)
 - Verified: full unit test suite passes (962 tests), including new
   `TestMeshCoreSerialTransportGetDeviceModel` coverage (success, not
   connected, ERROR response, missing/empty `model`, exception, timeout).
-  Real-hardware confirmation against the session's two MeshCore devices
-  (the V3 and T190) is the next step, still to be done live.
+  Real-hardware confirmed 2026-08-29: both of the session's MeshCore
+  devices (the V3 and T190) now show a `[MODEL]` suffix in the dropdown,
+  the same way Meshtastic devices already do. One real-hardware wrinkle
+  noted along the way, unrelated to this fix: after several rapid
+  connect/disconnect probe cycles (Issue 59's noisy teardown), both
+  MeshCore devices briefly stopped completing their handshake at all
+  (every candidate hit the full 15s connect timeout) until physically
+  disconnected and reconnected - possibly Issue 59's incomplete cleanup
+  having a real functional side effect beyond just log noise, not yet
+  confirmed as reproducible.
 
 **Issue 55: MeshCore relay is noticeably slower than the equivalent
 Meshtastic relay - not yet root-caused** Open
@@ -3279,6 +3286,15 @@ Open
 - Not yet root-caught with `sample`/profiling the way Issues 21/53/56/57
   were - this is a live-observed timing race, not yet independently
   confirmed via a captured stack trace.
+- **Second, independent confirmation (2026-08-29, Issue 54's real-hardware
+  verification)**: the Heltec V3 went through the exact same
+  start/sleep/wake/shut-down cycle again, but this time did *not* block
+  the scan - the user's own observation was that this time it wasn't
+  first in the candidate list. Directly supports the "list position
+  matters" mechanism above: probed later, the device has had enough time
+  to either finish its sleep transition or wake back up on its own
+  before being reached, so the race window is simply missed rather than
+  hit.
 - No fix attempted yet. Possible directions for later: a short delay
   before the post-transport-switch rescan (to let a just-disconnected
   device finish its sleep transition rather than catching it mid-way),
@@ -3341,7 +3357,7 @@ Open
 | 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
 | 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
 | 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
-| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | **FIXED** (real-hardware confirmation still pending) |
+| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | **FIXED**, real-hardware verified |
 | 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
