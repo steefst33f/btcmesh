@@ -3239,13 +3239,31 @@ Open
   `RuntimeError: Event loop is closed` since `disconnect()` already
   closed it by then. Python reports this as an ignored exception during
   GC, not a normal raised exception, which is why it doesn't propagate
-  or break the actual connect/disconnect flow - confirmed working
-  correctly in the same test session despite these appearing.
+  or break the actual connect/disconnect flow *in the moment it happens*.
 - Likely surfaced specifically by Issue 53's fix, which added the
   `self._loop.close()` call in the first place (previously the loop was
   presumably just abandoned, never explicitly closed) - not a
   regression in the sense of breaking anything, but a new visible
   side-effect of that fix.
+- **Escalation - this has a real functional consequence, not just noisy
+  logs**: confirmed three times during 2026-08-29's Issue 54 real-
+  hardware testing. After several rapid connect/disconnect probe cycles
+  produced a run of these tracebacks, both MeshCore devices twice
+  stopped completing their handshake entirely (every subsequent connect
+  attempt hit the full 15s timeout) until physically disconnected and
+  reconnected. The third time, this actually blocked a genuine attempt
+  to Start Server against the V3 - the underlying `meshcore` library
+  logged its own explicit failure (`No response from meshcore node,
+  disconnecting` / `Are you sure your node is a serial companion?`) for
+  that connect attempt specifically, while the T190 (probed/connected
+  less recently at that point) connected successfully in the same
+  session. Strongly suggests the abandoned per-cycle tasks/loops
+  eventually leave the actual serial port or the device's own companion-
+  protocol state genuinely wedged, not just Python-side GC noise -
+  severity raised from "noisy logs, non-fatal" accordingly. Not yet
+  root-caused *why* accumulating abandoned loops/tasks would affect the
+  physical device's responsiveness rather than just this process's
+  Python state - worth investigating alongside the fix below.
 - **Suggested fix direction** (not yet implemented): before calling
   `loop.stop()`/`loop.close()`, cancel any tasks still pending on the
   loop (e.g. via `asyncio.all_tasks(loop)` scheduled through
@@ -3362,5 +3380,5 @@ Open
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
-| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - likely surfaced by Issue 53's added `loop.close()` | Minor (noisy logs, non-fatal - confirmed nothing actually breaks) | Open |
+| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - confirmed 3x to also leave the device itself unresponsive until physically reconnected, once blocking a real Start Server attempt | **Medium-Major (can block a real connect, not just noisy logs)** | Open |
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
