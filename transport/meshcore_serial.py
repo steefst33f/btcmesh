@@ -286,6 +286,35 @@ class MeshCoreSerialTransport(BaseTransport):
         except Exception:
             return False
 
+    def get_device_model(self, timeout_seconds: Optional[float] = None) -> Optional[str]:
+        """Best-effort hardware/board-model query (Issue 54). Returns None
+        (never raises) if not connected, the device doesn't respond within
+        timeout_seconds, or its firmware is too old to report a model
+        (fw_ver < 3 - the DEVICE_INFO payload simply omits "model" then).
+
+        Sends the same device-query command as check_alive() and reads the
+        "model" field from its DEVICE_INFO response.
+        """
+        if self._mc is None:
+            return None
+        try:
+            from meshcore import EventType
+
+            effective_timeout = (
+                timeout_seconds
+                if timeout_seconds is not None
+                else self._CHECK_ALIVE_TIMEOUT_SECONDS
+            )
+            result = self._run_coro(
+                self._mc.commands.send_device_query(), effective_timeout
+            )
+            if result is None or result.type == EventType.ERROR:
+                return None
+            model = (result.payload or {}).get("model", "")
+            return model.strip() or None
+        except Exception:
+            return None
+
     def validate_destination(self, destination: str) -> None:
         """Validate a MeshCore destination's structural format: a
         hex-encoded public key or public-key prefix (Story 30.2).

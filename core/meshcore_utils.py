@@ -55,14 +55,15 @@ def probe_device_identity(path: str) -> ProbedDevice:
     transport = MeshCoreSerialTransport()
     try:
         transport.connect(path)
-        # firmware_version/hw_model are left at their defaults (None)
-        # here - getting them means a separate DEVICE_INFO round-trip
-        # per device (Issue 54 in project/issues.txt), not done during
-        # scanning today. Meshtastic's probe_device_identity() populates
-        # both for free instead, from data it already reads.
+        # firmware_version is left at its default (None) - out of scope
+        # for Issue 54, which is specifically about the hardware/board
+        # model; the DEVICE_INFO payload's version fields aren't the
+        # same shape as Meshtastic's firmware_version and there's no
+        # display slot asking for it.
         return ProbedDevice(
             node_id=transport.local_node_id,
             name=transport.local_node_name,
+            hw_model=transport.get_device_model(),
         )
     except TransportConnectionError:
         return ProbedDevice(node_id=None, name=None)

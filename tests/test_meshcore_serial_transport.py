@@ -821,6 +821,101 @@ class TestMeshCoreSerialTransportCheckAlive(unittest.TestCase):
         transport.disconnect()
 
 
+class TestMeshCoreSerialTransportGetDeviceModel(unittest.TestCase):
+    """Tests for get_device_model() (Issue 54)."""
+
+    def tearDown(self):
+        _uninstall_mock_meshcore()
+
+    def test_returns_none_when_not_connected(self):
+        transport = MeshCoreSerialTransport()
+        self.assertIsNone(transport.get_device_model())
+
+    def test_returns_model_on_device_info_response(self):
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            return_value=FakeEvent(FakeEventType.DEVICE_INFO, payload={"model": "Heltec V3"})
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertEqual(transport.get_device_model(), "Heltec V3")
+        mock_client.commands.send_device_query.assert_awaited_once()
+        transport.disconnect()
+
+    def test_returns_none_on_error_response(self):
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            return_value=FakeEvent(FakeEventType.ERROR)
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertIsNone(transport.get_device_model())
+        transport.disconnect()
+
+    def test_returns_none_when_payload_has_no_model_key(self):
+        """Old firmware (fw_ver < 3) - the DEVICE_INFO payload simply
+        omits "model" entirely rather than sending an empty value."""
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            return_value=FakeEvent(FakeEventType.DEVICE_INFO, payload={"fw ver": 2})
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertIsNone(transport.get_device_model())
+        transport.disconnect()
+
+    def test_returns_none_when_model_is_empty_or_whitespace(self):
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            return_value=FakeEvent(FakeEventType.DEVICE_INFO, payload={"model": "   "})
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertIsNone(transport.get_device_model())
+        transport.disconnect()
+
+    def test_returns_none_on_exception(self):
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            side_effect=RuntimeError("write failed")
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertIsNone(transport.get_device_model())
+        transport.disconnect()
+
+    def test_returns_none_on_timeout(self):
+        async def blocking_query():
+            await asyncio.sleep(3600)
+
+        mock_client = MockMeshCoreClient()
+        mock_client.commands.send_device_query = AsyncMock(
+            side_effect=blocking_query
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+
+        self.assertIsNone(transport.get_device_model(timeout_seconds=0.05))
+        transport.disconnect()
+
+
 # ---------------------------------------------------------------------------
 # scan_for_reconnect_candidates tests
 # ---------------------------------------------------------------------------
