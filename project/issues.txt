@@ -3435,7 +3435,7 @@ observed)
 
 **Issue 62: `TransactionSender`'s retry loop never retries a chunk send
 that raises an exception - only an ACK timeout gets retried, at all**
-Open
+✅ FIXED
 
 - Found 2026-08-29 during Issue 61's real-hardware testing: a MeshCore
   send to a device that had likely gone to sleep (per this session's
@@ -3468,11 +3468,20 @@ Open
   gap, just newly exposed by MeshCore's real-hardware sleep/wake
   behavior surfacing a `transport.send()` exception path Meshtastic's
   own testing apparently hadn't hit as often.
-- **Suggested fix** (not yet implemented): route a caught exception
-  from `transport.send()` through the same retry accounting the
-  ACK-timeout branch already uses (`increment_retry()`, decrement
-  `max_attempts`, only set `failed=True` and return once the budget is
-  actually exhausted) instead of failing immediately on the first one.
+- **Fix**: the `except Exception as e:` block in `client/sender.py`'s
+  chunk send loop now routes through the same retry accounting the
+  ACK-timeout branch already used - decrements `max_attempts`, calls
+  `send_session.increment_retry(chunk_num)`, checks `_abort_event`
+  before retrying, and only sets `failed=True`/returns once
+  `max_attempts` reaches 0 (preserving the original exception's message
+  in the final failure, same as before).
+- **Verified**: `tests/test_client_sender.py` -
+  `test_send_exception_retries_then_succeeds` (transport.send raises
+  once, then succeeds on the immediate retry, transaction completes) and
+  `test_send_exception_exhausts_retries_then_fails` (transport.send
+  always raises, exactly `max_retries + 1` attempts are made before
+  failing with the original error) - both pass, along with the full
+  existing suite (no regressions).
 
 ---
 
@@ -3538,4 +3547,4 @@ Open
 | 59    | MeshCore connects could leave the device unresponsive until physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS` matching the meshcore library's own internal 15.0s timeout, racing its failure-cleanup path | **Medium-Major (could block a real connect, not just noisy logs)** | **FIXED** (main functional impact), real-hardware verified; low-frequency GC noise remains as a smaller follow-up |
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
 | 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
-| 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | Open |
+| 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |

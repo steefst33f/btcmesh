@@ -406,6 +406,78 @@ class TestTransactionSenderRetry(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("timeout", result.error.lower())
 
+    def test_send_exception_retries_then_succeeds(self):
+        """A raised exception from transport.send() (e.g. a clean
+        TransportSendError) retries instead of failing immediately
+        (Issue 62) - same retry budget as an ACK timeout."""
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
+        sender = TransactionSender(transport, timeout_seconds=1, max_retries=3)
+
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "beef" * 20  # 1 chunk
+        result_holder = []
+        session_id_holder = []
+        call_count = {"n": 0}
+
+        def send_side_effect(msg, dest):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("no_event_received")
+            session_id_holder.append(msg.split("|")[1])
+
+        transport.send.side_effect = send_side_effect
+
+        def send_in_thread():
+            result = sender.send_transaction(tx_hex, "!dest1234")
+            result_holder.append(result)
+
+        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread.start()
+
+        # The exception path retries immediately (no timeout wait), so a
+        # short sleep is enough to observe the second attempt.
+        time.sleep(0.3)
+        self.assertEqual(transport.send.call_count, 2, "expected an immediate retry after the exception")
+
+        session_id = session_id_holder[0]
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+        time.sleep(0.1)
+        handler(f"BTC_ACK|{session_id}|TXID:retried", "!server")
+
+        thread.join(timeout=10)
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertTrue(result.success, f"Expected success but got: {result.error}")
+
+    def test_send_exception_exhausts_retries_then_fails(self):
+        """A transport.send() that always raises exhausts the retry
+        budget (same as timeouts do) rather than failing on the first
+        attempt (Issue 62)."""
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
+        sender = TransactionSender(transport, timeout_seconds=1, max_retries=1)
+        transport.send.side_effect = RuntimeError("no_event_received")
+
+        tx_hex = "cafe" * 50
+        result_holder = []
+
+        def send_in_thread():
+            result = sender.send_transaction(tx_hex, "!dest1234")
+            result_holder.append(result)
+
+        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread.start()
+        thread.join(timeout=10)
+
+        # Initial attempt + 1 retry = 2 calls before giving up.
+        self.assertEqual(transport.send.call_count, 2)
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertIn("no_event_received", result.error)
+
 
 class TestTransactionSenderErrorHandling(unittest.TestCase):
     """Tests for error handling (NACK, server errors)."""
