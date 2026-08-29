@@ -3487,7 +3487,7 @@ that raises an exception - only an ACK timeout gets retried, at all**
 
 **Issue 63: a slow MeshCore `start_auto_message_fetching()` response
 aborts server startup entirely, with a blank error message**
-Open
+✅ FIXED
 
 - Found 2026-08-29 during real-hardware testing of Issues 61/62's merged
   fixes: Bitcoin RPC was down (Tor/onion service unreachable, a separate
@@ -3525,23 +3525,43 @@ Open
   time out, the resulting user-facing message is useless (empty),
   because nothing sets a message on that particular timeout before it
   surfaces to the GUI.
-- **Suggested fix** (not yet implemented): give `_subscribe()`'s
-  `start_auto_message_fetching()` call more headroom (mirroring how
-  Issue 61 gave `send_msg()` its own dedicated, longer timeout instead
-  of reusing the generic `_SEND_TIMEOUT_SECONDS`), wrap that timeout in
-  a real message (e.g. "Timed out waiting for the device to start
-  message fetching") instead of letting a bare `TimeoutError` reach the
-  GUI unlabeled, and reconsider whether a subscribe-step failure should
-  really abort the whole server - the mesh connection itself is already
-  up at that point, so surfacing a clear warning and letting the
-  operator retry (rather than silently killing the just-started server)
-  would better match the "a failed RPC connection does not stop the
-  server" tolerance the surrounding code already applies to the RPC
-  side.
-- Not yet confirmed whether this is purely timing (device momentarily
-  slow) or something that recurs reliably under specific conditions
-  (e.g. right after a prior disconnect/reconnect cycle) - only observed
-  once so far.
+- **Fix**: confirmed by reading the `meshcore` library
+  (`meshcore.py`/`commands/messaging.py`) that
+  `start_auto_message_fetching()` calls `commands.get_msg()` with no
+  explicit `timeout=`, so it also falls back to the library's own
+  15.0s `CommandHandler.DEFAULT_TIMEOUT` - the same root cause as
+  Issues 59/61, just on this call site. Added a dedicated
+  `_SUBSCRIBE_TIMEOUT_SECONDS = 20.0` (matching the existing
+  `_SEND_MSG_TIMEOUT_SECONDS`/`_CHECK_ALIVE_TIMEOUT_SECONDS` precedent
+  for a single real-radio round trip, comfortably above the library's
+  15.0s) and used it for the `_run_coro()` bound in `_subscribe()`.
+  `FutureTimeoutError` is now caught there and re-raised as
+  `TransportConnectionError` with a real message ("Timed out after
+  20.0s waiting for the device to start message fetching - device may
+  be unresponsive"), instead of letting a bare, empty-message
+  `TimeoutError` reach the GUI unlabeled. Left the failure fatal to
+  server startup (unlike the RPC-tolerance model) - a server that can't
+  receive chunks at all isn't meaningfully "started," and retrying
+  Start Server is already the proven recovery path (it succeeded on a
+  later attempt during this same testing session).
+- **Verified**: new test in `tests/test_meshcore_serial_transport.py` -
+  `test_set_handler_raises_clear_error_when_subscribe_blocks` (a
+  blocked `start_auto_message_fetching()` now raises
+  `TransportConnectionError` with a real "Timed out..." message,
+  instead of a bare empty-message `TimeoutError`) - passes, along with
+  the full existing suite (no regressions).
+- **Recurred a second time the same session**, same signature
+  (`TransactionReassembler initialized with timeout: 120s` as the last
+  log line, nothing after it) - not a rare fluke. Both occurrences came
+  after the V3 had just been going through this session's established
+  slow-wake/wedge pattern (repeated "No response from meshcore node,
+  disconnecting" during background scans right before each Start
+  Server attempt), consistent with the device still being slow to
+  respond specifically to `start_auto_message_fetching()` even though
+  the preceding `connect()` succeeded. Given it blocks the server from
+  starting at all when it happens, this is more disruptive than
+  initially assessed - worth prioritizing the fix, not just documenting
+  it.
 
 ---
 
@@ -3608,4 +3628,4 @@ Open
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
 | 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
 | 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
-| 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | Open |
+| 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |

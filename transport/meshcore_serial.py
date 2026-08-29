@@ -85,12 +85,22 @@ class MeshCoreSerialTransport(BaseTransport):
     # wait would even complete - confirmed real-hardware: a chunk-send
     # retry still timed out at 10s. A dedicated constant, not a bump to
     # _SEND_TIMEOUT_SECONDS itself, since that's also used for several
-    # unrelated operations (disconnect, subscribe/unsubscribe) with no
-    # evidence they need more time - 20.0s matches this file's existing
+    # unrelated operations (disconnect, unsubscribe) with no evidence
+    # they need more time - 20.0s matches this file's existing
     # _CHECK_ALIVE_TIMEOUT_SECONDS precedent for a genuine real-radio
     # round-trip bound, comfortably above the library's 15.0s.
     _SEND_MSG_TIMEOUT_SECONDS: float = 20.0
     _CHECK_ALIVE_TIMEOUT_SECONDS: float = 20.0
+    # Issue 63: _subscribe()'s start_auto_message_fetching() call does
+    # hit the same library-default-timeout race - it calls
+    # commands.get_msg() with no explicit timeout, which falls back to
+    # the same 15.0s CommandHandler.DEFAULT_TIMEOUT (confirmed by
+    # reading meshcore.py/commands/messaging.py). Bounding it at the
+    # shared 10.0s _SEND_TIMEOUT_SECONDS raised a bare, empty-message
+    # concurrent.futures.TimeoutError that aborted server startup
+    # entirely - confirmed real-hardware, recurred twice. Same 20.0s
+    # bound as the other single-command round trips above.
+    _SUBSCRIBE_TIMEOUT_SECONDS: float = 20.0
     # MeshCore addresses contacts by a 6-byte public-key prefix (12 hex
     # chars) throughout its protocol and companion apps - incoming
     # messages report the sender this way (see _on_event below), so
@@ -535,9 +545,20 @@ class MeshCoreSerialTransport(BaseTransport):
             self._dispatch_queue.put((text, sender))
 
         self._subscription = self._mc.subscribe(EventType.CONTACT_MSG_RECV, _on_event)
-        self._run_coro(
-            self._mc.start_auto_message_fetching(), self._SEND_TIMEOUT_SECONDS
-        )
+        try:
+            self._run_coro(
+                self._mc.start_auto_message_fetching(),
+                self._SUBSCRIBE_TIMEOUT_SECONDS,
+            )
+        except FutureTimeoutError as exc:
+            # Issue 63: a bare FutureTimeoutError has an empty str(), which
+            # otherwise surfaces as a blank, useless "Initialization
+            # error:" to the operator.
+            raise TransportConnectionError(
+                f"Timed out after {self._SUBSCRIBE_TIMEOUT_SECONDS}s waiting "
+                "for the device to start message fetching - device may be "
+                "unresponsive"
+            ) from exc
 
     def _unsubscribe(self) -> None:
         """Unsubscribe from MeshCore contact-message events and stop the

@@ -539,6 +539,30 @@ class TestMeshCoreSerialTransportMessageHandler(unittest.TestCase):
         mock_client.start_auto_message_fetching.assert_awaited_once()
         transport.disconnect()
 
+    def test_set_handler_raises_clear_error_when_subscribe_blocks(self):
+        """Issue 63: a bare FutureTimeoutError has an empty str(), which
+        surfaced as a blank, useless "Initialization error:" to the
+        operator - set_message_handler() must give up with a real
+        message after _SUBSCRIBE_TIMEOUT_SECONDS, same guarantee as
+        send()'s Issue 21-style timeout."""
+        async def blocking_start_auto_message_fetching(*args, **kwargs):
+            await asyncio.sleep(3600)
+
+        mock_client = MockMeshCoreClient()
+        mock_client.start_auto_message_fetching = AsyncMock(
+            side_effect=blocking_start_auto_message_fetching
+        )
+        _install_mock_meshcore(mock_client)
+
+        transport = MeshCoreSerialTransport()
+        transport.connect("/dev/ttyUSB0")
+        transport._SUBSCRIBE_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertRaises(TransportConnectionError) as ctx:
+            transport.set_message_handler(lambda m, s: None)
+        self.assertIn("Timed out", str(ctx.exception))
+        transport.disconnect()
+
 
 # ---------------------------------------------------------------------------
 # Message receiving tests
