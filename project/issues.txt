@@ -3252,6 +3252,43 @@ Open
 
 ---
 
+**Issue 60: switching from MeshCore to Meshtastic transport can hang the
+resulting scan on the first candidate for a full 20s - a device-sleep/
+probe-timing race, not a code defect**
+Open
+
+- Found 2026-08-29 during real-hardware merge verification (unrelated to
+  the merge itself - confirmed reproducible independent of it).
+- **Mechanism**: switching the transport spinner immediately triggers a
+  fresh scan of the new transport's candidates
+  (`on_transport_selected()` sets `self.selected_transport` then calls
+  `self._scan_devices()` right away, in both GUIs). If the Heltec V3 was
+  just disconnected (e.g. by the transport switch itself, or a prior
+  probe releasing its port) it starts entering sleep mode - matching the
+  session's earlier finding that Meshtastic firmware sleeps shortly
+  after its serial connection is released. Because this device happens
+  to be first in the freshly-scanned candidate list, the new scan probes
+  it again immediately, catching it mid-sleep-transition - the act of
+  probing wakes it back up, but it's briefly unresponsive during that
+  transition, and the probe stalls until Issue 56's `_CONNECT_TIMEOUT_SECONDS`
+  (20s) bound gives up and releases it.
+- Confirms Issue 56's fix is doing exactly what it's supposed to (bounds
+  the stall to 20s instead of hanging forever) - this issue is about the
+  underlying race causing a real, if bounded, 20s stall on a specific,
+  reproducible sequence (transport switch -> immediate rescan -> first
+  candidate happens to be the device that was just put to sleep), not a
+  regression or a flaw in that fix.
+- Not yet root-caught with `sample`/profiling the way Issues 21/53/56/57
+  were - this is a live-observed timing race, not yet independently
+  confirmed via a captured stack trace.
+- No fix attempted yet. Possible directions for later: a short delay
+  before the post-transport-switch rescan (to let a just-disconnected
+  device finish its sleep transition rather than catching it mid-way),
+  or reordering the freshly-scanned candidate list so the
+  just-abandoned device isn't probed first.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3312,3 +3349,4 @@ Open
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
 | 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - likely surfaced by Issue 53's added `loop.close()` | Minor (noisy logs, non-fatal - confirmed nothing actually breaks) | Open |
+| 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
