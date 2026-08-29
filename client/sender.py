@@ -411,9 +411,21 @@ class TransactionSender:
                             return
 
                 except Exception as e:
-                    send_session.error = f"Chunk {chunk_num}: {str(e)}"
-                    send_session.failed = True
-                    return
+                    # Retry the same way the ACK-timeout branch above does
+                    # (Issue 62) - a raised exception (e.g. a clean
+                    # TransportSendError) is just as transient/retryable
+                    # as an ACK timeout and shouldn't burn the whole
+                    # retry budget on the first attempt.
+                    max_attempts -= 1
+                    send_session.increment_retry(chunk_num)
+                    if max_attempts == 0:
+                        send_session.error = f"Chunk {chunk_num}: {str(e)}"
+                        send_session.failed = True
+                        return
+                    if self._abort_event.is_set():
+                        send_session.error = "Aborted by user"
+                        send_session.failed = True
+                        return
 
         # All chunks sent, wait for final BTC_ACK
         if not self._wait_for_final_ack(send_session):
