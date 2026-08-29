@@ -63,6 +63,8 @@ from gui.gui_common import (
     dedupe_devices_by_node_id,
     device_path_from_display,
     refresh_device_spinner_labels,
+    acquire_probing_path,
+    release_probing_path,
 )
 
 from core.config_loader import load_app_config
@@ -864,23 +866,41 @@ class BTCMeshServerGUI(BoxLayout):
 
         # Start server in background thread
         def run_server():
-            if serial_port and probe_relay_board_id(serial_port):
+            # Issue 61: reserve the path (relay check included - it's a
+            # real port open too) so a background scan probe can't race
+            # this connect on the same device. Released right after the
+            # connect step, not held for the server's whole lifetime -
+            # once actually running, the OS itself correctly refuses a
+            # second open on the same port, same as before this guard.
+            reserved = bool(serial_port)
+            if reserved and not acquire_probing_path(serial_port):
                 self.result_queue.put((
                     'meshtastic_failed',
-                    f"This is the relay board's control port, not a "
-                    f"{display_name} device - select a different device.",
+                    f"{serial_port} is busy (another connection attempt is "
+                    "in progress) - try again",
                 ))
                 return
-
-            transport = get_transport(transport_name)
             try:
-                if transport_name == "meshtastic":
-                    transport.connect(serial_port, log_firmware_info=True)
-                else:
-                    transport.connect(serial_port)
-            except TransportConnectionError as e:
-                self.result_queue.put(('meshtastic_failed', str(e)))
-                return
+                if serial_port and probe_relay_board_id(serial_port):
+                    self.result_queue.put((
+                        'meshtastic_failed',
+                        f"This is the relay board's control port, not a "
+                        f"{display_name} device - select a different device.",
+                    ))
+                    return
+
+                transport = get_transport(transport_name)
+                try:
+                    if transport_name == "meshtastic":
+                        transport.connect(serial_port, log_firmware_info=True)
+                    else:
+                        transport.connect(serial_port)
+                except TransportConnectionError as e:
+                    self.result_queue.put(('meshtastic_failed', str(e)))
+                    return
+            finally:
+                if reserved:
+                    release_probing_path(serial_port)
 
             if transport_name == "meshcore":
                 node_name = transport.local_node_name

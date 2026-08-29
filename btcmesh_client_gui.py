@@ -59,6 +59,8 @@ from gui.gui_common import (
     dedupe_devices_by_node_id,
     device_path_from_display,
     refresh_device_spinner_labels,
+    acquire_probing_path,
+    release_probing_path,
 )
 
 # Import Meshtastic utilities from core
@@ -642,51 +644,64 @@ class BTCMeshGUI(BoxLayout):
         transport_name = self.selected_transport
         display_name = TRANSPORT_DISPLAY_NAMES[transport_name]
 
-        if port and probe_relay_board_id(port):
-            raise TransportConnectionError(RELAY_BOARD_SELECTED_MESSAGE)
+        # Issue 61: reserve the path for the whole connect attempt (relay
+        # check included - it's a real port open too) so a background
+        # scan probe can't race this one on the same device. port is
+        # None for auto-detect, which has no specific path to guard.
+        reserved = port is not None
+        if reserved and not acquire_probing_path(port):
+            raise TransportConnectionError(
+                f"{port} is busy (another connection attempt is in progress) - try again"
+            )
+        try:
+            if port and probe_relay_board_id(port):
+                raise TransportConnectionError(RELAY_BOARD_SELECTED_MESSAGE)
 
-        self.result_queue.put((
-            'log', f"Connecting to {display_name} device{f' ({port})' if port else ''}...", logging.INFO
-        ))
+            self.result_queue.put((
+                'log', f"Connecting to {display_name} device{f' ({port})' if port else ''}...", logging.INFO
+            ))
 
-        last_error = None
-        for attempt in range(CONNECT_MAX_ATTEMPTS):
-            try:
-                transport = get_transport(transport_name)
-                if transport_name == "meshtastic":
-                    transport.connect(port, log_firmware_info=True)
-                else:
-                    transport.connect(port)
-                # Issue 32: local_node_id is always correctly zero-padded;
-                # transport.connect() already guarantees it's set by the
-                # time it returns without raising.
-                if not transport.local_node_id:
-                    transport.disconnect()
-                    raise TransportConnectionError(
-                        "Could not retrieve device info. Ensure device is connected."
-                    )
-                return transport
-            except TransportConnectionError as e:
-                last_error = e
-                error_msg = str(e)
-                # A freshly enumerated serial port (or one just released by
-                # a prior disconnect) can transiently fail to open for a
-                # moment - retry before giving up.
-                is_transient = any(x in error_msg.lower() for x in [
-                    'resource temporarily unavailable',
-                    'busy',
-                ])
-                if is_transient and attempt < CONNECT_MAX_ATTEMPTS - 1:
-                    self.result_queue.put((
-                        'log', "Device is initializing, please wait...", logging.WARNING
-                    ))
-                    time.sleep(CONNECT_RETRY_DELAY_SECONDS)
-                    continue
-                break
+            last_error = None
+            for attempt in range(CONNECT_MAX_ATTEMPTS):
+                try:
+                    transport = get_transport(transport_name)
+                    if transport_name == "meshtastic":
+                        transport.connect(port, log_firmware_info=True)
+                    else:
+                        transport.connect(port)
+                    # Issue 32: local_node_id is always correctly zero-padded;
+                    # transport.connect() already guarantees it's set by the
+                    # time it returns without raising.
+                    if not transport.local_node_id:
+                        transport.disconnect()
+                        raise TransportConnectionError(
+                            "Could not retrieve device info. Ensure device is connected."
+                        )
+                    return transport
+                except TransportConnectionError as e:
+                    last_error = e
+                    error_msg = str(e)
+                    # A freshly enumerated serial port (or one just released by
+                    # a prior disconnect) can transiently fail to open for a
+                    # moment - retry before giving up.
+                    is_transient = any(x in error_msg.lower() for x in [
+                        'resource temporarily unavailable',
+                        'busy',
+                    ])
+                    if is_transient and attempt < CONNECT_MAX_ATTEMPTS - 1:
+                        self.result_queue.put((
+                            'log', "Device is initializing, please wait...", logging.WARNING
+                        ))
+                        time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+                        continue
+                    break
 
-        raise TransportConnectionError(
-            _friendly_connect_error(port, last_error, display_name)
-        ) from last_error
+            raise TransportConnectionError(
+                _friendly_connect_error(port, last_error, display_name)
+            ) from last_error
+        finally:
+            if reserved:
+                release_probing_path(port)
 
     def on_refresh_devices(self, instance):
         """Handle refresh button press to rescan devices."""
@@ -734,38 +749,53 @@ class BTCMeshGUI(BoxLayout):
             # guard, connect failure, or success) - the busy indicators'
             # stop() calls depend on it (Issue 39).
             try:
-                if probe_relay_board_id(path):
-                    self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
-                    return
-                try:
-                    transport = get_transport(transport_name)
-                    transport.connect(path)
-                except TransportConnectionError as e:
+                # Issue 61: reserve the path (relay check included - it's
+                # a real port open too) so a background scan probe can't
+                # race this selection-triggered connect on the same
+                # device. Bounded wait, not indefinite - if a scan is
+                # still holding it past the timeout, surface a clear
+                # "busy" error rather than racing a doomed connect.
+                if not acquire_probing_path(path):
                     self.result_queue.put((
-                        'log', f"Could not fetch device info: {_friendly_connect_error(path, e)}", logging.ERROR
+                        'log', f"Could not fetch device info: {path} is busy (another "
+                        "connection attempt is in progress) - try again", logging.ERROR
                     ))
                     return
                 try:
-                    if self._scan_generation != generation:
-                        # Stale: the operator switched transports while
-                        # this connect was in flight - discard rather than
-                        # push a wrong-transport-flavored identity/known-
-                        # nodes result into the now-current device list.
+                    if probe_relay_board_id(path):
+                        self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
                         return
-                    node_id = transport.local_node_id
-                    if fetch_known_nodes:
-                        name = get_own_node_name(transport._iface)
-                        firmware_version, hw_model = extract_firmware_info(transport._iface)
+                    try:
+                        transport = get_transport(transport_name)
+                        transport.connect(path)
+                    except TransportConnectionError as e:
                         self.result_queue.put((
-                            'device_identity', path, node_id, name, firmware_version, hw_model
+                            'log', f"Could not fetch device info: {_friendly_connect_error(path, e)}", logging.ERROR
                         ))
-                        nodes = get_known_nodes(transport._iface)
-                        self.result_queue.put(('known_nodes_fetched', nodes))
-                    else:
-                        name = transport.local_node_name
-                        self.result_queue.put(('device_identity', path, node_id, name))
+                        return
+                    try:
+                        if self._scan_generation != generation:
+                            # Stale: the operator switched transports while
+                            # this connect was in flight - discard rather than
+                            # push a wrong-transport-flavored identity/known-
+                            # nodes result into the now-current device list.
+                            return
+                        node_id = transport.local_node_id
+                        if fetch_known_nodes:
+                            name = get_own_node_name(transport._iface)
+                            firmware_version, hw_model = extract_firmware_info(transport._iface)
+                            self.result_queue.put((
+                                'device_identity', path, node_id, name, firmware_version, hw_model
+                            ))
+                            nodes = get_known_nodes(transport._iface)
+                            self.result_queue.put(('known_nodes_fetched', nodes))
+                        else:
+                            name = transport.local_node_name
+                            self.result_queue.put(('device_identity', path, node_id, name))
+                    finally:
+                        transport.disconnect()
                 finally:
-                    transport.disconnect()
+                    release_probing_path(path)
             finally:
                 self.result_queue.put(('device_and_nodes_fetch_complete',))
 
@@ -801,22 +831,36 @@ class BTCMeshGUI(BoxLayout):
             # fires exactly once, on every exit path - nodes_busy.stop()
             # depends on it (Issue 39).
             try:
-                if probe_relay_board_id(port):
-                    self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
-                    return
-                try:
-                    transport = MeshtasticSerialTransport()
-                    transport.connect(port)
-                except TransportConnectionError as e:
+                # Issue 61: reserve the path (relay check included) so a
+                # background scan probe can't race this refresh's connect
+                # on the same device.
+                reserved = bool(port)
+                if reserved and not acquire_probing_path(port):
                     self.result_queue.put((
-                        'log', f"Could not fetch known nodes: {_friendly_connect_error(port, e)}", logging.ERROR
+                        'log', f"Could not fetch known nodes: {port} is busy (another "
+                        "connection attempt is in progress) - try again", logging.ERROR
                     ))
                     return
                 try:
-                    nodes = get_known_nodes(transport._iface)
-                    self.result_queue.put(('known_nodes_fetched', nodes))
+                    if probe_relay_board_id(port):
+                        self.result_queue.put(('log', RELAY_BOARD_SELECTED_MESSAGE, logging.WARNING))
+                        return
+                    try:
+                        transport = MeshtasticSerialTransport()
+                        transport.connect(port)
+                    except TransportConnectionError as e:
+                        self.result_queue.put((
+                            'log', f"Could not fetch known nodes: {_friendly_connect_error(port, e)}", logging.ERROR
+                        ))
+                        return
+                    try:
+                        nodes = get_known_nodes(transport._iface)
+                        self.result_queue.put(('known_nodes_fetched', nodes))
+                    finally:
+                        transport.disconnect()
                 finally:
-                    transport.disconnect()
+                    if reserved:
+                        release_probing_path(port)
             finally:
                 self.result_queue.put(('known_nodes_fetch_complete',))
 
