@@ -3208,68 +3208,69 @@ Open
 
 ---
 
-**Issue 59: `MeshCoreSerialTransport.disconnect()`'s loop teardown
-leaves the `meshcore` library's own background tasks to fail noisily
-during garbage collection**
-Open
+**Issue 59: MeshCore connects could leave the device unresponsive until
+physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS`
+matching the `meshcore` library's own internal timeout exactly, racing
+its own failure-cleanup path** ✅ FIXED (main functional impact),
+real-hardware verified
 
 - Found 2026-08-29 during real-hardware client GUI testing: a single
   MeshCore connect/disconnect cycle (a background identity probe) logged
   five separate `Exception ignored while closing generator ...
-  RuntimeError: Event loop is closed` tracebacks - all non-fatal (caught
-  by Python during garbage collection, nothing actually crashed or
-  raised up to the caller), but noisy and pointing at a real gap in
-  cleanup ordering.
-- **Where**: `transport/meshcore_serial.py`'s `disconnect()` (lines
-  ~172-197) tears down the background event loop via
-  `self._loop.call_soon_threadsafe(self._loop.stop)` then, once the loop
-  thread has stopped, `self._loop.close()`. `loop.stop()` only makes
-  `run_forever()` return after its current iteration - it does not
-  cancel whatever tasks are still scheduled on the loop. The `meshcore`
-  library's own internal tasks (confirmed via one observed traceback:
-  `EventDispatcher._process_events`, blocked in `await
-  self.queue.get()`) are still pending at that point and are never
-  explicitly cancelled.
-- Once nothing references those abandoned task/coroutine objects
-  anymore, Python's garbage collector calls their generator `close()`,
-  which runs the coroutine's own cleanup code - `queue.get()`'s
-  `getter.cancel()` internally calls `loop.call_soon()`, which raises
-  `RuntimeError: Event loop is closed` since `disconnect()` already
-  closed it by then. Python reports this as an ignored exception during
-  GC, not a normal raised exception, which is why it doesn't propagate
-  or break the actual connect/disconnect flow *in the moment it happens*.
-- Likely surfaced specifically by Issue 53's fix, which added the
-  `self._loop.close()` call in the first place (previously the loop was
-  presumably just abandoned, never explicitly closed) - not a
-  regression in the sense of breaking anything, but a new visible
-  side-effect of that fix.
-- **Escalation - this has a real functional consequence, not just noisy
-  logs**: confirmed three times during 2026-08-29's Issue 54 real-
-  hardware testing. After several rapid connect/disconnect probe cycles
-  produced a run of these tracebacks, both MeshCore devices twice
-  stopped completing their handshake entirely (every subsequent connect
-  attempt hit the full 15s timeout) until physically disconnected and
-  reconnected. The third time, this actually blocked a genuine attempt
-  to Start Server against the V3 - the underlying `meshcore` library
-  logged its own explicit failure (`No response from meshcore node,
-  disconnecting` / `Are you sure your node is a serial companion?`) for
-  that connect attempt specifically, while the T190 (probed/connected
-  less recently at that point) connected successfully in the same
-  session. Strongly suggests the abandoned per-cycle tasks/loops
-  eventually leave the actual serial port or the device's own companion-
-  protocol state genuinely wedged, not just Python-side GC noise -
-  severity raised from "noisy logs, non-fatal" accordingly. Not yet
-  root-caused *why* accumulating abandoned loops/tasks would affect the
-  physical device's responsiveness rather than just this process's
-  Python state - worth investigating alongside the fix below.
-- **Suggested fix direction** (not yet implemented): before calling
-  `loop.stop()`/`loop.close()`, cancel any tasks still pending on the
-  loop (e.g. via `asyncio.all_tasks(loop)` scheduled through
-  `call_soon_threadsafe`) and give them a moment to unwind, so nothing
-  is left for the garbage collector to clean up against an
-  already-closed loop. Not yet investigated whether the `meshcore`
-  library exposes its own explicit shutdown/cleanup hook that should be
-  called instead of relying on task cancellation from the outside.
+  RuntimeError: Event loop is closed` tracebacks - initially believed
+  non-fatal (caught by Python during GC), but escalated after three
+  independent real-hardware reproductions during Issue 54's testing: a
+  run of these tracebacks left both MeshCore devices unable to complete
+  their handshake at all (every connect attempt hit the full 15s
+  timeout) until physically disconnected and reconnected - once
+  actually blocking a genuine Start Server attempt against the V3.
+- **Root cause, confirmed by reading the `meshcore` library's source**:
+  `CommandHandler.DEFAULT_TIMEOUT` (`commands/base.py`) is 15.0s, used
+  unchanged by `send_appstart()` during `MeshCore.create_serial()`'s
+  handshake. When a candidate never responds, `send_appstart()` burns
+  the full 15.0s internally, then `create_serial()` does its own
+  cleanup (logs "No response from meshcore node, disconnecting" ->
+  `await mc.disconnect()`, which properly cancels/awaits its
+  `EventDispatcher` task and closes the serial connection when allowed
+  to complete). But `transport/meshcore_serial.py`'s own
+  `_CONNECT_TIMEOUT_SECONDS`, wrapping the *entire* `create_serial()`
+  call, also matched at 15.0s - so our outer bound fired at essentially
+  the same moment and abandoned that in-progress internal cleanup
+  mid-flight, before the serial port could be fully released. This is
+  what produced the orphaned `EventDispatcher._process_events()` tasks
+  (GC noise) *and*, given enough repeated cycles, left the OS-level
+  serial port genuinely not released - explaining why a physical
+  unplug/replug (which forces the OS to invalidate the port) reliably
+  cleared it.
+- **Fix**: `_CONNECT_TIMEOUT_SECONDS` raised from 15.0s to 25.0s (the
+  library's 15.0s internal wait + `_SEND_TIMEOUT_SECONDS`'s existing
+  10.0s precedent for a disconnect-style cleanup step's allowed
+  duration) - gives `create_serial()`'s own failure-cleanup path genuine
+  room to finish before we'd ever abandon it. Full unit test suite
+  stays green (962 tests, no test hardcoded the old value).
+- **Real-hardware confirmed**: with only the two real MeshCore devices
+  connected (no other-transport candidates in the mix to also trigger
+  the same "No response" path), both devices connected reliably across
+  many repeated cycles without needing another physical reconnect, and
+  Start Server against the V3 - the case that previously failed -
+  now connects cleanly. The main, escalated functional problem (devices
+  going unresponsive) is resolved.
+- **Residual, lower-severity remainder, not fully eliminated**: a
+  handful of `EventDispatcher._process_events()` orphan tracebacks still
+  appeared during the same extended test session (roughly 1 in several
+  successful cycles, down from near-1:1 before the fix) - at least one
+  confirmed to reuse a freed memory address matching an earlier failed
+  attempt (likely delayed GC finally sweeping backlog from that earlier
+  episode), but at least one other appeared at a genuinely new address
+  after an otherwise-clean successful connect, so occasional fresh
+  orphans aren't fully ruled out. Not yet reproduced as causing renewed
+  device unresponsiveness on its own - tracking as a smaller follow-up
+  rather than blocking this fix. Original suggested direction, still
+  relevant for that residual noise: before `loop.stop()`/`loop.close()`,
+  explicitly cancel any tasks still pending on the loop (e.g. via
+  `asyncio.all_tasks(loop)` scheduled through `call_soon_threadsafe`)
+  and give them a moment to unwind, so nothing is left for the garbage
+  collector to clean up against an already-closed loop.
 
 ---
 
@@ -3378,5 +3379,5 @@ Open
 | 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
 | 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
-| 59    | `MeshCoreSerialTransport.disconnect()`'s loop teardown leaves the `meshcore` library's own background tasks to fail noisily (ignored exceptions) during garbage collection - confirmed 3x to also leave the device itself unresponsive until physically reconnected, once blocking a real Start Server attempt | **Medium-Major (can block a real connect, not just noisy logs)** | Open |
+| 59    | MeshCore connects could leave the device unresponsive until physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS` matching the meshcore library's own internal 15.0s timeout, racing its failure-cleanup path | **Medium-Major (could block a real connect, not just noisy logs)** | **FIXED** (main functional impact), real-hardware verified; low-frequency GC noise remains as a smaller follow-up |
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
