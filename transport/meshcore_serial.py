@@ -173,6 +173,21 @@ class MeshCoreSerialTransport(BaseTransport):
         if self._mc is not None:
             try:
                 self._run_coro(self._mc.disconnect(), self._SEND_TIMEOUT_SECONDS)
+                # Issue 61 (deeper residual): the meshcore library's
+                # SerialConnection.disconnect() calls asyncio Transport.close(),
+                # which only *schedules* the close - the underlying OS-level
+                # port fd isn't actually released until the loop processes
+                # the resulting connection_lost() callback on a later
+                # iteration. mc.disconnect() itself returns immediately once
+                # close() is called, without waiting for that - so without
+                # this, the very next connect() attempt on the same path can
+                # race a port that Python already considers "released" but
+                # the OS hasn't finished closing yet, raising a genuine
+                # "could not open port" failure. A brief real sleep (not
+                # asyncio.sleep(0), which only yields one scheduling tick -
+                # the actual OS-level close can take real wall-clock time)
+                # gives the loop the iterations it needs to actually finish.
+                self._run_coro(asyncio.sleep(0.3), self._SEND_TIMEOUT_SECONDS)
             except Exception:
                 pass
             self._mc = None
