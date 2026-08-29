@@ -27,6 +27,19 @@ from core.meshtastic_utils import probe_device_identity as probe_meshtastic_devi
 from core.meshcore_utils import probe_device_identity as probe_meshcore_device_identity
 
 
+# Issue 61: paths currently being probed by an in-flight
+# probe_devices_in_background() batch, guarding against two overlapping
+# batches (an old one still mid-probe on a device when a new scan starts
+# and reaches that same device before the old probe finishes) opening
+# concurrent connections to the same physical serial port - confirmed
+# real-hardware to cause "could not open port" failures and leave
+# orphaned per-connection background tasks. Module-level/process-wide
+# since should_abort's generation check only stops a batch from
+# *starting* a new probe, not from finishing one already in flight.
+_probing_paths_lock = threading.Lock()
+_probing_paths: set = set()
+
+
 # =============================================================================
 # Color Constants - Bitcoin-orange themed color scheme
 # =============================================================================
@@ -642,20 +655,35 @@ def probe_devices_in_background(devices: List[dict], result_queue,
     always fires in the finally either way, so a caller's busy-indicator
     start()/stop() pairing (ref-counted, Issue 39) stays balanced even on
     an aborted batch.
+
+    A path already being probed by another in-flight batch (Issue 61 -
+    should_abort only stops a batch from *starting* a new probe, not
+    from finishing one already running) is skipped without probing and
+    without a result - the batch already holding it will publish its own
+    result when it finishes.
     """
     def probe_thread():
         try:
             for device in list(devices):
                 if should_abort is not None and should_abort():
                     break
-                if device['path'] in skip_paths:
+                path = device['path']
+                if path in skip_paths:
                     continue
-                if transport_name == "meshcore":
-                    identity = probe_meshcore_device_identity(device['path'])
-                else:
-                    identity = probe_meshtastic_device_identity(device['path'])
+                with _probing_paths_lock:
+                    if path in _probing_paths:
+                        continue
+                    _probing_paths.add(path)
+                try:
+                    if transport_name == "meshcore":
+                        identity = probe_meshcore_device_identity(path)
+                    else:
+                        identity = probe_meshtastic_device_identity(path)
+                finally:
+                    with _probing_paths_lock:
+                        _probing_paths.discard(path)
                 result_queue.put((
-                    'device_identity', device['path'], identity.node_id, identity.name,
+                    'device_identity', path, identity.node_id, identity.name,
                     identity.firmware_version, identity.hw_model,
                 ))
         finally:

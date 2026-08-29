@@ -3320,6 +3320,67 @@ Open
 
 ---
 
+**Issue 61: overlapping scan batches could open concurrent connections
+to the same physical serial port, causing "could not open port"
+failures and orphaned per-connection background tasks** ✅ FIXED
+(real-hardware confirmation still pending)
+
+- Found 2026-08-29 while continuing to dig into Issue 59's residual
+  low-frequency GC-noise remainder: the client GUI failed to connect to
+  the V3 with `Error: Could not open port 49CB2414 (49cb24147266)
+  [Heltec V3]` - a genuine OS-level "port busy" failure (traced to
+  `_friendly_connect_error()` in `btcmesh_client_gui.py`, which only
+  produces this specific text when the raw underlying exception
+  literally contains "could not open port" - i.e. a real
+  pyserial/`serial_asyncio` port-contention error, not one of this
+  codebase's own crafted messages).
+- **Root cause, confirmed directly in the log**: `grep`-ing the
+  session's full client-GUI log for connect/disconnect lines showed the
+  V3's public key (`49cb24147266`) connected to *twice in a row with no
+  disconnect logged in between* - two independent connections open to
+  the same physical port at the same time. `gui/gui_common.py`'s
+  `probe_devices_in_background()` bumps a generation counter
+  (`_scan_generation`) on every new scan and passes `should_abort` into
+  the probe loop, but that guard is only checked *before starting* each
+  device's probe, not while one is already in flight - if an older scan
+  batch is still mid-probe on a device (e.g. waiting through Issue 59's
+  25s connect bound) when a new scan starts and reaches that same
+  device in its own candidate list before the old probe finishes, both
+  batches end up calling `probe_device_identity()` on the same path
+  concurrently. This is a separate mechanism from Issue 59's
+  timeout-matching race - a genuine app-level concurrency bug, not a
+  library-timing one - though it produces very similar-looking symptoms
+  (orphaned `EventDispatcher` tasks), which is what made it easy to
+  initially mistake for more of the same residual GC noise.
+- **Fix**: `gui/gui_common.py` now tracks currently-probing paths in a
+  module-level, `threading.Lock`-protected `_probing_paths` set, shared
+  across all `probe_devices_in_background()` calls in the process (not
+  per-batch - the whole point is guarding against two *different*
+  batches). Before probing a device, a batch checks-and-registers the
+  path atomically under the lock; if already present, that device is
+  skipped without probing and without a result (the batch already
+  holding it will publish its own result when it finishes) - the path
+  is always released in a `finally`, including when the probe raises,
+  so one bad probe can never permanently block a device from being
+  probed again by a later batch.
+- **Scope note**: fixed specifically for scan-vs-scan overlap (the
+  directly reproduced case). Other call sites that also do a real
+  `transport.connect(path)` - `on_device_selected()`'s identity/known-
+  nodes fetch, Send's own connect - could theoretically race the same
+  way against an in-flight scan on the same device, but this wasn't
+  directly observed/reproduced, so widening the guard to cover them is
+  left as a follow-up rather than speculatively expanding scope here.
+- Verified: full unit test suite passes (965 tests), including new
+  coverage in `tests/test_gui_common.py`'s
+  `TestProbeDevicesInBackground` (skips an already-registered path
+  without probing it; releases a path after a successful probe;
+  releases a path even when the probe raises). Real-hardware
+  confirmation that this actually stops the duplicate-connect pattern
+  and the "could not open port" failure is the next step, still to be
+  done live.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3381,3 +3442,4 @@ Open
 | 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
 | 59    | MeshCore connects could leave the device unresponsive until physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS` matching the meshcore library's own internal 15.0s timeout, racing its failure-cleanup path | **Medium-Major (could block a real connect, not just noisy logs)** | **FIXED** (main functional impact), real-hardware verified; low-frequency GC noise remains as a smaller follow-up |
 | 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
+| 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | **FIXED** (real-hardware confirmation still pending) |
