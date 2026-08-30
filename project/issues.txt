@@ -3565,6 +3565,64 @@ aborts server startup entirely, with a blank error message**
 
 ---
 
+**Issue 64: a lost final BTC_ACK/BTC_NACK leaves the client with a
+generic "No final ACK from relay" instead of the real, already-known
+reason - no retry/redelivery for the final reply, unlike chunks**
+Open
+
+- Found 2026-08-30 during real-hardware testing of Issue 63's fix, with
+  Bitcoin RPC still down (Tor/onion unreachable, the same environmental
+  condition from the previous test pass): a full 21-chunk send
+  completed cleanly - every chunk delivered and ACKed, no retries
+  needed - and the server correctly determined the actual failure
+  reason (`rpc_client is None` -> "Bitcoin RPC not connected") and sent
+  a `BTC_NACK` back. But the client never received it, and reported the
+  generic `"No final ACK from relay"` instead of the real reason the
+  server had already worked out.
+- **Root cause, confirmed in both files**: `server/receiver.py`'s
+  `_send_nack()` (line 330-335) and the `BTC_ACK` send on a successful
+  broadcast (line 309-310) both go through `_send()`, a single
+  best-effort transport send with no ACK/retry of its own - unlike a
+  chunk send, which the client will resend up to `max_retries` times
+  (Issue 62 just fixed that path further). Symmetrically,
+  `client/sender.py`'s `_wait_for_final_ack()` (line 446-455) blocks
+  once for `timeout_seconds * 2` and gives up - `send_transaction()`
+  (line 431-435) then sets the generic `"No final ACK from relay"` with
+  no visibility into whether the server ever even attempted a reply,
+  let alone what it said. On a lossy LoRa/mesh link, a single
+  reply packet going missing is an expected, routine failure mode -
+  exactly the kind of thing the per-chunk protocol already has retry
+  logic for, but the final reply doesn't.
+- The server already has half of a fix in place and unused by this
+  path: `_remember_completed()` (Issue 17) caches the final reply
+  keyed by `(sender_id, session_id)` for `completed_session_grace_seconds`
+  (default 300s) specifically so a client that retransmits its last
+  chunk gets the cached reply resent directly instead of the server
+  treating it as a bogus new session. But nothing on the client
+  currently causes that retransmission - once a chunk gets its
+  `BTC_CHUNK_ACK`, `TransactionSender` has no reason to resend it, so
+  a lost final reply is simply never recovered from today.
+- **Suggested fix direction** (not yet implemented, needs a decision
+  more than the last few timeout-constant fixes did): give
+  `_wait_for_final_ack()` its own retry loop, most naturally by having
+  it re-send the last chunk on each final-ACK timeout (up to
+  `max_retries`) to deliberately trigger the server's existing
+  `_remember_completed()` cache-resend path - reuses server-side
+  machinery that already exists for exactly this purpose, rather than
+  inventing a new "are you done yet?" query message/wire format.
+  Confirmed by reading `_on_message()` (`server/receiver.py` line
+  ~205-215) that this should already work cleanly: the
+  `_completed_sessions` cache lookup runs *before*
+  `reassembler.add_chunk()` is ever called, so a resent last chunk for
+  an already-completed session hits the cache and gets the real cached
+  reply resent directly - it never reaches the reassembler's separate
+  "Duplicate chunk N/M received. Ignoring." path (that path is for
+  duplicates arriving *during* an in-progress session, a different
+  case, already exercised by Issue 61/62's real-hardware tests). No
+  server-side change needed - this is a client-only fix.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3629,3 +3687,4 @@ aborts server startup entirely, with a blank error message**
 | 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
 | 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
 | 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |
+| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | Open |
