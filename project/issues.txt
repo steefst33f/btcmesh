@@ -3620,6 +3620,11 @@ Open
   duplicates arriving *during* an in-progress session, a different
   case, already exercised by Issue 61/62's real-hardware tests). No
   server-side change needed - this is a client-only fix.
+- **Recurred a second time the same session** (2026-08-31, session
+  `6a436`): another full send/reassembly completed cleanly, RPC still
+  down, server sent the same `BTC_NACK`, client again reported the
+  generic "No final ACK from relay" instead of receiving it - not a
+  one-off, the same gap every time the final reply happens to be lost.
 
 ---
 
