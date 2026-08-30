@@ -427,12 +427,50 @@ class TransactionSender:
                         send_session.failed = True
                         return
 
-        # All chunks sent, wait for final BTC_ACK
-        if not self._wait_for_final_ack(send_session):
+        # All chunks sent, wait for final BTC_ACK - retry by resending the
+        # last chunk on timeout (Issue 64). Unlike per-chunk ACKs, a lost
+        # final BTC_ACK/BTC_NACK had no retry of its own - but the server
+        # already caches the final reply (Issue 17) and resends it
+        # directly if the last chunk arrives again for an
+        # already-completed session, so resending it here deliberately
+        # triggers that existing path instead of leaving the client stuck
+        # with a generic "No final ACK from relay" when the server had
+        # already worked out (and sent) the real reason.
+        max_final_attempts = self.max_retries + 1  # +1 for initial wait
+        while max_final_attempts > 0:
+            if self._wait_for_final_ack(send_session):
+                return
+
             # Check if NACK set failed during final ACK wait
-            if not send_session.failed:
-                send_session.error = "No final ACK from relay"
+            if send_session.failed:
+                return
+
+            max_final_attempts -= 1
+            if max_final_attempts == 0:
+                break
+
+            if self._abort_event.is_set():
+                send_session.error = "Aborted by user"
                 send_session.failed = True
+                return
+
+            try:
+                last_chunk_index = total - 1
+                chunk_msg = get_chunk_message(protocol_session, last_chunk_index)
+                wire_format = chunk_msg.format()
+                attempt = send_session.retry_counts.get(total, 0) + 1
+                if on_chunk_sending:
+                    on_chunk_sending(total, total, attempt, wire_format)
+                self.transport.send(wire_format, destination)
+                send_session.increment_retry(total)
+            except Exception:
+                # Best-effort - if the resend itself fails, the next
+                # wait cycle simply times out again and consumes another
+                # attempt from the same budget.
+                pass
+
+        send_session.error = "No final ACK from relay"
+        send_session.failed = True
 
     def _wait_for_chunk_ack(self, send_session: SendSession, chunk_num: int) -> bool:
         """Block waiting for chunk ACK with timeout.

@@ -478,6 +478,84 @@ class TestTransactionSenderRetry(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("no_event_received", result.error)
 
+    def test_final_ack_retry_resends_last_chunk_then_succeeds(self):
+        """A lost final BTC_ACK now gets retried by resending the last
+        chunk (Issue 64), instead of failing on the first missed reply -
+        mirrors the server's real behavior of resending its cached final
+        reply when it sees the last chunk again."""
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
+        sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
+
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "beef" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result = sender.send_transaction(tx_hex, "!dest1234")
+            result_holder.append(result)
+
+        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread.start()
+
+        time.sleep(0.1)
+        first_msg = transport.send.call_args_list[0][0][0]
+        session_id = first_msg.split("|")[1]
+
+        # ACK the chunk, but never send the final BTC_ACK yet - let the
+        # final-ack wait (timeout_seconds * 2 = 0.4s) time out once.
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+
+        # Wait past the first final-ack timeout so the last chunk gets
+        # resent, then reply with the final ACK.
+        time.sleep(0.5)
+        self.assertEqual(transport.send.call_count, 2, "expected the last chunk to be resent after the final-ack timeout")
+        handler(f"BTC_ACK|{session_id}|TXID:retried_final", "!server")
+
+        thread.join(timeout=10)
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertTrue(result.success, f"Expected success but got: {result.error}")
+        self.assertEqual(result.txid, "retried_final")
+
+    def test_final_ack_exhausts_retries_then_fails(self):
+        """A final BTC_ACK that never arrives, even after resends,
+        eventually fails with the same message as before (Issue 64) -
+        exhausts the same max_retries budget as chunk sends."""
+        transport = Mock(spec=BaseTransport, max_chunk_size=170)
+        sender = TransactionSender(transport, timeout_seconds=0.1, max_retries=1)
+
+        # Don't send any final ACK - let everything time out.
+        handler = transport.set_message_handler.call_args[0][0]
+
+        tx_hex = "beef" * 20  # 1 chunk
+        result_holder = []
+
+        def send_in_thread():
+            result = sender.send_transaction(tx_hex, "!dest1234")
+            result_holder.append(result)
+
+        thread = threading.Thread(target=send_in_thread, daemon=True)
+        thread.start()
+
+        # Short margin below timeout_seconds (0.1s) so the chunk-ack wait
+        # itself never times out and retries before this ACK arrives.
+        time.sleep(0.02)
+        first_msg = transport.send.call_args_list[0][0][0]
+        session_id = first_msg.split("|")[1]
+        handler(f"BTC_CHUNK_ACK|{session_id}|1|ALL_CHUNKS_RECEIVED", "!server")
+
+        thread.join(timeout=10)
+
+        # Initial chunk send + 1 final-ack-triggered resend (max_retries=1).
+        self.assertEqual(transport.send.call_count, 2)
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "No final ACK from relay")
+
 
 class TestTransactionSenderErrorHandling(unittest.TestCase):
     """Tests for error handling (NACK, server errors)."""

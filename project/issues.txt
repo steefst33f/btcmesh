@@ -3568,7 +3568,7 @@ aborts server startup entirely, with a blank error message**
 **Issue 64: a lost final BTC_ACK/BTC_NACK leaves the client with a
 generic "No final ACK from relay" instead of the real, already-known
 reason - no retry/redelivery for the final reply, unlike chunks**
-Open
+✅ FIXED
 
 - Found 2026-08-30 during real-hardware testing of Issue 63's fix, with
   Bitcoin RPC still down (Tor/onion unreachable, the same environmental
@@ -3625,6 +3625,24 @@ Open
   down, server sent the same `BTC_NACK`, client again reported the
   generic "No final ACK from relay" instead of receiving it - not a
   one-off, the same gap every time the final reply happens to be lost.
+- **Fix**: implemented exactly the suggested direction above -
+  `_send_all_chunks()`'s final-ACK wait (`client/sender.py`) now loops
+  up to `max_retries` times, resending the last chunk (via
+  `get_chunk_message()`, same as the original chunk send) between each
+  timed-out wait, checking `_abort_event` before each retry (same
+  pattern as the chunk-retry loop). Only sets the generic "No final ACK
+  from relay" once the whole budget is exhausted, same as before for
+  that final-failure case - no server-side change needed, since the
+  `_completed_sessions` cache lookup was already confirmed to run
+  before the reassembler.
+- **Verified**: new tests in `tests/test_client_sender.py` -
+  `test_final_ack_retry_resends_last_chunk_then_succeeds` (final ACK
+  lost once, last chunk gets resent, succeeds once the ACK arrives) and
+  `test_final_ack_exhausts_retries_then_fails` (final ACK never
+  arrives, exactly `max_retries` resends happen before failing with the
+  same "No final ACK from relay" message as before) - both pass
+  reliably across repeated runs, along with the full existing suite (no
+  regressions).
 
 ---
 
@@ -3769,6 +3787,6 @@ Open
 | 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
 | 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
 | 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |
-| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | Open |
+| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | **FIXED** |
 | 65    | MeshCore's `MESSAGES_WAITING`-driven message pull can lag behind actual radio receipt, making a genuinely-delivered chunk look lost and triggering a spurious client retry (a likely third contributor to "Duplicate chunk" warnings, alongside Issue 61's race and ordinary radio unreliability) | Minor-Medium (extra retries/latency, not data loss - firmware-timing dependent, may not be fixable in this codebase) | Open |
 | 66    | On the client GUI specifically, an idle T190 needs a physical replug to reconnect - the same device recovers fine via a plain reconnect on the server GUI | Medium (client-only reliability gap, not yet root-caused) | Open |
