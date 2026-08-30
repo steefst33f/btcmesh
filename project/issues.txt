@@ -3628,6 +3628,83 @@ Open
 
 ---
 
+**Issue 65: MeshCore's `MESSAGES_WAITING`-driven message pull can lag
+well behind actual radio receipt, making a genuinely-delivered chunk
+look lost and triggering a spurious client-side retry**
+Open
+
+- Found 2026-08-31 during real-hardware testing: the operator directly
+  observed a chunk arrive on the receiving device's own screen
+  immediately, but the connected companion software (server GUI, in
+  this case) did not recognize/ACK it for a noticeable while afterward
+  - matching a pattern already seen throughout this session as
+  "Duplicate chunk N/M received. Ignoring." warnings on the server,
+  previously assumed to be purely a client-retry artifact.
+- **Root cause, confirmed by reading the `meshcore` library**
+  (`meshcore.py`'s `start_auto_message_fetching()`, lines 430-473): the
+  active message-pull this transport relies on
+  (`transport/meshcore_serial.py`'s `_subscribe()`, Issue 50) is purely
+  event-driven, not polled - it only calls `commands.get_msg()` when the
+  device emits a `MESSAGES_WAITING` event (plus one immediate pull right
+  at subscribe time). If the device is slow to *signal*
+  `MESSAGES_WAITING` after actually receiving the radio packet - a
+  firmware-side notification delay, not something this codebase
+  controls - the message sits queued on the device with nothing
+  pulling it, even though it's already visibly arrived.
+- This gives a much better explanation for at least some of the
+  "Duplicate chunk N/M received" warnings observed throughout Issue
+  59/61/62's real-hardware testing: the chunk genuinely arrived and was
+  radio-delivered on the very first send, but the server's software
+  didn't notice/ACK it before the client's own ACK-wait timeout fired
+  and triggered a legitimate (from the client's perspective) retry -
+  what showed up as a "duplicate" was actually the delayed pull finally
+  catching up, not a real delivery failure needing a resend at all.
+  Previously chalked up entirely to Issue 61's concurrent-connection
+  race or ordinary radio unreliability; this is a third, distinct
+  contributor to the same symptom.
+- Not yet clear whether anything on our side can reduce this - the
+  delay's source (the device's own `MESSAGES_WAITING` signal timing) is
+  firmware behavior, not a codebase bug. Possible directions worth
+  exploring later: whether `get_msg()` should also be pulled on some
+  short poll interval as a supplement to the event-driven trigger (so a
+  late/missed `MESSAGES_WAITING` doesn't leave a message stranded), or
+  whether this is simply an inherent characteristic of the firmware
+  that the existing chunk-retry logic (Issue 62) already tolerates
+  well enough in practice.
+
+---
+
+**Issue 66: on the client GUI specifically, an idle T190 needs a
+physical replug to reconnect - the same device recovers fine via a
+plain reconnect on the server GUI**
+Open
+
+- Found 2026-08-31 during real-hardware testing: after the T190 went
+  idle, the client GUI could not reconnect to it through repeated scans
+  (matching the V3's already-documented sleep/wedge pattern) and needed
+  a physical unplug/replug to recover - but the *same physical device*,
+  when connected from the server GUI instead, reconnects successfully
+  without ever needing a replug.
+- Not yet root-caused - no code has been read/traced for this yet. The
+  asymmetry is the interesting part: both GUIs share the same
+  `transport/meshcore_serial.py`/`core/meshcore_utils.py` connect path,
+  so if the exact same physical device recovers via one GUI's reconnect
+  attempts but not the other's, the difference must be in something
+  each GUI does differently around connect/reconnect timing or
+  sequencing (e.g. the client's `on_device_selected()` fast-path
+  skipping a connect entirely for MeshCore since Issue 61's fix, a
+  different retry cadence between the client's `_connect_with_retry()`
+  and the server's `run_server()` connect step, or simply how many
+  connect attempts each GUI happens to make before the operator gives
+  up and reaches for the cable) rather than the device itself being in
+  a fundamentally different state depending on which GUI last touched
+  it.
+- Next step: trace both GUIs' exact connect/reconnect call sequences
+  side by side for this device to find the actual difference, rather
+  than guessing further.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3693,3 +3770,5 @@ Open
 | 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
 | 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |
 | 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | Open |
+| 65    | MeshCore's `MESSAGES_WAITING`-driven message pull can lag behind actual radio receipt, making a genuinely-delivered chunk look lost and triggering a spurious client retry (a likely third contributor to "Duplicate chunk" warnings, alongside Issue 61's race and ordinary radio unreliability) | Minor-Medium (extra retries/latency, not data loss - firmware-timing dependent, may not be fixable in this codebase) | Open |
+| 66    | On the client GUI specifically, an idle T190 needs a physical replug to reconnect - the same device recovers fine via a plain reconnect on the server GUI | Medium (client-only reliability gap, not yet root-caused) | Open |
