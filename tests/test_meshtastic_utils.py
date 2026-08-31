@@ -2,183 +2,14 @@
 """
 Tests for BTCMesh Meshtastic Utilities (core/meshtastic_utils.py).
 
-Tests device scanning, node information retrieval, and formatting functions.
+Tests Meshtastic-specific identity probing, node information retrieval,
+and formatting functions. Candidate-port enumeration is transport-
+agnostic and tested once in tests/test_device_scan.py instead (Story
+30.4 cleanup - core/meshtastic_utils.py no longer wraps it).
 """
-import sys
 import unittest
 import unittest.mock
 import time
-
-
-class TestScanMeshtasticDevices(unittest.TestCase):
-    """Tests for scan_meshtastic_devices function."""
-
-    def test_scan_meshtastic_devices_exists(self):
-        """Given meshtastic_utils module, Then scan_meshtastic_devices should be defined."""
-        from core.meshtastic_utils import scan_meshtastic_devices
-        self.assertTrue(callable(scan_meshtastic_devices))
-
-    def test_scan_returns_list(self):
-        """Given scan_meshtastic_devices call, Then it returns a list."""
-        from core.meshtastic_utils import scan_meshtastic_devices
-        result = scan_meshtastic_devices()
-        self.assertIsInstance(result, list)
-
-    def test_scan_returns_empty_when_meshtastic_not_installed(self):
-        """Given meshtastic not installed, Then returns empty list."""
-        from core.meshtastic_utils import scan_meshtastic_devices
-
-        with unittest.mock.patch.dict(sys.modules, {'meshtastic': None, 'meshtastic.util': None}):
-            # Force reimport
-            import importlib
-            import core.meshtastic_utils
-            importlib.reload(core.meshtastic_utils)
-            result = core.meshtastic_utils.scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_ports_when_found(self):
-        """Given non-blacklisted serial ports, Then returns those ports.
-
-        Uses the real meshtastic.util.blacklistVids/eliminate_duplicate_port —
-        only the hardware enumeration (comports) is mocked, since we can't
-        depend on real USB devices being attached in CI.
-        """
-        from core import meshtastic_utils
-
-        mock_ports = [
-            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x303a),
-            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x2886),
-        ]
-
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = meshtastic_utils.scan_meshtastic_devices()
-            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
-
-    def test_scan_includes_non_whitelisted_vid_alongside_whitelisted(self):
-        """Given one Espressif-VID device (0x303a, whitelisted by
-        meshtastic.util.findPorts) and one Seeed-VID device (0x2886, not
-        whitelisted there) connected together, Then both are returned.
-
-        Regression test: meshtastic.util.findPorts() only falls back to
-        "not blacklisted" ports when zero whitelisted-VID ports are found, so
-        it silently drops the second device entirely in this scenario. Uses
-        the real meshtastic.util.blacklistVids/eliminate_duplicate_port to
-        prove the fix holds against the actual upstream library.
-        """
-        from core import meshtastic_utils
-
-        mock_ports = [
-            unittest.mock.MagicMock(device='/dev/cu.usbmodemESP32', vid=0x303a),
-            unittest.mock.MagicMock(device='/dev/cu.usbmodemSeeed', vid=0x2886),
-        ]
-
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = meshtastic_utils.scan_meshtastic_devices()
-            self.assertEqual(
-                result, ['/dev/cu.usbmodemESP32', '/dev/cu.usbmodemSeeed']
-            )
-
-
-class TestScanMeshtasticDevicesDetailed(unittest.TestCase):
-    """Tests for scan_meshtastic_devices_detailed (Story 26.3)."""
-
-    def test_scan_meshtastic_devices_detailed_exists(self):
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
-        self.assertTrue(callable(scan_meshtastic_devices_detailed))
-
-    def test_scan_returns_list(self):
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
-        result = scan_meshtastic_devices_detailed()
-        self.assertIsInstance(result, list)
-
-    def test_scan_returns_empty_when_meshtastic_not_installed(self):
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
-
-        with unittest.mock.patch.dict(sys.modules, {'meshtastic': None, 'meshtastic.util': None}):
-            import importlib
-            import core.meshtastic_utils
-            importlib.reload(core.meshtastic_utils)
-            result = core.meshtastic_utils.scan_meshtastic_devices_detailed()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_device_info_with_serial_and_description(self):
-        """Given non-blacklisted serial ports, Then returns DeviceInfo
-        entries carrying path, serial_number, and description."""
-        from core import meshtastic_utils
-
-        mock_ports = [
-            unittest.mock.MagicMock(
-                device='/dev/ttyUSB0', vid=0x303a,
-                serial_number='ABC123', description='Some ESP32 board',
-            ),
-            unittest.mock.MagicMock(
-                device='/dev/ttyACM0', vid=0x2886,
-                serial_number=None, description='Some Seeed board',
-            ),
-        ]
-
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = meshtastic_utils.scan_meshtastic_devices_detailed()
-
-            self.assertEqual([d.path for d in result], ['/dev/ttyACM0', '/dev/ttyUSB0'])
-            by_path = {d.path: d for d in result}
-            self.assertEqual(by_path['/dev/ttyUSB0'].serial_number, 'ABC123')
-            self.assertEqual(by_path['/dev/ttyUSB0'].description, 'Some ESP32 board')
-            self.assertIsNone(by_path['/dev/ttyACM0'].serial_number)
-
-    def test_scan_includes_non_whitelisted_vid_alongside_whitelisted(self):
-        """Same VID-blacklist regression as scan_meshtastic_devices, applied
-        to the detailed variant."""
-        from core import meshtastic_utils
-
-        mock_ports = [
-            unittest.mock.MagicMock(
-                device='/dev/cu.usbmodemESP32', vid=0x303a,
-                serial_number='S1', description='ESP32',
-            ),
-            unittest.mock.MagicMock(
-                device='/dev/cu.usbmodemSeeed', vid=0x2886,
-                serial_number='S2', description='Seeed',
-            ),
-        ]
-
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = meshtastic_utils.scan_meshtastic_devices_detailed()
-            self.assertEqual(
-                [d.path for d in result],
-                ['/dev/cu.usbmodemESP32', '/dev/cu.usbmodemSeeed'],
-            )
-
-    def test_scan_deduplicates_same_physical_device(self):
-        """Given two OS-level names for the same physical device (a known
-        macOS quirk - see meshtastic.util.eliminate_duplicate_port), Then
-        only the winning DeviceInfo entry is returned, matching the exact
-        same dedup behavior as scan_meshtastic_devices()."""
-        from core import meshtastic_utils
-
-        mock_ports = [
-            unittest.mock.MagicMock(
-                device='/dev/cu.usbserial-1430', vid=0x10c4,
-                serial_number='1430', description='CP2102',
-            ),
-            unittest.mock.MagicMock(
-                device='/dev/cu.wchusbserial1430', vid=0x10c4,
-                serial_number='1430', description='CP2102',
-            ),
-        ]
-
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = meshtastic_utils.scan_meshtastic_devices_detailed()
-            self.assertEqual([d.path for d in result], ['/dev/cu.wchusbserial1430'])
-
-    def test_scan_returns_empty_on_generic_exception(self):
-        from core import meshtastic_utils
-
-        with unittest.mock.patch(
-            'serial.tools.list_ports.comports', side_effect=RuntimeError("boom")
-        ):
-            result = meshtastic_utils.scan_meshtastic_devices_detailed()
-            self.assertEqual(result, [])
 
 
 class TestProbedDevice(unittest.TestCase):
@@ -206,8 +37,8 @@ class TestProbeDeviceIdentity(unittest.TestCase):
 
     def test_returns_node_id_and_name_on_successful_connect(self):
         """Given a transport that connects successfully, Then returns a
-        ProbedDevice with both node_id and name, and disconnects
-        afterward."""
+        ProbedDevice with node_id, name, firmware_version, and hw_model,
+        and disconnects afterward."""
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
 
@@ -218,12 +49,17 @@ class TestProbeDeviceIdentity(unittest.TestCase):
             'transport.power_control.probe_relay_board_id', return_value=None
         ), unittest.mock.patch(
             'core.meshtastic_utils.get_own_node_name', return_value='Meshtastic 4418'
-        ) as mock_get_name:
+        ) as mock_get_name, unittest.mock.patch(
+            'core.meshtastic_utils.extract_firmware_info',
+            return_value=('2.6.11.60ec05e', 'HELTEC_V3'),
+        ):
             from core.meshtastic_utils import probe_device_identity
             result = probe_device_identity('/dev/cu.usbserial-0001')
 
         self.assertEqual(result.node_id, '!7c5b4418')
         self.assertEqual(result.name, 'Meshtastic 4418')
+        self.assertEqual(result.firmware_version, '2.6.11.60ec05e')
+        self.assertEqual(result.hw_model, 'HELTEC_V3')
         mock_transport.connect.assert_called_once_with('/dev/cu.usbserial-0001')
         mock_transport.disconnect.assert_called_once()
         mock_get_name.assert_called_once_with(mock_transport._iface)
@@ -399,89 +235,6 @@ class TestExtractFirmwareInfo(unittest.TestCase):
         iface.metadata.hw_model = 99999
 
         self.assertEqual(extract_firmware_info(iface), (None, None))
-
-
-class TestFormatDeviceDisplay(unittest.TestCase):
-    """Tests for format_device_display (Story 27.1)."""
-
-    def test_format_device_display_exists(self):
-        from core.meshtastic_utils import format_device_display
-        self.assertTrue(callable(format_device_display))
-
-    def test_path_only_when_node_id_none(self):
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display('/dev/cu.usbserial-0001', None)
-        self.assertEqual(result, '/dev/cu.usbserial-0001')
-
-    def test_path_and_node_id_when_known(self):
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display('/dev/cu.usbserial-0001', '!7c5b4418')
-        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
-
-    def test_name_and_node_id_when_both_known(self):
-        """Given both a node_id and a name, Then the name is shown instead
-        of the raw path - e.g. 'Meshtastic 4418 (!7c5b4418)'."""
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418'
-        )
-        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418)')
-
-    def test_path_and_node_id_when_name_is_none(self):
-        """Given a node_id but no name (device has none configured), Then
-        falls back to path (node_id) rather than showing nothing."""
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', '!7c5b4418', name=None
-        )
-        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418)')
-
-    def test_name_only_when_node_id_none(self):
-        """Given a name but no node_id, Then shows the name alone rather
-        than falling back to the bare path. This is a real, meaningful
-        case (not just an edge case to tolerate): probe_device_identity()'s
-        Issue 37 relay-board result has a descriptive name
-        ('Relay board (not a Meshtastic device)') but no Meshtastic
-        protocol identity to pair it with."""
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', None, name='Relay board (not a Meshtastic device)'
-        )
-        self.assertEqual(result, 'Relay board (not a Meshtastic device)')
-
-    def test_hw_model_appended_as_bracketed_suffix_when_name_and_node_id_known(self):
-        """Story 27.4: hw_model is shown alongside node name so multiple
-        physically connected devices can be told apart at a glance during
-        hardware testing."""
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418', hw_model='HELTEC_V3'
-        )
-        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418) [HELTEC_V3]')
-
-    def test_hw_model_appended_when_only_node_id_known(self):
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', '!7c5b4418', hw_model='HELTEC_V3'
-        )
-        self.assertEqual(result, '/dev/cu.usbserial-0001 (!7c5b4418) [HELTEC_V3]')
-
-    def test_no_suffix_when_hw_model_omitted_reproduces_existing_strings(self):
-        """Regression guard: omitting hw_model (its default) must
-        reproduce today's exact label strings unchanged."""
-        from core.meshtastic_utils import format_device_display
-
-        result = format_device_display(
-            '/dev/cu.usbserial-0001', '!7c5b4418', name='Meshtastic 4418'
-        )
-        self.assertEqual(result, 'Meshtastic 4418 (!7c5b4418)')
 
 
 class TestGetOwnNodeId(unittest.TestCase):

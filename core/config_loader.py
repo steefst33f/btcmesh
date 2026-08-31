@@ -57,9 +57,9 @@ def get_relay_serial_port() -> Optional[str]:
     """
     Retrieves the DIY power-relay board's serial port from environment
     variables (Story 26.7). Always explicit - unlike the Meshtastic port,
-    this is never auto-detected, since scan_meshtastic_devices() would
-    otherwise treat the relay board's own serial port as a false-positive
-    Meshtastic candidate (see transport/power_control.py's
+    this is never auto-detected, since core.device_scan.scan_serial_devices()
+    would otherwise treat the relay board's own serial port as a
+    false-positive candidate (see transport/power_control.py's
     SerialRelayPowerControl).
     """
     if not dotenv_loaded:

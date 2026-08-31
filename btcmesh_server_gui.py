@@ -63,17 +63,22 @@ from gui.gui_common import (
     dedupe_devices_by_node_id,
     device_path_from_display,
     refresh_device_spinner_labels,
+    acquire_probing_path,
+    release_probing_path,
 )
 
 from core.config_loader import load_app_config
 from core.device_watchdog import build_device_watchdog
-from core.meshtastic_utils import get_own_node_name, format_device_display, extract_firmware_info
+from core.meshtastic_utils import get_own_node_name, extract_firmware_info
+from core.device_scan import format_device_display, scan_serial_devices
 from core.transaction_history import TransactionHistory
 from core.rpc_client import BitcoinRPCClient
 from transport.meshtastic_serial import MeshtasticSerialTransport
 from transport.base import TransportConnectionError
 from transport.power_control import probe_relay_board_id
+from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLAY_NAMES
 from server.run_loop import build_receiver, run_polling_loop
+from core.logger_setup import server_logger
 
 
 # Set window size for desktop
@@ -93,6 +98,10 @@ STATE_RPC_FAILED = ConnectionState('Connection failed', COLOR_ERROR)
 DEVICE_AUTO_DETECT = "Auto-detect"
 DEVICE_SCANNING = "Scanning..."
 DEVICE_NO_DEVICES = "No devices found"
+
+# Story 30.4: reverse of TRANSPORT_DISPLAY_NAMES, for resolving the
+# transport spinner's display text back to a transport_name.
+_DISPLAY_NAME_TO_TRANSPORT = {v: k for k, v in TRANSPORT_DISPLAY_NAMES.items()}
 
 # Path to .env file (same as config_loader.py)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -118,6 +127,16 @@ class BTCMeshServerGUI(BoxLayout):
         # Device selection state (Story 27.3) - [{'path', 'node_id', 'name'}, ...],
         # rebuilt on every scan
         self.devices = []
+        # Story 30.4: which transport is selected in the GUI right now -
+        # session-only, defaults to "meshtastic" (zero behavior change for
+        # existing users who never touch the new selector).
+        self.selected_transport = "meshtastic"
+        # Bumped by every _on_scan_devices() call (including the one
+        # _on_transport_selected() triggers) - lets a probe batch started
+        # under a since-superseded transport recognize it's now stale and
+        # stop pushing results. See probe_devices_in_background()'s
+        # should_abort and btcmesh_client_gui.py's identical pattern.
+        self._scan_generation = 0
 
         # Thread-safe result queue for communication
         self.result_queue = queue.Queue()
@@ -174,11 +193,11 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after RPC settings section
         self.add_widget(create_separator())
 
-        # Meshtastic Device Settings section
-        self.add_widget(create_section_label('Meshtastic Settings:'))
-        self._build_meshtastic_settings()
+        # Device Settings section (transport selector + device scan)
+        self.add_widget(create_section_label('Device Settings:'))
+        self._build_device_settings()
 
-        # Orange separator line after Meshtastic settings
+        # Orange separator line after device settings
         self.add_widget(create_separator())
 
         # Reassembly timeout setting
@@ -203,7 +222,7 @@ class BTCMeshServerGUI(BoxLayout):
         self.add_widget(self.clear_btn)
 
         # Initial log message
-        self.status_log.add_message("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
+        self._log("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
 
     def _build_status_section(self):
         """Build the connection status section."""
@@ -226,9 +245,10 @@ class BTCMeshServerGUI(BoxLayout):
         )
         status_section.add_widget(rpc_row)
 
-        # Meshtastic status row
+        # Mesh transport status row (label stays neutral - the value text
+        # itself says which transport actually connected, Story 30.4)
         meshtastic_row, self.meshtastic_label = create_status_row(
-            'Meshtastic:',
+            'Mesh:',
             'Not connected',
             initial_color=COLOR_DISCONNECTED
         )
@@ -458,9 +478,33 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.add_widget(settings_container)
 
-    def _build_meshtastic_settings(self):
-        """Build the Meshtastic device settings section."""
+    def _build_device_settings(self):
+        """Build the transport selector + device settings section."""
         import os
+
+        # Transport selector (Story 30.4)
+        transport_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+        transport_label = Label(
+            text='Transport:',
+            size_hint_x=None,
+            halign='right',
+            valign='middle',
+            color=COLOR_SECONDARY,
+        )
+        transport_label.bind(texture_size=lambda inst, val: setattr(inst, 'width', val[0] + 15))
+        transport_container.add_widget(transport_label)
+
+        self.transport_spinner = Spinner(
+            text=TRANSPORT_DISPLAY_NAMES[self.selected_transport],
+            values=[TRANSPORT_DISPLAY_NAMES[t] for t in TRANSPORT_CHOICES],
+            size_hint_x=1,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            color=COLOR_SECONDARY,
+        )
+        self.transport_spinner.bind(text=self._on_transport_selected)
+        transport_container.add_widget(self.transport_spinner)
+        self.add_widget(transport_container)
 
         # Load default from environment
         load_app_config()
@@ -557,19 +601,45 @@ class BTCMeshServerGUI(BoxLayout):
 
         self.add_widget(controls_section)
 
+    def _on_transport_selected(self, spinner, text):
+        """Handle transport selector change (Story 30.4): reset the
+        device list/spinner, then re-scan under the newly selected
+        transport (reuses the existing scan flow, not a new one)."""
+        transport_name = _DISPLAY_NAME_TO_TRANSPORT.get(text, "meshtastic")
+        if transport_name == self.selected_transport:
+            return
+        self.selected_transport = transport_name
+
+        self.devices = []
+        self.device_spinner.values = [DEVICE_AUTO_DETECT]
+        self.device_spinner.text = DEVICE_AUTO_DETECT
+
+        self._on_scan_devices(None)
+
     def _on_scan_devices(self, instance):
-        """Scan for available Meshtastic devices."""
+        """Scan for available candidate serial devices in background.
+
+        Candidate-port enumeration (core.device_scan.scan_serial_devices())
+        has nothing transport-specific about it, so this scan itself
+        doesn't branch on self.selected_transport - only the subsequent
+        identity probe does (see probe_devices_in_background()'s
+        transport_name dispatch, below in _handle_result)."""
+        # Invalidates any probe batch still running from a previous scan
+        # (e.g. one started under a transport the operator has since
+        # switched away from) - see self._scan_generation's docstring in
+        # __init__ and probe_devices_in_background()'s should_abort.
+        self._scan_generation += 1
         self.device_busy.start("Scanning devices...")
 
         def scan_thread():
-            from core.meshtastic_utils import scan_meshtastic_devices
-            devices = scan_meshtastic_devices()
+            devices = scan_serial_devices()
             self.result_queue.put(('devices_found', devices))
 
         threading.Thread(target=scan_thread, daemon=True).start()
 
     def _set_meshtastic_settings_enabled(self, enabled: bool):
-        """Enable or disable Meshtastic device settings."""
+        """Enable or disable transport/device settings."""
+        self.transport_spinner.disabled = not enabled
         self.device_spinner.disabled = not enabled
         self.scan_btn.disabled = not enabled
 
@@ -602,19 +672,19 @@ class BTCMeshServerGUI(BoxLayout):
 
         # Basic validation
         if not host:
-            self.status_log.add_message("Test failed: Host is required", COLOR_ERROR)
+            self._log("Test failed: Host is required", COLOR_ERROR)
             return
         if not port:
-            self.status_log.add_message("Test failed: Port is required", COLOR_ERROR)
+            self._log("Test failed: Port is required", COLOR_ERROR)
             return
         if not cookie_path and (not user or not password):
-            self.status_log.add_message(
+            self._log(
                 "Test failed: Provide a Cookie file path, or both User and Password",
                 COLOR_ERROR,
             )
             return
 
-        self.status_log.add_message("Testing RPC connection...", COLOR_WARNING)
+        self._log("Testing RPC connection...", COLOR_WARNING)
         self.test_connection_btn.disabled = True
         self.start_btn.disabled = True
 
@@ -659,15 +729,21 @@ class BTCMeshServerGUI(BoxLayout):
             'REASSEMBLY_TIMEOUT_SECONDS': self.timeout_input.text.strip(),
         }
 
-        # Handle Meshtastic device - only save if not Auto-detect. Resolve
+        # Handle Meshtastic device - only save if not Auto-detect, AND only
+        # if Meshtastic is the currently selected transport (Story 30.4):
+        # no MESHCORE_SERIAL_PORT/persisted-transport-choice equivalent
+        # exists this story, so saving settings while MeshCore is selected
+        # must leave MESHTASTIC_SERIAL_PORT untouched rather than
+        # overwriting it with a MeshCore path or clearing it. Resolve
         # through device_path_from_display() first since the spinner may be
         # showing a "Name (!nodeid)" label rather than a raw path (Story 27.3).
-        selected_device = device_path_from_display(self.devices, self.device_spinner.text)
-        if selected_device and selected_device not in (DEVICE_AUTO_DETECT, DEVICE_SCANNING, DEVICE_NO_DEVICES):
-            settings['MESHTASTIC_SERIAL_PORT'] = selected_device
-        else:
-            # Mark for removal if currently set
-            settings['MESHTASTIC_SERIAL_PORT'] = None
+        if self.selected_transport == "meshtastic":
+            selected_device = device_path_from_display(self.devices, self.device_spinner.text)
+            if selected_device and selected_device not in (DEVICE_AUTO_DETECT, DEVICE_SCANNING, DEVICE_NO_DEVICES):
+                settings['MESHTASTIC_SERIAL_PORT'] = selected_device
+            else:
+                # Mark for removal if currently set
+                settings['MESHTASTIC_SERIAL_PORT'] = None
 
         try:
             # Read existing .env content (preserving structure)
@@ -705,19 +781,19 @@ class BTCMeshServerGUI(BoxLayout):
             with open(DOTENV_PATH, 'w') as f:
                 f.writelines(existing_lines)
 
-            self.status_log.add_message(
+            self._log(
                 f"Settings saved to {DOTENV_PATH}", COLOR_SUCCESS)
 
             # Security note for password
             if settings.get('BITCOIN_RPC_PASSWORD'):
-                self.status_log.add_message(
+                self._log(
                     "Note: Password is stored in plain text in .env file", COLOR_WARNING)
 
         except PermissionError:
-            self.status_log.add_message(
+            self._log(
                 f"Permission denied: Cannot write to {DOTENV_PATH}", COLOR_ERROR)
         except Exception as e:
-            self.status_log.add_message(
+            self._log(
                 f"Failed to save settings: {e}", COLOR_ERROR)
 
     def on_start_pressed(self, instance):
@@ -730,11 +806,11 @@ class BTCMeshServerGUI(BoxLayout):
         cookie_path = self.rpc_cookie_input.text.strip()
 
         if not host or not port:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Host and Port are required", COLOR_ERROR)
             return
         if not cookie_path and (not user or not password):
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Provide a Cookie file path, or both User and Password",
                 COLOR_ERROR,
             )
@@ -743,7 +819,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Validate timeout (must be positive integer)
         timeout_text = self.timeout_input.text.strip()
         if not timeout_text:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Reassembly timeout is required", COLOR_ERROR)
             return
         try:
@@ -751,7 +827,7 @@ class BTCMeshServerGUI(BoxLayout):
             if reassembly_timeout <= 0:
                 raise ValueError()
         except ValueError:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Reassembly timeout must be a positive integer", COLOR_ERROR)
             return
 
@@ -765,10 +841,10 @@ class BTCMeshServerGUI(BoxLayout):
                 host, port, user or None, password or None, cookie_path or None
             )
         except ValueError as e:
-            self.status_log.add_message(f"Cannot start: {e}", COLOR_ERROR)
+            self._log(f"Cannot start: {e}", COLOR_ERROR)
             return
 
-        self.status_log.add_message("Starting server...", COLOR_WARNING)
+        self._log("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
         self.save_btn.disabled = True
         self._set_rpc_settings_enabled(False)
@@ -780,35 +856,66 @@ class BTCMeshServerGUI(BoxLayout):
         # a "Name (!nodeid)" label rather than a raw path (Story 27.3).
         selected_device = device_path_from_display(self.devices, self.device_spinner.text)
         serial_port = None if selected_device == DEVICE_AUTO_DETECT else selected_device
+        # Captured on the main thread, same as serial_port above - avoids a
+        # race if the operator flips the transport spinner again while
+        # run_server() (below) is starting up in its background thread.
+        transport_name = self.selected_transport
+        display_name = TRANSPORT_DISPLAY_NAMES[transport_name]
 
         # Reset stop event
         self._stop_event.clear()
 
         # Start server in background thread
         def run_server():
-            if serial_port and probe_relay_board_id(serial_port):
+            # Issue 61: reserve the path (relay check included - it's a
+            # real port open too) so a background scan probe can't race
+            # this connect on the same device. Released right after the
+            # connect step, not held for the server's whole lifetime -
+            # once actually running, the OS itself correctly refuses a
+            # second open on the same port, same as before this guard.
+            reserved = bool(serial_port)
+            if reserved and not acquire_probing_path(serial_port):
                 self.result_queue.put((
                     'meshtastic_failed',
-                    "This is the relay board's control port, not a "
-                    "Meshtastic device - select a different device.",
+                    f"{serial_port} is busy (another connection attempt is "
+                    "in progress) - try again",
                 ))
                 return
-
-            transport = MeshtasticSerialTransport()
             try:
-                transport.connect(serial_port, log_firmware_info=True)
-            except TransportConnectionError as e:
-                self.result_queue.put(('meshtastic_failed', str(e)))
-                return
+                if serial_port and probe_relay_board_id(serial_port):
+                    self.result_queue.put((
+                        'meshtastic_failed',
+                        f"This is the relay board's control port, not a "
+                        f"{display_name} device - select a different device.",
+                    ))
+                    return
 
-            node_name = get_own_node_name(transport._iface)
-            firmware_version, hw_model = extract_firmware_info(transport._iface)
+                transport = get_transport(transport_name)
+                try:
+                    if transport_name == "meshtastic":
+                        transport.connect(serial_port, log_firmware_info=True)
+                    else:
+                        transport.connect(serial_port)
+                except TransportConnectionError as e:
+                    self.result_queue.put(('meshtastic_failed', str(e)))
+                    return
+            finally:
+                if reserved:
+                    release_probing_path(serial_port)
+
+            if transport_name == "meshcore":
+                node_name = transport.local_node_name
+                firmware_version, hw_model = None, None
+            else:
+                node_name = get_own_node_name(transport._iface)
+                firmware_version, hw_model = extract_firmware_info(transport._iface)
             self.result_queue.put((
                 'meshtastic_connected',
                 {
                     'node_id': transport.local_node_id,
                     'device': serial_port or 'auto-detect',
                     'node_name': node_name,
+                    'transport_name': transport_name,
                     'firmware_version': firmware_version,
                     'hw_model': hw_model,
                 },
@@ -924,7 +1031,7 @@ class BTCMeshServerGUI(BoxLayout):
 
     def on_stop_pressed(self, instance):
         """Handle Stop Server button press."""
-        self.status_log.add_message("Stopping server...", COLOR_WARNING)
+        self._log("Stopping server...", COLOR_WARNING)
         self.stop_btn.disabled = True
 
         # Signal server to stop
@@ -938,6 +1045,24 @@ class BTCMeshServerGUI(BoxLayout):
                 self._handle_result(result)
         except queue.Empty:
             pass
+
+    def _log(self, msg: str, color=None) -> None:
+        """Show a message in the Activity Log widget and mirror it to the
+        server's own file logger (logs/btcmesh_server.log, the same file
+        core/reassembler.py, server/receiver.py, and core/rpc_client.py
+        already write to via the shared server_logger instance).
+
+        Every status_log message in this GUI should go through this
+        method rather than calling self.status_log.add_message()
+        directly - previously every one of these only ever reached the
+        on-screen widget, invisible to any file-based diagnosis (same
+        gap found and fixed in btcmesh_client_gui.py during Issue 64's
+        real-hardware testing - e.g. the blank "Initialization error:"
+        text from Issue 63 was never traceable in the file log because
+        of this).
+        """
+        self.status_log.add_message(msg, color)
+        server_logger.info(msg)
 
     def _handle_result(self, result):
         """Handle a single result from the queue."""
@@ -954,7 +1079,7 @@ class BTCMeshServerGUI(BoxLayout):
             # e.g. wire-sent NACKs/successful broadcasts still get
             # highlighted red/green automatically.
             color = result[3] if len(result) > 3 else get_log_color(level, data)
-            self.status_log.add_message(data, color)
+            self._log(data, color)
 
         elif result_type in ('rpc_connected', 'rpc_failed', 'meshtastic_connected',
                             'meshtastic_failed', 'server_started', 'server_stopped',
@@ -975,9 +1100,9 @@ class BTCMeshServerGUI(BoxLayout):
             self.test_connection_btn.disabled = False
             self.start_btn.disabled = False
             if success:
-                self.status_log.add_message(f"RPC test successful: {message}", COLOR_SUCCESS)
+                self._log(f"RPC test successful: {message}", COLOR_SUCCESS)
             else:
-                self.status_log.add_message(f"RPC test failed: {message}", COLOR_ERROR)
+                self._log(f"RPC test failed: {message}", COLOR_ERROR)
 
         elif result_type == 'devices_found':
             # Result of the "Scan" button (_on_scan_devices) refreshing the
@@ -1005,7 +1130,7 @@ class BTCMeshServerGUI(BoxLayout):
                     # operator doesn't have to open the dropdown manually.
                     # Still a raw path at this point (nothing probed yet).
                     self.device_spinner.text = devices[0]
-                    self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
+                    self._log(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
                     # Multiple devices - keep current selection or show
                     # first. No count stated (unlike the single-device case
@@ -1014,19 +1139,24 @@ class BTCMeshServerGUI(BoxLayout):
                     # aliases of the same physical device (Issue 37);
                     # "device(s)" stays accurate either way, and the
                     # dropdown is the real source of truth for "how many."
-                    self.status_log.add_message("Found device(s)", COLOR_SUCCESS)
+                    self._log("Found device(s)", COLOR_SUCCESS)
                 # Always probe every found device's identity, including the
                 # single-device case - unlike the client GUI, the server
                 # never auto-connects on selection, so this background probe
                 # is the only way it ever learns a device's identity (see
                 # project/plans/story_27_1.md's Story 27.3 notes).
                 self.device_busy.start("Identifying devices...")
-                probe_devices_in_background(self.devices, self.result_queue)
+                generation = self._scan_generation
+                probe_devices_in_background(
+                    self.devices, self.result_queue, transport_name=self.selected_transport,
+                    should_abort=lambda: self._scan_generation != generation,
+                )
             else:
                 self.devices = []
                 self.device_spinner.values = [DEVICE_AUTO_DETECT]
                 self.device_spinner.text = DEVICE_AUTO_DETECT
-                self.status_log.add_message("No Meshtastic devices found", COLOR_WARNING)
+                display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
+                self._log(f"No {display_name} devices found", COLOR_WARNING)
             # The scan itself is done either way - a follow-on
             # probe_devices_in_background() call above (if any) owns its
             # own start()/stop() pair independently (ref-counted).
@@ -1076,7 +1206,7 @@ class BTCMeshServerGUI(BoxLayout):
                 self.rpc_label.text = STATE_RPC_CONNECTED.text
             self.rpc_label.color = STATE_RPC_CONNECTED.color
             chain_suffix = f". Chain: {chain}" if chain else ""
-            self.status_log.add_message(
+            self._log(
                 f"Connected to Bitcoin RPC{f' ({host})' if host else ''}{tor_badge}{chain_suffix}",
                 COLOR_SUCCESS,
             )
@@ -1097,13 +1227,16 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'rpc_failed':
             self.rpc_label.text = STATE_RPC_FAILED.text
             self.rpc_label.color = STATE_RPC_FAILED.color
-            self.status_log.add_message(f"Bitcoin RPC connection failed: {data}", COLOR_ERROR)
+            self._log(f"Bitcoin RPC connection failed: {data}", COLOR_ERROR)
 
         elif status_type == 'meshtastic_connected':
-            # data is dict with 'node_id', 'device', and 'node_name' keys
+            # data is dict with 'node_id', 'device', 'node_name',
+            # 'transport_name', 'firmware_version', and 'hw_model' keys
             node_id = data.get('node_id', 'Unknown') if isinstance(data, dict) else data
             device = data.get('device') if isinstance(data, dict) else None
             node_name = data.get('node_name') if isinstance(data, dict) else None
+            transport_name = data.get('transport_name', 'meshtastic') if isinstance(data, dict) else 'meshtastic'
+            display_name = TRANSPORT_DISPLAY_NAMES[transport_name]
             firmware_version = data.get('firmware_version') if isinstance(data, dict) else None
             hw_model = data.get('hw_model') if isinstance(data, dict) else None
             # Show the node's human-readable name before its id, matching the
@@ -1118,15 +1251,16 @@ class BTCMeshServerGUI(BoxLayout):
             self.meshtastic_label.color = STATE_MESHTASTIC_CONNECTED.color
 
             id_display = f"{node_name} ({node_id})" if node_name else node_id
-            message = f"Connected to Meshtastic device: {id_display}" + (f" on {device}" if device else "")
+            message = f"Connected to {display_name} device: {id_display}" + (f" on {device}" if device else "")
             if firmware_version or hw_model:
                 message += f" - firmware {firmware_version or 'unknown'}, hardware {hw_model or 'unknown'}"
-            self.status_log.add_message(message, COLOR_SUCCESS)
+            self._log(message, COLOR_SUCCESS)
 
         elif status_type == 'meshtastic_failed':
+            display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
             self.meshtastic_label.text = STATE_MESHTASTIC_FAILED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
-            self.status_log.add_message(f"Meshtastic connection failed: {data}", COLOR_ERROR)
+            self._log(f"{display_name} connection failed: {data}", COLOR_ERROR)
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
             self.save_btn.disabled = False
@@ -1137,11 +1271,11 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'server_started':
             self.is_running = True
             self.stop_btn.disabled = False
-            self.status_log.add_message("Server started. Listening for incoming transactions...", COLOR_SUCCESS)
+            self._log("Server started. Listening for incoming transactions...", COLOR_SUCCESS)
 
         elif status_type == 'server_stopped':
             self.is_running = False
-            self.status_log.add_message("Server stopped.", COLOR_WARNING)
+            self._log("Server stopped.", COLOR_WARNING)
             self.meshtastic_label.text = STATE_MESHTASTIC_DISCONNECTED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
@@ -1159,7 +1293,7 @@ class BTCMeshServerGUI(BoxLayout):
             self._set_timeout_settings_enabled(True)
 
         elif status_type == 'init_error':
-            self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
+            self._log(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
             self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
@@ -1493,12 +1627,12 @@ class BTCMeshServerGUI(BoxLayout):
     def _copy_to_clipboard(self, text, label):
         """Copy text to clipboard and show confirmation."""
         Clipboard.copy(text)
-        self.status_log.add_message(f"{label} copied to clipboard", COLOR_SUCCESS)
+        self._log(f"{label} copied to clipboard", COLOR_SUCCESS)
 
     def on_clear_pressed(self, instance):
         """Handle Clear Log button press."""
         self.status_log.clear()
-        self.status_log.add_message("Log cleared", COLOR_PRIMARY)
+        self._log("Log cleared", COLOR_PRIMARY)
 
 
 class BTCMeshServerApp(App):

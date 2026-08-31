@@ -1742,3 +1742,194 @@ lora/
 
 ---
 
+# EPIC 9: MeshCore Transport Support
+
+**Goal:** Add MeshCore as a second selectable transport alongside Meshtastic, reusing the existing chunked-transaction protocol and client/server orchestration unchanged, so the same relay flow can run over MeshCore-flashed hardware.
+
+**Background:** BTCMesh currently only speaks Meshtastic. Research (`project/mesh_network_analysis.md`) found MeshCore to be the closest architectural match among live alternatives: same hardware class (Heltec, T-Beam, T-Echo, T-Deck, RAK), a companion-protocol-over-serial shape similar to Meshtastic's, and an existing Python client library (`meshcore`/`meshcore_py`) - though that library is asyncio-native, unlike Meshtastic's synchronous API, which is the main new wrinkle. `transport/base.py`'s `BaseTransport` abstraction was already built with exactly this kind of second implementation in mind. Scope for this epic is wired/USB-serial only - BLE (for either transport) is deferred until serial works well end-to-end.
+
+**Priority:** Medium - new capability, not a bug fix; no impact on existing Meshtastic users.
+
+**Branch:** `epic-9-meshcore-support` (off `master`) - all story branches for this epic branch off and PR back into this branch, not `master`, so unrelated hotfixes keep landing on `master` directly in parallel. Merges to `master` once the epic is stable.
+
+---
+
+## Stories
+
+### 30. MeshCore Serial Transport
+
+- [x] **Story 30.1: `MeshCoreSerialTransport` - core connect/send/receive over serial**
+- [x] *   **As a** developer,
+- [x] *   **I want** a `BaseTransport` implementation backed by the `meshcore` Python library,
+- [x] *   **So that** the existing client/server orchestration can send and receive BTCMesh chunk messages over MeshCore-flashed hardware without any changes to `client/sender.py` or `server/receiver.py`.
+    - [x] *   **Scenario:** Connect and send succeed
+        - [x] *   **Given** a MeshCore companion device connected over USB serial.
+        - [x] *   **When** `connect()` then `send(message, destination)` are called.
+        - [x] *   **Then** the message is delivered via `meshcore_py`'s `commands.send_msg()`, bridged synchronously from the transport's background asyncio loop thread.
+    - [x] *   **Scenario:** Incoming message reaches the registered handler
+        - [x] *   **Given** a handler registered via `set_message_handler()`.
+        - [x] *   **When** a `CONTACT_MSG_RECV` event arrives on the asyncio loop thread.
+        - [x] *   **Then** the handler is invoked with `(text, sender_pubkey_prefix)`, matching `MessageHandler`'s signature exactly.
+    - [x] *   **Scenario:** Send times out or errors
+        - [x] *   **Given** the device is wedged or `meshcore_py` returns an `EventType.ERROR` event.
+        - [x] *   **Then** `send()` raises `TransportSendError` within a bounded timeout, never blocking forever (same guarantee `MeshtasticSerialTransport.send()` gives today for Issue 21).
+    - [x] *   **Scenario:** Connection failure is mapped correctly
+        - [x] *   **Given** the `meshcore` library is missing or the serial connect fails.
+        - [x] *   **Then** `connect()` raises `TransportConnectionError`, not a raw exception.
+    *   _Note: Implemented per `project/plans/story_30_1.md`. The `meshcore_py`
+        API (connect/send/subscribe/self-identity method names and
+        signatures) was confirmed directly against the library's GitHub
+        source before implementation, then re-confirmed via `inspect` against
+        the actually-installed package - both matched the plan exactly, no
+        surprises. `disconnect()` also tears down the background asyncio
+        loop/thread entirely (beyond what the plan's code sketch showed), so
+        repeated connect()/disconnect() cycles don't leak a thread per cycle.
+        38 new unit tests added (`tests/test_meshcore_serial_transport.py`);
+        full suite (906 tests) green with the real `meshcore` package
+        installed, not just mocked._
+
+- [x] **Story 30.2: Generalize destination validation onto `BaseTransport`**
+- [x] *   **As a** developer,
+- [x] *   **I want** destination-format validation to live on each transport instead of hard-coded in `core/protocol.py`,
+- [x] *   **So that** MeshCore's public-key-based addresses can be validated correctly, and `core/`'s "no protocol-specific knowledge" rule stops being violated for Meshtastic too.
+    - [x] *   **Scenario:** Meshtastic validation is unchanged
+        - [x] *   **Given** `MeshtasticSerialTransport.validate_destination()`.
+        - [x] *   **Then** it enforces the same `!hex8` format `core/protocol.py::validate_destination()` did before - no behavior change.
+    - [x] *   **Scenario:** MeshCore validation checks its own format
+        - [x] *   **Given** `MeshCoreSerialTransport.validate_destination()`.
+        - [x] *   **Then** it checks MeshCore's public-key-prefix hex format instead of the `!`-prefixed Meshtastic format.
+    - [x] *   **Scenario:** `client/sender.py` calls the transport, not the free function
+        - [x] *   **Given** `TransactionSender.send_transaction()`.
+        - [x] *   **Then** it calls `self.transport.validate_destination(destination)` instead of the standalone `core.protocol.validate_destination()`.
+    *   _Note: Implemented per `project/plans/story_30_2.md`. Added an
+        abstract `validate_destination()` to `BaseTransport`; moved the
+        Meshtastic `!hex8` rule onto `MeshtasticSerialTransport` verbatim
+        (no behavior change) and added a hex-format check (non-empty, valid
+        hex, even length) to `MeshCoreSerialTransport`. Deleted
+        `core/protocol.py::validate_destination()` entirely - it's fully
+        superseded. Removed the Story 30.1 CLI stopgap in
+        `btcmesh_client_cli.py::cli_main()` that skipped validation for
+        `--transport meshcore`; it now calls
+        `get_transport(args.transport).validate_destination(...)`
+        unconditionally, so a malformed MeshCore destination is rejected up
+        front instead of only failing (or not) inside `meshcore_py`'s
+        `send_msg()`. `client/sender.py` and the GUI's `validate_send_inputs()`
+        (still Meshtastic-only, per Story 30.4) both updated to call the
+        transport's method instead of the removed free function. Test suite:
+        914 tests, all passing (up from 906 pre-story, net new coverage in
+        `test_transport_base.py`, `test_meshtastic_serial_transport.py`,
+        `test_meshcore_serial_transport.py`, plus updated assertions in
+        `test_client_sender.py` and `test_btcmesh_client_cli.py` where tests
+        had relied on the now-removed Meshtastic-only rule or the now-gone
+        stopgap)._
+
+- [x] **Story 30.3: Transport selection via CLI flag**
+- [x] *   **As a** relay operator or client user,
+- [x] *   **I want** a `--transport {meshtastic,meshcore}` flag on both CLIs,
+- [x] *   **So that** the MeshCore path can be exercised end-to-end without hand-editing entry-point code, while existing users see zero change (default stays `meshtastic`).
+    - [x] *   **Scenario:** Default behavior is unchanged
+        - [x] *   **Given** `btcmesh_client_cli.py`/`btcmesh_server_cli.py` invoked with no `--transport` flag.
+        - [x] *   **Then** `MeshtasticSerialTransport` is used, exactly as today.
+    - [x] *   **Scenario:** MeshCore can be selected
+        - [x] *   **Given** `--transport meshcore`.
+        - [x] *   **Then** `transport/factory.py`'s `get_transport("meshcore")` returns a `MeshCoreSerialTransport` instance instead.
+    *   _Note: Also guarded two other Meshtastic-specific behaviors behind
+        `transport_name == "meshtastic"` on the server CLI - the Story 26.7
+        relay-board-port check and the `MESHTASTIC_SERIAL_PORT` env-var
+        fallback - neither applies to a MeshCore connection. Manually
+        verified against the real installed `meshcore` package (not just
+        mocked tests): `--transport meshcore --dry-run` previews correctly,
+        and a real connection attempt against this machine's actual serial
+        ports correctly surfaced "Multiple serial devices detected" through
+        the full CLI error path._
+
+- [x] **Story 30.4: MeshCore device scanning/identity + GUI wiring** _(both
+    GUIs gain a Transport selector (Meshtastic/MeshCore, defaulting to
+    Meshtastic - zero behavior change for existing users) that drives
+    device scanning, identity probing, and the real connect via
+    `transport/factory.py`'s `get_transport()`. Candidate-port enumeration
+    (`serial.tools.list_ports.comports()` filtered by a VID blacklist) had
+    nothing transport-specific about it, so it moved to a new
+    `core/device_scan.py`, shared by both transports; identity probing
+    stayed transport-specific (new `core/meshcore_utils.py` mirroring
+    `core/meshtastic_utils.py`'s shape, including the Story 26.7
+    relay-board pre-check). `MeshCoreSerialTransport` gained a
+    `local_node_name` property and a real `scan_for_reconnect_candidates()`
+    implementation (was a stub returning `[]`) so `DeviceWatchdog` recovery
+    now works for MeshCore too. No MeshCore "known contacts"
+    destination-picker (client GUI's `node_spinner` stays Meshtastic-only,
+    disabled when MeshCore is selected) and no `.env` persistence for the
+    transport choice - both deliberately out of scope, matching Story
+    30.3's CLI precedent. Full suite: 935 tests, all passing. Verified on
+    the same T190/V3 devices used throughout Epic 9: both GUIs correctly
+    scan, resolve identity, and exclude the relay board under MeshCore;
+    the server GUI's Start Server connects for real; a full chunked send
+    from the client GUI (T190) to the server GUI (V3) completed - chunks
+    relayed, ACKed, and reassembled successfully, ending in the expected
+    "RPC node not connected" NACK (no RPC configured in this test
+    environment, not a relay failure).
+    Also found and fixed two real bugs during this verification: the
+    client GUI's device-identity probe call never passed `transport_name`
+    at all, so it silently always probed via Meshtastic regardless of
+    what was selected; a `should_abort` staleness guard was also added to
+    `probe_devices_in_background()` so an in-flight probe batch started
+    under a since-superseded transport can't leak mismatched-transport
+    results into the current device list. See Issue 53 (`disconnect()`
+    has no timeout guard, unlike `send()`) and Issue 54 (MeshCore device
+    dropdown doesn't show physical hardware/board model) in
+    `project/issues.txt` for follow-ups found but not fixed here.)_
+
+- [x] **Story 30.5: Real-hardware verification script in `scripts/hw_tests/`** _(delivered as `scripts/hw_tests/meshcore_relay_test.py`: wires the real `TransactionSender`/`TransactionReceiver` classes directly to two real `MeshCoreSerialTransport` connections - no RPC client, since this verifies the mesh relay, not Bitcoin broadcast - and asserts the server's reassembled hex matches byte-for-byte, that the client- and server-reported NACK reasons agree, and (for the default placeholder hex, which is intentionally not a structurally valid transaction) that the server rejects it with `"Invalid transaction structure"` specifically, so the check stays deterministic regardless of the runner's own Bitcoin RPC configuration. An optional `--tx-hex` flag allows pointing it at a real signed transaction instead, in which case the outcome is reported informationally rather than hard-asserted. Run against the same T190 and V3 devices used to verify Issues 50/51/52: a 6-chunk send completed with every chunk ACKed and the reassembled hex an exact match, and the script correctly reported `PASS`. Full suite: 929 tests, all passing (script is standalone, not imported by tests).)_
+
+- [ ] **Story 30.6: Update user-facing documentation for MeshCore** _(README.md
+    is still written as if Meshtastic is the only transport, despite Epic 9
+    now being functionally complete - confirmed by direct read, not
+    assumed: the Description and Features sections only mention
+    Meshtastic; Setup Instructions/Configuration only document
+    `MESHTASTIC_SERIAL_PORT`; the `--transport {meshtastic,meshcore}` flag
+    (Story 30.3, both CLIs) isn't mentioned anywhere; "Running the
+    Server"/"Running the Client" sections show no MeshCore examples; both
+    GUI sections' "Usage Instructions"/"Features"/"Layout" subsections
+    describe device selection and status rows in Meshtastic-only terms,
+    with no mention of Story 30.4's Transport selector. Needs a pass
+    adding MeshCore alongside every one of those, plus a short note on
+    MeshCore's own device setup (no `.env`-based serial port fallback the
+    way Meshtastic has, no known-contacts destination picker in either
+    GUI - matches this epic's own deliberate scope decisions, not gaps to
+    "fix"). Also check `docs/` (if it holds anything beyond README) and
+    any docstring-level module descriptions that still say
+    "Meshtastic" unconditionally where they now serve both transports.)_
+
+- [ ] **Story 30.7: GUI cleanup/consistency pass, both GUIs but especially
+    the server GUI's status section** _(raised 2026-08-28, after Story
+    30.4's real-hardware GUI testing: both GUIs could be cleaner and
+    simpler, the server GUI's Connection Status section especially, and
+    GUI components should be visually/structurally consistent between the
+    two rather than diverging. One concrete,
+    directly-observed inconsistency already: the client GUI's
+    label+dropdown pairs (`_build_ui()` in `btcmesh_client_gui.py`) use
+    `create_section_label()` above a full-width `Spinner`, while the
+    server GUI's equivalents (`_build_device_settings()` in
+    `btcmesh_server_gui.py`, e.g. its "Transport:"/"Device:" rows) use an
+    inline `Label` beside a narrower `Spinner` in one horizontal row -
+    two different patterns for the same kind of control. Story 30.4's own
+    Transport-selector addition to the server GUI followed that file's
+    existing local convention rather than unifying it with the client's,
+    so the divergence is now duplicated across three rows instead of two.
+    The server GUI's Connection Status section itself (`Network:`/
+    `Bitcoin RPC:`/`Mesh:` status rows, `_build_status_section()`) is
+    called out specifically as needing its own look, separate from the
+    general consistency pass - not yet scoped further; needs a proper
+    design pass (mockup/direction agreement) before implementation, not a
+    unilateral redesign. Also in scope: surface `ProbedDevice.hardware`
+    (added after this story was raised - see Issue 54 in
+    `project/issues.txt`) in the device dropdown itself, not just carry
+    it in the data. Currently nothing propagates it that far -
+    `gui/gui_common.py`'s `probe_devices_in_background()` only pushes
+    `identity.node_id`/`identity.name` in its `'device_identity'` result
+    tuple, and `format_device_display()` only ever formats `name`/
+    `node_id`. Meshtastic already populates the field for free today;
+    MeshCore's still needs Issue 54's separate `DEVICE_INFO` query first.)_
+
+---
+

@@ -2602,6 +2602,1424 @@ silently does nothing** ✅ FIXED (2026-08-26)
   same explicit-application pattern already used for
   `REASSEMBLY_TIMEOUT_SECONDS` and `RELAY_*`.
 
+**Issue 50: `MeshCoreSerialTransport._subscribe()` never actually delivers
+incoming messages - it subscribes to `CONTACT_MSG_RECV` directly, but
+that event only ever fires as the reply to an explicit pull the
+transport never makes** ✅ FIXED (2026-08-27)
+
+- Found 2026-08-26, during the first-ever real-hardware MeshCore↔MeshCore
+  test (two freshly-flashed devices for Epic 9: a Heltec Vision Master
+  T190 as client, a Heltec V3 as server - see `project/plans/story_30_1.md`
+  and `project/plans/story_30_2.md` for the transport/validation work this
+  hardware finally exercises for real).
+- **Root cause**: MeshCore's companion protocol does not push received
+  messages to the client proactively. When a message arrives, the
+  firmware buffers it and sends a lightweight `MESSAGES_WAITING`
+  notification only; the companion client is expected to then actively
+  pull the message via `CMD_SYNC_NEXT_MESSAGE` (`commands.get_msg()` in
+  `meshcore_py`). Only the *reply* to that pull is what `meshcore_py`'s
+  `reader.py` parses into a `CONTACT_MSG_RECV` event - confirmed directly
+  in the library source, where `PacketType.CONTACT_MSG_RECV_V3` is
+  commented "A reply to CMD_SYNC_NEXT_MESSAGE (ver >= 3)".
+  `MeshCoreSerialTransport._subscribe()` (`transport/meshcore_serial.py`)
+  subscribes only to `EventType.CONTACT_MSG_RECV` and never calls
+  `get_msg()` (or `meshcore_py`'s own `start_auto_message_fetching()`
+  helper, which does exactly this pull automatically) - so
+  `CONTACT_MSG_RECV` never fires for a real incoming message, and the
+  handler registered via `set_message_handler()` is never invoked, even
+  though the message physically reached the radio.
+- **Confirmed via real hardware**: sent a plain test message
+  (`commands.send_msg()`) from one flashed device directly to the other.
+  The receiving device's raw event stream (subscribed to every
+  `EventType`, not just the one BTCMesh listens for) showed a genuine
+  `RX_LOG_DATA` event (SNR 11.75, RSSI -6, `route_typename: DIRECT`,
+  `payload_typename: TEXT_MSG`) immediately followed by
+  `MESSAGES_WAITING` - but `CONTACT_MSG_RECV` never fired, because
+  nothing ever called the pull that produces it.
+- **Why the mocked unit test suite never caught this**:
+  `tests/test_meshcore_serial_transport.py` mocks `sys.modules['meshcore']`
+  entirely; its receive tests simulate delivery by directly invoking the
+  registered `_on_event` callback, never modeling the real
+  `MESSAGES_WAITING` → `get_msg()` → `CONTACT_MSG_RECV` round trip. The
+  gap is invisible to a mocked test by construction - only real hardware
+  (or a much more faithful mock) can surface it. This is exactly the risk
+  `project/plans/story_30_1.md` flagged Story 30.5 ("real-hardware
+  verification script") as existing to catch.
+- **Fix**: `_subscribe()` now also calls `await
+  self._mc.start_auto_message_fetching()` alongside its existing
+  `EventType.CONTACT_MSG_RECV` subscription (that event is still what the
+  fetched-message reply arrives as - the missing piece was the "go get it"
+  trigger), bridged through the class's existing `_run_coro()` sync/async
+  bridge - the same pattern `connect()`/`send()`/`check_alive()` already
+  use. `_unsubscribe()` symmetrically calls `stop_auto_message_fetching()`.
+- **Confirmed via real hardware**: on first connect after the fix, the
+  server immediately drained a message that had been stuck in the
+  device's queue since the original diagnosis session - direct proof
+  `get_msg()` is now actually being called. A live send/receive round
+  trip then produced a real `BTC_CHUNK_ACK` delivered back to the client
+  (`Received ACK for chunk 1/3`) - the first genuine bidirectional
+  message exchange over MeshCore hardware in this project. (Chunk 2 of
+  that same test was lost to a separate, newly-found timing issue - see
+  [[Issue 52]] - unrelated to this fix; Issue 50 itself, "does a message
+  ever reach the handler at all," is conclusively resolved.)
+- Related: [[Issue 51]] (fixed alongside it - independent root causes,
+  independent branches/PRs, per existing practice in this repo) and
+  [[Issue 52]] (a new, separate finding surfaced while verifying this fix).
+
+**Issue 51: `core/constants.py`'s `DEFAULT_CHUNK_SIZE` (170, tuned for
+Meshtastic) exceeds MeshCore's hard per-message cap, so every `BTC_TX`
+chunk is rejected outright over MeshCore** ✅ FIXED (2026-08-27)
+
+- Found 2026-08-26, alongside Issue 50, during the first real-hardware
+  MeshCore↔MeshCore test.
+- **Root cause**: `DEFAULT_CHUNK_SIZE=170` was sized against Meshtastic's
+  LongFast airtime budget (per its own docstring in
+  `core/constants.py`) - `project/plans/story_30_1.md`'s Critical Files
+  table already flagged this value as needing "re-validation against
+  MeshCore's framing in a later story, not blocking this one." MeshCore's
+  companion firmware hard-caps a single text message payload at
+  `MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160` bytes
+  (`src/helpers/BaseChatMesh.h`, `CIPHER_BLOCK_SIZE=16` in
+  `src/MeshCore.h`, both in the `meshcore-dev/MeshCore` firmware repo).
+  BTCMesh's wire format adds `BTC_TX|<5-char session>|<n>/<total>|`
+  framing (~17-19 bytes) on top of the 170-char hex payload, landing
+  around 187-189 bytes total - over MeshCore's 160-byte ceiling.
+  `Mesh::createDatagram()` rejects any text longer than `MAX_TEXT_LEN`
+  outright (`composeMsgPacket()` in `BaseChatMesh.cpp` returns NULL before
+  ever reaching the radio), which the companion protocol reports back as
+  `MSG_SEND_FAILED` → `ERR_CODE_TABLE_FULL` - a generic "packet could not
+  be created" code reused across several unrelated failure paths in
+  `examples/companion_radio/MyMesh.cpp`, not a literal contact-table or
+  packet-pool exhaustion (initially misleading during diagnosis - traced
+  through the actual firmware source rather than assumed from the error
+  name).
+- **Confirmed via real hardware**: every attempt at the default 170-char
+  chunk size failed immediately on chunk 1/5 with `{'error_code': 3,
+  'code_string': 'ERR_CODE_TABLE_FULL'}`. Dropping to a 100-char chunk
+  size (117-byte wire message, well under the 160-byte cap) sent
+  successfully with no send-side error at all - isolating the cause to
+  message length, not a hardware or radio problem.
+- **Fix**: added a transport-aware `max_chunk_size` abstract property to
+  `BaseTransport` - same shape as Story 30.2's `validate_destination()`.
+  `MeshtasticSerialTransport.max_chunk_size` returns the existing
+  `DEFAULT_CHUNK_SIZE` (170, no behavior change);
+  `MeshCoreSerialTransport.max_chunk_size` returns a new
+  `MESHCORE_MAX_CHUNK_SIZE = 120` (`core/constants.py`) - safely under the
+  160-byte `MAX_TEXT_LEN` ceiling with real margin below the theoretical
+  141-byte edge, per [[feedback_ground_caps_in_physical_constraints]].
+  `client/sender.py::TransactionSender.send_transaction()` now chunks via
+  `self.transport.max_chunk_size` instead of the hardcoded default;
+  `create_preview()` (used by both the CLI's `--dry-run` and the GUI's
+  preview button) takes an optional `chunk_size` parameter, defaulting to
+  `DEFAULT_CHUNK_SIZE` so the Meshtastic-only GUI needed zero changes.
+  `btcmesh_client_cli.py`'s dry-run path now resolves the selected
+  transport's cap before previewing. **Confirmed via real hardware**:
+  re-ran the exact send that previously failed immediately with
+  `ERR_CODE_TABLE_FULL` - it now sends every chunk cleanly at the new
+  default size, retrying only on ACK timeout (Issue 50's separate bug,
+  since fixed), never on the send itself.
+- Related: [[Issue 50]] (fixed).
+
+**Issue 52: `_on_event` deadlocks against its own transport when the
+receive handler sends - misdiagnosed at first as a MeshCore routing
+delay** ✅ FIXED (2026-08-28)
+
+- Found 2026-08-27, verifying the [[Issue 50]] fix on real hardware: a
+  clean 3-chunk send got a real `BTC_CHUNK_ACK` back for chunk 1 - proving
+  Issue 50's fix works - but the ACK took roughly 20 seconds to arrive.
+  The server's own log showed why: `Error from <sender>: Send timed out
+  after 10.0s - device may be unresponsive` when it first tried to send
+  the ACK back, followed by an apparently-successful retry. By the time
+  chunk 2 was sent, too much of the reassembly window had elapsed; the
+  server's 30-second reassembly timeout (`core/config_loader.py::load_reassembly_timeout()`'s
+  own default - notably a different literal, 30, than
+  `core/constants.py::DEFAULT_REASSEMBLY_TIMEOUT`'s 300; the two aren't
+  the same constant despite the similar name) fired having only received
+  1 of 3 chunks, and the session was discarded with a NACK.
+- **Initial hypothesis was wrong, and disproven by direct measurement**:
+  the write-up above guessed flood-routing cost as the "likely root
+  cause." A standalone `commands.send_msg()` call (with or without the
+  auto-fetch loop active) measured under 0.1s, even though the contacts'
+  cached path was already direct (`out_path_len=0`, not
+  `OUT_PATH_UNKNOWN`) - flood-routing was never the bottleneck.
+- **Confirmed root cause**: `MeshCoreSerialTransport._subscribe()`'s
+  `_on_event` callback runs on the transport's own background asyncio
+  loop thread (`self._loop`/`self._loop_thread`, from `_ensure_loop()`)
+  and called `self._handler(text, sender)` synchronously, inline. In real
+  usage that handler is `TransactionReceiver._on_message`
+  (`server/receiver.py`), which - to send a chunk ACK - calls
+  `self.transport.send(...)`. `send()` bridges through `_run_coro()`,
+  which does `asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=...)` -
+  scheduling new work onto `self._loop` and blocking the *calling* thread
+  until it completes. The calling thread here *is* `self._loop_thread`
+  itself (already inside the synchronous `self._handler()` call, invoked
+  from `_on_event`, running on that same loop) - it can never get back
+  around to running the coroutine it just scheduled, because it's blocked
+  waiting on a result only it can produce. Reproduced directly (not
+  inferred): a handler that calls `transport.send()` on the same
+  transport instance took exactly `_SEND_TIMEOUT_SECONDS` (10.00s) before
+  raising `TransportSendError`, every time, independent of routing/path
+  state - a same-thread reentrancy deadlock, not a network delay. Also
+  explains why `MeshtasticSerialTransport` never had this problem - its
+  `send()` spins up a fresh worker thread per call (Issue 21) rather than
+  sharing one loop thread for every bridged operation, so its receive
+  callback can never contend with a `send()` call this way.
+- **Fix**: `_on_event` no longer calls the handler inline. A single
+  dedicated dispatch thread, fed by a queue and started alongside the
+  `CONTACT_MSG_RECV` subscription, now invokes the handler; `_on_event`
+  itself just enqueues `(text, sender)` and returns immediately, freeing
+  the loop thread to actually run whatever the handler schedules via
+  `_run_coro()`. One worker thread (rather than one thread per message)
+  keeps handling serialized, matching this protocol's stop-and-wait
+  shape. Checked prior art first: `meshcore-cli` and the community
+  `meshcore-mqtt` bridge (the closest published analog to this
+  transport) both avoid this class of bug, but only because both are
+  pure `async def` applications with no sync/async bridge at all -
+  `meshcore-mqtt` does apply the same "decouple receive from handling"
+  principle via an `asyncio.Queue`, which is what this fix's queue design
+  borrows, even though its own fully-async architecture never needed the
+  thread-bridging `BaseTransport`'s synchronous contract requires here.
+- **Confirmed via real hardware**: the exact reproduction above now
+  returns in ~0.01s instead of a guaranteed 10.00s hang. A full 3-chunk
+  send/receive round trip then completed end-to-end for the first time -
+  all three chunks sent, ACKed, and reassembled server-side, ending in
+  the server's real, specific validation NACK (`"Invalid transaction
+  structure"`, correctly rejecting the test placeholder hex) rather than
+  the generic `"Internal server error"` catch-all from before.
+- **Also affects the server's outgoing ACK, not just client sends, and
+  mislabels the failure when it does**: found 2026-08-27 in a follow-up
+  real-hardware run. A single-chunk transaction reassembled successfully
+  server-side (`server/receiver.py`'s `_on_message` logged "Reassembly
+  successful" instantly), but the client's final result was `Transaction
+  failed: Internal server error` - not the RPC-specific NACK that
+  scenario actually has (`_broadcast()`, `server/receiver.py:298`, sends
+  the clear, dedicated `"Bitcoin RPC not connected"` NACK when
+  `rpc_client is None`, confirmed by reading that code path directly).
+  The server's own log explains why: sending the per-chunk
+  `BTC_CHUNK_ACK` back (`self._send(ack, sender_id)`, `server/receiver.py:228`)
+  hit the same `_SEND_TIMEOUT_SECONDS` timeout this issue is about,
+  raising `TransportSendError` *before* the RPC-connection check was ever
+  reached. That exception isn't caught locally - it falls through to
+  `_on_message`'s generic `except Exception` catch-all
+  (`server/receiver.py:254-261`), which sends the client a NACK reading
+  `"Internal server error"` instead of anything indicating a transport
+  timeout. The chunk ACK apparently still went out shortly after
+  (`MeshCoreSerialTransport.send()`'s bridge abandons the wait but can't
+  cancel the underlying coroutine - same "abandoned, not killed" shape as
+  `MeshtasticSerialTransport.send()`'s Issue 21 fix - the client did
+  receive `BTC_CHUNK_ACK` a moment later), but by then the server-side
+  code had already moved on to the generic-error branch. Now that the
+  deadlock that triggered this specific timeout is fixed, this exact
+  scenario shouldn't recur - but `_on_message`'s generic catch-all itself
+  (`server/receiver.py:254-261`) still folds *any* unexpected exception
+  into the same opaque `"Internal server error"` string, for any future
+  cause. Left as-is here (out of scope for this fix, which only touched
+  `transport/meshcore_serial.py`) - worth a small follow-up in
+  `server/receiver.py` if it's ever worth the churn, not urgent enough to
+  warrant its own tracked issue on its own.
+- Related: [[Issue 50]].
+
+---
+
+**Issue 53: `disconnect()` has no timeout guard, unlike `send()` (Issue 21) -
+Server GUI's Stop Server hung indefinitely on real hardware, stuck printing
+the `meshtastic` library's own "Waiting for free space in TX Queue" debug
+line** ✅ FIXED
+
+- Observed 2026-08-28 during Story 30.4's manual GUI verification: server
+  GUI connected fine to a real Meshtastic device (default transport,
+  unrelated to Story 30.4's new selector), then Stop Server was pressed.
+  The process hung, repeatedly printing `[DEBUG] Waiting for free space in
+  TX Queue` to the terminal with no end in sight - required a manual
+  Ctrl+C to recover.
+- **Confirmed not a Story 30.4 regression**: `MeshtasticSerialTransport.disconnect()`
+  (`transport/meshtastic_serial.py:180-196`) is untouched by this story -
+  the only change anywhere near it was swapping a direct
+  `MeshtasticSerialTransport()` construction for
+  `get_transport("meshtastic")`, which returns the exact same class
+  instance via `transport/factory.py`. Confirmed by reading the method
+  directly, not inferred.
+- **Where it's actually stuck**: `disconnect()` calls `self._iface.close()`
+  (the `meshtastic` PyPI library's own interface object), wrapped in a
+  bare `try/except Exception: pass` - which only guards against `close()`
+  *raising*, not against it *hanging*. The observed debug line comes from
+  inside the library itself, suggesting `close()` is internally trying to
+  flush a backed-up outgoing packet queue on the physical device before
+  it will return, with no timeout of its own either.
+- **Same class of bug as Issue 21**, just on the opposite end of the
+  connection lifecycle: Issue 21 found `send()` had no bound and fixed it
+  with a dedicated bounded worker thread. `disconnect()`/`close()` still
+  has no equivalent bound anywhere in `BaseTransport`'s contract or either
+  concrete transport - a device with a stuck/backed-up queue at
+  disconnect time can hang the caller (GUI or CLI) exactly the way
+  `send()` used to.
+- **Fix**: `MeshtasticSerialTransport.disconnect()` now runs
+  `iface.close()` on a daemon worker thread and
+  `join(timeout=_SEND_TIMEOUT_SECONDS)`s it, mirroring `send()`'s Issue
+  21 fix exactly - but on timeout, `disconnect()` logs a warning and
+  continues rather than raising. `send()` raises because callers expect
+  to handle a failed send; `disconnect()` never raises anywhere today,
+  confirmed by auditing every real call site (`core/device_watchdog.py`'s
+  `_recover_once()` calls it mid-recovery with zero exception handling;
+  every GUI/CLI call site calls it unguarded, several in a `finally`
+  block) - none of them are prepared to catch an exception from it, and
+  `disconnect()`'s own docstring already promises "safe to call". On
+  timeout the underlying library connection is abandoned (leaked), the
+  same way `send()`'s worker thread is abandoned - Python has no API to
+  forcibly stop a thread.
+- **`MeshCoreSerialTransport.disconnect()`**: its `_mc.disconnect()` call
+  was already bounded via `_run_coro()`'s `future.result(timeout=...)`,
+  and reading `_ensure_loop()` confirmed `self._loop.stop()` (scheduled
+  via `call_soon_threadsafe`, which wakes the loop's selector) reliably
+  makes `run_forever()` return even with the just-abandoned
+  `_mc.disconnect()` coroutine still pending - so this transport was
+  never actually exposed to the observed hang. Found one real gap while
+  verifying that, though: `self._loop.close()` was called unconditionally
+  after the loop-thread `join()`, which raises `RuntimeError: Cannot
+  close a running event loop` if that join ever genuinely timed out (a
+  low-probability race, not the bug observed here, but a real violation
+  of "never raises" all the same) - now guarded: `close()` is skipped
+  (with a warning logged) whenever the loop thread is still alive after
+  its bounded join.
+- Real-hardware repro of the *exact* observed hang wasn't attempted -
+  unlike Issue 21's dedicated relay-power-cut script
+  (`send_timeout_test.py`), there's no equivalent way to force a backed-up
+  TX queue on demand. Verified instead: the full unit test suite (944
+  tests, including new timeout-simulation tests for both transports
+  mirroring `send()`'s existing `test_send_raises_timeout_error_when_*_blocks`
+  pattern) stays green, and a real Start Server → Stop Server smoke check
+  on real hardware (Meshtastic device, `!7c5b4418`) confirmed no
+  regression - `disconnect()` completed cleanly and immediately.
+- **A different real hang surfaced during that same smoke check, at
+  first looking like a possible regression**: a couple of runs appeared
+  to hang after clicking Stop. Caught directly with `sample` (see Issue
+  56) - it was a background device-identity-probe thread stuck in the
+  OS's own `open()` syscall trying to open a candidate serial port,
+  unrelated to this fix. The main thread's own sample at that same
+  moment showed normal, responsive Kivy activity, and a subsequent Stop
+  Server on a fresh instance completed immediately with no code changes -
+  confirming this fix is not the cause. Logged separately as Issue 56
+  rather than folded in here, since it's a different call site
+  (`connect()`'s port-open step, not `disconnect()`).
+
+**Issue 54: MeshCore device dropdown shows configured name + node ID, but
+never the physical hardware/board model - harder to tell devices apart at
+a glance when several are connected** ✅ FIXED, real-hardware verified
+
+- Raised 2026-08-28 during Story 30.4's real-hardware GUI verification:
+  the device dropdown correctly showed `49CB2414 (49cb24147266)` and
+  `4E8760A3 (4e8760a398ee)` for the two real MeshCore devices used
+  throughout Epic 9 (a V3 and a T190), but nothing there indicates which
+  physical board type each one is - only the device's self-configured
+  name (`self_info["name"]`, MeshCore's default auto-generated name is
+  itself just an uppercased hex string, not a human hint) and its node ID.
+- **Meshtastic side**: was already free - the connect handshake's
+  `waitForConfig()` metadata carries `hw_model` for no extra round-trip
+  (`extract_firmware_info()` in `core/meshtastic_utils.py`, arrived via
+  the 2026-08-28 master merge's Story 27.4 alongside `firmware_version`).
+- **Schema and GUI display wiring** (also from that same merge):
+  `core/device_scan.py`'s shared `ProbedDevice` carries `hw_model`/
+  `firmware_version`; `gui/gui_common.py`'s `probe_devices_in_background()`
+  pushes both in its `'device_identity'` result tuple for whichever
+  transport is selected; `format_device_display()` appends a `[HW_MODEL]`
+  bracketed suffix when present. All transport-agnostic already, no
+  MeshCore-specific changes needed here.
+- **MeshCore side, now implemented**: new
+  `MeshCoreSerialTransport.get_device_model()` sends the same
+  `commands.send_device_query()` command `check_alive()` already uses and
+  reads the `DEVICE_INFO` response's `model` field
+  (`meshcore/reader.py`'s packet parsing, gated behind `fw_ver >= 3` -
+  older firmware's response simply omits the key, read via `.get()`,
+  never assumed present). A genuinely separate query from `self_info`
+  (what `connect()`/`local_node_name` already read) - not something
+  already being fetched. Wired into `core/meshcore_utils.py`'s
+  `probe_device_identity()`. `firmware_version` deliberately left at
+  `None` for MeshCore - out of scope, the DEVICE_INFO payload's version
+  fields aren't the same shape and nothing displays it.
+- Verified: full unit test suite passes (962 tests), including new
+  `TestMeshCoreSerialTransportGetDeviceModel` coverage (success, not
+  connected, ERROR response, missing/empty `model`, exception, timeout).
+  Real-hardware confirmed 2026-08-29 on both GUIs (server, then client):
+  both of the session's MeshCore devices (the V3 and T190) show a
+  `[MODEL]` suffix in the dropdown after a successful scan, the same way
+  Meshtastic devices already do. One real-hardware wrinkle hit
+  repeatedly along the way, unrelated to this fix: Issue 59's noisy
+  teardown was confirmed to also leave both MeshCore devices genuinely
+  unresponsive until physically reconnected - see Issue 59's write-up,
+  escalated accordingly.
+
+**Issue 55: MeshCore relay is noticeably slower than the equivalent
+Meshtastic relay - not yet root-caused** Open
+
+- Raised 2026-08-28, right after Story 30.4's real-hardware GUI
+  verification: a chunked send that completed via the GUI felt
+  "extremely slow" compared to how Meshtastic relays have felt in this
+  same environment.
+- **Not a Story 30.4 regression**: this story only added transport
+  selection UI, device scanning, and identity probing - it made no
+  changes anywhere in the actual send/receive/dispatch path
+  (`transport/meshcore_serial.py`'s `send()`/`_on_event()`/dispatch
+  thread, untouched here).
+- **Two known, already-documented contributors, neither fully
+  investigated as the actual explanation**:
+  1. MeshCore's `MESHCORE_MAX_CHUNK_SIZE` is 120 vs Meshtastic's
+     `DEFAULT_CHUNK_SIZE` 170 (Issue 51 - MeshCore's own protocol enforces
+     a stricter ~160-byte total message cap) - the same transaction needs
+     more chunks, hence more round trips, over MeshCore.
+  2. Real hardware runs earlier in this session (Story 30.5's
+     verification, and this story's own GUI testing) already showed
+     individual chunks frequently needing a second send attempt before
+     ACKing - each retry costs a full `_SEND_TIMEOUT_SECONDS` (10s) wait,
+     and a multi-chunk transaction with several such retries adds up
+     quickly (one logged run took ~2.5 minutes for 6 chunks; a different
+     run of the same script completed in ~12s with zero retries - real,
+     substantial run-to-run variability on the same hardware).
+- Not root-caused further here - logged for a future investigation into
+  *why* individual chunk sends need retries this often on MeshCore
+  specifically (radio config - `radio_sf`/`radio_bw`/`radio_freq` are all
+  present in `self_info` and not yet compared against Meshtastic's
+  defaults on the same boards; duty-cycle/airtime limits; MeshCore's own
+  path-routing behavior) rather than just accepting the retry-and-wait
+  behavior as a given.
+
+**Issue 56: `connect()` has no timeout on its port-open step - can hang
+the primary Start Server flow, not just the background device scan - a
+third occurrence of Issues 21/53's "unbounded blocking call" pattern**
+✅ FIXED
+
+- Found 2026-08-29 while doing the real-hardware smoke check for Issue
+  53's fix: the server GUI's Stop Server appeared to hang on a couple of
+  runs, closely enough after Issue 53's fix to look like a regression at
+  first. Caught directly with macOS's `sample` tool (no `py-spy`/`sudo`
+  needed for a process the current user owns) while genuinely reproduced:
+  `Thread_8766651: Thread-2 (probe_thread)` showed 264/264 samples over a
+  3-second window all sitting in the exact same raw syscall stack:
+  `os_open` (Python) → `open` → `__open` (`libsystem_kernel.dylib`) -
+  i.e. still blocked in the kernel's own `open()` call, not anywhere in
+  Python/BTCMesh code at all.
+- **Confirmed not Issue 53**: the main thread's own sample, taken at the
+  same moment, showed completely normal Kivy rendering/event-loop
+  activity (`SDL_WaitEventTimeout_REAL`, GL drawing) - not stuck. A
+  subsequent Stop Server on a fresh instance completed immediately, with
+  no change to the code, confirming Issue 53's fix itself is sound; this
+  is a separate, pre-existing bug that happened to be visible at the same
+  time.
+- **Reproduced a second time, independently, same result**: on another
+  fresh instance, the device scan launched on startup never finished
+  ("Identifying devices..." stayed up indefinitely - user-observed as
+  "endlessly scanning"). Sampled again: 1449/1449 samples over the
+  window, same thread, same exact stack (`Thread-2 (probe_thread)` →
+  `os_open` → `__open`). Meanwhile the *rest* of the app kept working
+  normally in the same run (a separate connect/disconnect cycle for
+  Start Server completed and logged normally) - confirming this one
+  specific background probe thread is what's genuinely stuck, silently,
+  while everything else keeps working; the user-visible symptom is just
+  that the scan's busy indicator never clears.
+- **Where**: `"Thread-2 (probe_thread)"` is the inner closure inside
+  `gui/gui_common.py`'s `probe_devices_in_background()` - the background
+  device-identity scan both GUIs run after finding multiple candidate
+  ports (`probe_device_identity()` in `core/meshtastic_utils.py`/
+  `core/meshcore_utils.py`). Somewhere under `transport.connect(path)`
+  for one of the scanned candidates, the underlying serial library's
+  `open()` call on that port never returns.
+- **Worse than "one candidate stays unresolved"**: user-confirmed on the
+  second repro - *none* of the scanned devices got identity labels, not
+  just the stuck one. `probe_devices_in_background()`'s probe loop
+  (`for device in list(devices): ... identity = probe_device_identity(...)`)
+  is strictly sequential and has no per-candidate bound - one candidate
+  stuck in `open()` blocks every candidate after it in the same batch
+  from ever being probed, silently, with no error/warning surfaced. In
+  practice this can mean the entire device dropdown stays unlabeled raw
+  paths indefinitely, not just a single missing entry.
+- **Third reproduction - confirmed on the primary Start Server flow
+  itself, not just the background scan**: same session, user selected a
+  candidate device (Seeed-VID) and pressed Start Server; both the scan
+  *and* Start Server appeared stuck at the same time. Sampled again:
+  `Thread-3 (run_server)` - `btcmesh_server_gui.py`'s
+  `on_start_pressed()`'s own server thread, a completely different call
+  site than the scan's `probe_thread` - showed 1572/1572 samples in the
+  identical stack (`os_open` → `open` → `__open`). This confirms the real
+  severity: it's not only a background-scan cosmetic issue, `connect()`'s
+  missing timeout can hang the actual primary workflow (Start Server)
+  exactly the way Issue 21's missing `send()` timeout used to hang Send -
+  raising this to Major.
+- **Same class of bug as Issues 21 and 53, one level down**: `send()` had
+  no bound on the underlying library call (Issue 21, fixed); `disconnect()`
+  had no bound on `iface.close()` (Issue 53, fixed); `connect()` has no
+  bound on the initial port-`open()` step either - all three are the same
+  "an OS/library call can block forever, and nothing here stops it"
+  pattern applied to a third call site.
+- Not root-caused further (exactly which candidate port, or why that
+  specific `open()` blocks, wasn't isolated - lsof at the time showed
+  nothing else on this machine holding that port, so simple lock
+  contention from another process doesn't obviously explain it) - the
+  underlying *why some devices wedge* remains an open hardware/driver
+  question (matching this project's other documented device-wedge
+  issues), but the missing-timeout bug itself is fixed below.
+- **Fix**: `MeshtasticSerialTransport.connect()`'s
+  `SerialInterface(connectNow=False)` construction now runs on a daemon
+  worker thread with a hard `join(timeout=_CONNECT_TIMEOUT_SECONDS)`
+  (20.0s - matching `_CHECK_ALIVE_TIMEOUT_SECONDS`'s existing precedent
+  in this file), mirroring `send()`'s Issue 21 fix exactly. Unlike
+  `disconnect()`'s Issue 53 fix, `connect()` already has a "raises on any
+  failure" contract every real caller expects, so a timeout raises
+  `TransportConnectionError` here rather than swallowing. The existing
+  `SystemExit` (Issue 41)/`NoDeviceError`/generic-exception dispatch is
+  preserved exactly, just moved to run after the worker thread completes.
+  Confirmed via git history (`git log -S`) that the vulnerable code
+  hasn't changed since commit `533eb49`, well before Issue 21 and
+  everything from this epic - not a regression, just newly exposed by
+  more real devices being connected simultaneously during this session's
+  testing than usual.
+- **`MeshCoreSerialTransport.connect()` deliberately not touched**: it
+  already wraps its equivalent `create_serial()` step in
+  `_run_coro(_do_connect(), self._CONNECT_TIMEOUT_SECONDS)` -
+  `future.result(timeout=...)` already bounds the *calling* thread's
+  wait, so a caller already gets a timely `TransportConnectionError`
+  rather than hanging, which is what was actually observed and confirmed
+  here (only ever on the Meshtastic path, never MeshCore). One smaller,
+  unconfirmed caveat noted for the record: if `create_serial()` does a
+  blocking (non-async) `open()` internally on the loop's own background
+  thread, that specific transport *instance*'s loop thread could stay
+  stuck forever afterward even though the caller recovers correctly -
+  every real caller constructs a fresh instance per attempt, so this
+  doesn't compound into a growing problem today, and speculatively
+  changing unconfirmed code wasn't warranted.
+- Verified: full unit test suite (942 tests, including a new
+  `test_connect_raises_timeout_error_when_port_open_blocks` mirroring
+  `send()`'s existing timeout-test pattern) passes. Real-hardware
+  confirmation against the actual wedged Seeed device from this session
+  (the same device the bug was caught on) initially hit a second,
+  separate bug before this fix's code path was ever reached - logged and
+  fixed separately as Issue 57 below. With Issue 57 also fixed: selected
+  a Heltec device the scan itself hadn't managed to identify (likely
+  just asleep, not wedged) and pressed Start Server - watched the
+  physical device visibly wake from sleep, `connect()` succeed, and the
+  server go into listening for incoming transactions; Stop Server then
+  returned immediately. Confirms both this fix's 20s bound (no more
+  indefinite hang on a slow-to-wake device) and Issue 53's `disconnect()`
+  fix are holding up together on real hardware.
+
+---
+
+**Issue 57: `probe_relay_board_id()` has no timeout on its port-open
+step - the actual cause of the "endlessly scanning" symptom, one call
+site earlier than Issue 56, same underlying pattern a fourth time**
+✅ FIXED
+
+- Found 2026-08-29 while trying to real-hardware-verify Issue 56's fix.
+  The device scan was still stuck ("endlessly scanning", no device
+  identities resolved) even with Issue 56's `connect()` timeout in
+  place. A fresh `sample` of the live process showed the outer probe
+  thread itself (`Thread-2 (probe_thread)` - Python 3.14's new default
+  thread-naming convention, `Thread-N (target function name)`) directly
+  in the raw `os_open` → `open` → `__open` syscall stack, not blocked in
+  a `worker.join()` lock-wait the way Issue 56's fix would produce, and
+  with no second worker thread anywhere in the sample. Both facts rule
+  out Issue 56's fixed code path entirely: this call never got that far.
+- **Root cause**: `core/meshtastic_utils.py`'s (and
+  `core/meshcore_utils.py`'s) `probe_device_identity()` calls
+  `probe_relay_board_id(path)` *before* it ever reaches
+  `transport.connect(path)`. That function
+  (`transport/power_control.py`) did:
+  ```python
+  with serial.Serial(port, baudrate, timeout=timeout) as ser:
+      ser.write(b"ID\n")
+      response = ser.readline().decode(...).strip()
+  ```
+  `timeout=` only bounds the *read* (pyserial applies it to
+  `readline()`) - the port-*open* pyserial performs inside
+  `serial.Serial(...)`'s own constructor has no bound at all. Same "an
+  OS/library call can block forever, nothing stops it" pattern as
+  Issues 21 (`send()`), 53 (`disconnect()`), and 56 (`connect()`'s
+  port-open step) - a fourth occurrence, one call site earlier in the
+  same chain than Issue 56.
+- Confirmed pre-existing, not a regression: `git log -S "def
+  probe_relay_board_id"` shows this code unchanged since Issue 37's
+  follow-up commit (`f8e357e`), well before this epic.
+- **Wider blast radius than just the scan**: `probe_relay_board_id()` is
+  called directly from several other real code paths too -
+  `btcmesh_server_cli.py`, `btcmesh_client_gui.py` (three call sites),
+  `btcmesh_server_gui.py`, and both transports'
+  `scan_for_reconnect_candidates()`-style dedup guards
+  (`transport/meshtastic_serial.py`, `transport/meshcore_serial.py`).
+  Any of those could wedge the same way, not just the background
+  identity scan.
+- **Fix**: mirrors Issues 21/53/56's bounded-worker-thread pattern,
+  applied to just the `serial.Serial(port, baudrate, timeout=timeout)`
+  construction - the confirmed-unbounded step. The subsequent
+  `ser.write()`/`ser.readline()` is left untouched, since `readline()`
+  already has its own bound via the `timeout=` argument. New module
+  constant `_OPEN_TIMEOUT_SECONDS = 5.0` (generous relative to a
+  healthy port's near-instant open, far shorter than a full
+  connect/handshake bound, since this is just a raw port claim with no
+  protocol handshake). The function's own docstring already documents a
+  "never raises" contract - every real caller treats it as
+  safe-to-call/best-effort - so like `disconnect()`'s Issue 53 fix (not
+  `connect()`'s Issue 56 fix), a timeout swallows and logs a warning
+  rather than raising.
+- Verified: full unit test suite passes (946 tests), including a new
+  `test_open_blocking_forever_returns_none_not_hang` added to the
+  existing `tests/test_power_control.py::TestProbeRelayBoardId`
+  (mirroring the timeout-test pattern used for Issues 21/53/56), plus
+  updates to that class's existing mocks to match the fix no longer
+  using the `with serial.Serial(...) as ser:` context-manager form.
+  Real-hardware confirmed on the same session's wedged devices: the
+  scan hit this exact 5s bound on a candidate that had wedged in
+  `probe_relay_board_id()`'s port-open (logged the warning, moved on to
+  `transport.connect()` for it instead of hanging forever), and the
+  scan itself finally completed (`device_probe_complete` fired) instead
+  of hanging indefinitely on this call site the way it had every time
+  before this fix.
+
+---
+
+**Issue 58: MeshCore Send Transaction shows a raw error dict instead of
+a readable message when the destination node ID is unknown**
+Open
+
+- Found 2026-08-29 during real-hardware client GUI testing (MeshCore
+  transport): sending to a validly-formatted but non-existent/unknown
+  destination node ID surfaces in the Activity Log as `Error: Chunk 1:
+  Failed to send message: {'error_code': 2, 'code_string':
+  'ERR_CODE_NOT_FOUND'}` - the raw payload dict from the `meshcore`
+  library, not a message that tells the operator what actually went
+  wrong.
+- **Where**: `transport/meshcore_serial.py`'s `send()` -
+  `self._mc.commands.send_msg(...)` returns a result with
+  `result.type == EventType.ERROR`, and the current code just dumps
+  `result.payload` straight into the `TransportSendError` message:
+  ```python
+  if result is None or result.type == EventType.ERROR:
+      raise TransportSendError(
+          f"Failed to send message: {getattr(result, 'payload', None)}"
+      )
+  ```
+  No translation of known `code_string` values (e.g.
+  `ERR_CODE_NOT_FOUND` - the destination node isn't known to this
+  device's contact list/routing table) into operator-facing language.
+- **Suggested fix** (not yet implemented): map known `code_string`
+  values to a descriptive message (e.g. `ERR_CODE_NOT_FOUND` → "Unknown
+  destination node ID - not found in this device's contacts"),
+  falling back to the current raw-payload message for any
+  unrecognized code so nothing is silently swallowed.
+- Not yet scoped whether other MeshCore error codes need the same
+  treatment - only `ERR_CODE_NOT_FOUND` has been observed so far.
+
+---
+
+**Issue 59: MeshCore connects could leave the device unresponsive until
+physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS`
+matching the `meshcore` library's own internal timeout exactly, racing
+its own failure-cleanup path** ✅ FIXED (main functional impact),
+real-hardware verified
+
+- Found 2026-08-29 during real-hardware client GUI testing: a single
+  MeshCore connect/disconnect cycle (a background identity probe) logged
+  five separate `Exception ignored while closing generator ...
+  RuntimeError: Event loop is closed` tracebacks - initially believed
+  non-fatal (caught by Python during GC), but escalated after three
+  independent real-hardware reproductions during Issue 54's testing: a
+  run of these tracebacks left both MeshCore devices unable to complete
+  their handshake at all (every connect attempt hit the full 15s
+  timeout) until physically disconnected and reconnected - once
+  actually blocking a genuine Start Server attempt against the V3.
+- **Root cause, confirmed by reading the `meshcore` library's source**:
+  `CommandHandler.DEFAULT_TIMEOUT` (`commands/base.py`) is 15.0s, used
+  unchanged by `send_appstart()` during `MeshCore.create_serial()`'s
+  handshake. When a candidate never responds, `send_appstart()` burns
+  the full 15.0s internally, then `create_serial()` does its own
+  cleanup (logs "No response from meshcore node, disconnecting" ->
+  `await mc.disconnect()`, which properly cancels/awaits its
+  `EventDispatcher` task and closes the serial connection when allowed
+  to complete). But `transport/meshcore_serial.py`'s own
+  `_CONNECT_TIMEOUT_SECONDS`, wrapping the *entire* `create_serial()`
+  call, also matched at 15.0s - so our outer bound fired at essentially
+  the same moment and abandoned that in-progress internal cleanup
+  mid-flight, before the serial port could be fully released. This is
+  what produced the orphaned `EventDispatcher._process_events()` tasks
+  (GC noise) *and*, given enough repeated cycles, left the OS-level
+  serial port genuinely not released - explaining why a physical
+  unplug/replug (which forces the OS to invalidate the port) reliably
+  cleared it.
+- **Fix**: `_CONNECT_TIMEOUT_SECONDS` raised from 15.0s to 25.0s (the
+  library's 15.0s internal wait + `_SEND_TIMEOUT_SECONDS`'s existing
+  10.0s precedent for a disconnect-style cleanup step's allowed
+  duration) - gives `create_serial()`'s own failure-cleanup path genuine
+  room to finish before we'd ever abandon it. Full unit test suite
+  stays green (962 tests, no test hardcoded the old value).
+- **Real-hardware confirmed**: with only the two real MeshCore devices
+  connected (no other-transport candidates in the mix to also trigger
+  the same "No response" path), both devices connected reliably across
+  many repeated cycles without needing another physical reconnect, and
+  Start Server against the V3 - the case that previously failed -
+  now connects cleanly. The main, escalated functional problem (devices
+  going unresponsive) is resolved.
+- **Residual, lower-severity remainder, not fully eliminated**: a
+  handful of `EventDispatcher._process_events()` orphan tracebacks still
+  appeared during the same extended test session (roughly 1 in several
+  successful cycles, down from near-1:1 before the fix) - at least one
+  confirmed to reuse a freed memory address matching an earlier failed
+  attempt (likely delayed GC finally sweeping backlog from that earlier
+  episode), but at least one other appeared at a genuinely new address
+  after an otherwise-clean successful connect, so occasional fresh
+  orphans aren't fully ruled out. Not yet reproduced as causing renewed
+  device unresponsiveness on its own - tracking as a smaller follow-up
+  rather than blocking this fix. Original suggested direction, still
+  relevant for that residual noise: before `loop.stop()`/`loop.close()`,
+  explicitly cancel any tasks still pending on the loop (e.g. via
+  `asyncio.all_tasks(loop)` scheduled through `call_soon_threadsafe`)
+  and give them a moment to unwind, so nothing is left for the garbage
+  collector to clean up against an already-closed loop.
+
+---
+
+**Issue 60: switching from MeshCore to Meshtastic transport can hang the
+resulting scan on the first candidate for a full 20s - a device-sleep/
+probe-timing race, not a code defect**
+Open
+
+- Found 2026-08-29 during real-hardware merge verification (unrelated to
+  the merge itself - confirmed reproducible independent of it).
+- **Mechanism**: switching the transport spinner immediately triggers a
+  fresh scan of the new transport's candidates
+  (`on_transport_selected()` sets `self.selected_transport` then calls
+  `self._scan_devices()` right away, in both GUIs). If the Heltec V3 was
+  just disconnected (e.g. by the transport switch itself, or a prior
+  probe releasing its port) it starts entering sleep mode - matching the
+  session's earlier finding that Meshtastic firmware sleeps shortly
+  after its serial connection is released. Because this device happens
+  to be first in the freshly-scanned candidate list, the new scan probes
+  it again immediately, catching it mid-sleep-transition - the act of
+  probing wakes it back up, but it's briefly unresponsive during that
+  transition, and the probe stalls until Issue 56's `_CONNECT_TIMEOUT_SECONDS`
+  (20s) bound gives up and releases it.
+- Confirms Issue 56's fix is doing exactly what it's supposed to (bounds
+  the stall to 20s instead of hanging forever) - this issue is about the
+  underlying race causing a real, if bounded, 20s stall on a specific,
+  reproducible sequence (transport switch -> immediate rescan -> first
+  candidate happens to be the device that was just put to sleep), not a
+  regression or a flaw in that fix.
+- Not yet root-caught with `sample`/profiling the way Issues 21/53/56/57
+  were - this is a live-observed timing race, not yet independently
+  confirmed via a captured stack trace.
+- **Second, independent confirmation (2026-08-29, Issue 54's real-hardware
+  verification)**: the Heltec V3 went through the exact same
+  start/sleep/wake/shut-down cycle again, but this time did *not* block
+  the scan - the user's own observation was that this time it wasn't
+  first in the candidate list. Directly supports the "list position
+  matters" mechanism above: probed later, the device has had enough time
+  to either finish its sleep transition or wake back up on its own
+  before being reached, so the race window is simply missed rather than
+  hit.
+- No fix attempted yet. Possible directions for later: a short delay
+  before the post-transport-switch rescan (to let a just-disconnected
+  device finish its sleep transition rather than catching it mid-way),
+  or reordering the freshly-scanned candidate list so the
+  just-abandoned device isn't probed first.
+
+---
+
+**Issue 61: overlapping scan batches could open concurrent connections
+to the same physical serial port, causing "could not open port"
+failures and orphaned per-connection background tasks** Open (app-level
+race fixed and verified; a real, lower-frequency remainder still
+observed)
+
+- Found 2026-08-29 while continuing to dig into Issue 59's residual
+  low-frequency GC-noise remainder: the client GUI failed to connect to
+  the V3 with `Error: Could not open port 49CB2414 (49cb24147266)
+  [Heltec V3]` - a genuine OS-level "port busy" failure (traced to
+  `_friendly_connect_error()` in `btcmesh_client_gui.py`, which only
+  produces this specific text when the raw underlying exception
+  literally contains "could not open port" - i.e. a real
+  pyserial/`serial_asyncio` port-contention error, not one of this
+  codebase's own crafted messages).
+- **Root cause, confirmed directly in the log**: `grep`-ing the
+  session's full client-GUI log for connect/disconnect lines showed the
+  V3's public key (`49cb24147266`) connected to *twice in a row with no
+  disconnect logged in between* - two independent connections open to
+  the same physical port at the same time. `gui/gui_common.py`'s
+  `probe_devices_in_background()` bumps a generation counter
+  (`_scan_generation`) on every new scan and passes `should_abort` into
+  the probe loop, but that guard is only checked *before starting* each
+  device's probe, not while one is already in flight - if an older scan
+  batch is still mid-probe on a device (e.g. waiting through Issue 59's
+  25s connect bound) when a new scan starts and reaches that same
+  device in its own candidate list before the old probe finishes, both
+  batches end up calling `probe_device_identity()` on the same path
+  concurrently. This is a separate mechanism from Issue 59's
+  timeout-matching race - a genuine app-level concurrency bug, not a
+  library-timing one - though it produces very similar-looking symptoms
+  (orphaned `EventDispatcher` tasks), which is what made it easy to
+  initially mistake for more of the same residual GC noise.
+- **Fix**: `gui/gui_common.py` now exposes `acquire_probing_path(path,
+  timeout)`/`release_probing_path(path)`, wrapping a module-level,
+  `threading.Lock`-protected `_probing_paths` set shared process-wide -
+  not per-batch or per-call-site, since the whole point is guarding
+  against two *different* actions racing the same device.
+  `probe_devices_in_background()`'s scan loop uses a non-blocking
+  acquire (`timeout=0`) - a device already held elsewhere is skipped
+  without probing and without a result, so one busy device never stalls
+  the whole batch; whoever already holds it publishes its own result.
+- **Initially scoped to scan-vs-scan overlap only, then widened the
+  same day** after live real-hardware testing reproduced the identical
+  duplicate-connect pattern via a *different* call site
+  (`on_device_selected()`'s identity/known-nodes fetch racing an
+  in-flight scan on the same device) - confirming the mechanism wasn't
+  scan-specific. Every real `transport.connect(path)` call site in both
+  GUIs now goes through the same guard with a blocking (bounded, 30s
+  default) acquire: `btcmesh_client_gui.py`'s `_connect_with_retry()`
+  (Send), both `fetch_thread`s (`on_device_selected()`,
+  `on_refresh_nodes()`), and `btcmesh_server_gui.py`'s `run_server()`.
+  A blocking caller that can't acquire within the timeout surfaces a
+  clear "device busy, try again" error instead of racing a doomed
+  concurrent connect - the path is always released in a `finally` in
+  every case, including on exception, so one bad connect can never
+  permanently block a device from being reachable again.
+- Verified: full unit test suite passes (965 tests), including new
+  coverage in `tests/test_gui_common.py`'s
+  `TestProbeDevicesInBackground` (skips an already-registered path
+  without probing it; releases a path after a successful probe;
+  releases a path even when the probe raises).
+- **Real-hardware verified - app-level race itself is fixed**: the
+  duplicate-connect log pattern (two "Connected to..." lines for the
+  same device with no disconnect between them) never recurred across
+  extensive real-hardware testing after this fix, including the
+  specific scan-vs-selection-fetch sequence that first reproduced it.
+- **Two more related fixes landed alongside this one, same session,
+  same real-hardware test pass**:
+  1. `MeshCoreSerialTransport.disconnect()` now waits a brief real 0.3s
+     (`asyncio.sleep(0.3)`, not `asyncio.sleep(0)`) after `mc.disconnect()`
+     returns, before stopping the loop - `SerialConnection.disconnect()`
+     (in the `meshcore` library) only *schedules* the port close via
+     `asyncio.Transport.close()`, it doesn't wait for the OS to actually
+     finish releasing the fd, so a following connect() on the same path
+     could race a port Python already considered "released."
+  2. New `_SEND_MSG_TIMEOUT_SECONDS = 20.0` (separate from the shared
+     `_SEND_TIMEOUT_SECONDS`) - `send_msg()` also uses the `meshcore`
+     library's own 15.0s internal default unchanged (the same pattern
+     that caused this issue's root cause on the connect path), so the
+     previous 10.0s outer bound on `send()` abandoned messages before
+     the library's own wait would even complete. Real-hardware confirmed
+     working - a subsequent successful send completed quickly once
+     connected, no more spurious chunk-retry timeouts.
+- **Not fully resolved - a real, lower-frequency remainder persists**:
+  even after all three fixes above, one real-hardware Send attempt
+  against the V3 still needed roughly five retries before its own
+  `connect()` succeeded, each failing with the same genuine OS-level
+  "could not open port" error the app-level fix was designed to
+  prevent. Since the app-level duplicate-connect pattern is confirmed
+  gone, this remainder is most likely the *same* deferred-port-close
+  timing gap the 0.3s settle delay targets, just needing more than
+  0.3s some of the time - not yet confirmed, and no longer speculative
+  once it is: the settle delay may need to be longer, adaptive (poll
+  for the port to actually reopen rather than a fixed sleep), or there
+  may be a genuinely separate, still-unidentified contributor specific
+  to the V3's hardware/driver. `_connect_with_retry()`'s own existing
+  transient-failure retry (triggers on "busy"/"resource temporarily
+  unavailable" in the raw error text) may or may not have been catching
+  this - not confirmed whether the raw pyserial error text actually
+  contains either substring, since `_friendly_connect_error()` discards
+  the original message before it reaches the log. Worth checking that
+  specifically before further changes.
+- **Next steps**: (1) capture the raw (pre-`_friendly_connect_error()`)
+  exception text on a reproduction, to confirm whether the existing
+  transient-retry logic should already be catching this and isn't; (2)
+  if the 0.3s settle delay is confirmed as the bottleneck, consider
+  polling for the port to become genuinely reopenable (bounded) instead
+  of a fixed sleep, which would adapt to real OS timing instead of
+  guessing a constant.
+
+---
+
+**Issue 62: `TransactionSender`'s retry loop never retries a chunk send
+that raises an exception - only an ACK timeout gets retried, at all**
+✅ FIXED
+
+- Found 2026-08-29 during Issue 61's real-hardware testing: a MeshCore
+  send to a device that had likely gone to sleep (per this session's
+  established sleep/wake pattern) failed on chunk 1 with `Error: Chunk
+  1: Failed to send message: {'reason': 'no_event_received'}` - the
+  operator expected several retries first (the configured default is 3)
+  but it gave up immediately.
+- **Root cause, confirmed in `client/sender.py`'s chunk send loop**
+  (~lines 363-416): the retry budget (`max_attempts = self.max_retries +
+  1`) was only decremented in the *ACK-timeout* branch - when
+  `self._wait_for_chunk_ack()` returns `False` after `self.transport.send()`
+  itself succeeded but no ACK arrived in time. A *raised exception* from
+  `self.transport.send()` (line 378) - e.g. `TransportSendError` from a
+  clean `EventType.ERROR` response like `{'reason': 'no_event_received'}`,
+  not a hang - was caught by a separate, unconditional `except Exception
+  as e: send_session.error = ...; send_session.failed = True; return`
+  that never consulted `max_attempts` at all. The very first exception
+  ended the whole send, regardless of how many retries were configured
+  or how many remained.
+- This is exactly the class of transient failure retries exist for - a
+  `{'reason': 'no_event_received'}` response is the library cleanly
+  reporting "didn't hear back in time" (its own internal 15.0s wait,
+  see Issue 59/61), not a hard failure - a device that's slow to wake or
+  a marginal radio link would very plausibly succeed on a second
+  attempt, exactly like the ACK-timeout path already assumed.
+- Confirmed this isn't new: the exception-handling branch and the
+  timeout-handling branch had looked structurally the same (one
+  retried, one didn't) since this retry loop was originally written,
+  unrelated to any of this session's MeshCore work - a pre-existing
+  gap, just newly exposed by MeshCore's real-hardware sleep/wake
+  behavior surfacing a `transport.send()` exception path Meshtastic's
+  own testing apparently hadn't hit as often.
+- **Fix**: the `except Exception as e:` block in `client/sender.py`'s
+  chunk send loop now routes through the same retry accounting the
+  ACK-timeout branch already used - decrements `max_attempts`, calls
+  `send_session.increment_retry(chunk_num)`, checks `_abort_event`
+  before retrying, and only sets `failed=True`/returns once
+  `max_attempts` reaches 0 (preserving the original exception's message
+  in the final failure, same as before).
+- **Verified**: `tests/test_client_sender.py` -
+  `test_send_exception_retries_then_succeeds` (transport.send raises
+  once, then succeeds on the immediate retry, transaction completes) and
+  `test_send_exception_exhausts_retries_then_fails` (transport.send
+  always raises, exactly `max_retries + 1` attempts are made before
+  failing with the original error) - both pass, along with the full
+  existing suite (no regressions).
+
+---
+
+**Issue 63: a slow MeshCore `start_auto_message_fetching()` response
+aborts server startup entirely, with a blank error message**
+✅ FIXED
+
+- Found 2026-08-29 during real-hardware testing of Issues 61/62's merged
+  fixes: Bitcoin RPC was down (Tor/onion service unreachable, a separate
+  environmental condition, not a code bug), which the server correctly
+  tolerated - "Bitcoin RPC: Connection failed" shown, mesh connect still
+  succeeded. But on a later Start Server attempt with the same device,
+  the server GUI's Activity Log showed "Initialization error:" with
+  *nothing* after the colon, and the server fully stopped (Start Server
+  re-enabled, Stop Server greyed out) instead of continuing to listen -
+  the file log confirms `build_receiver()` got as far as constructing
+  `TransactionReassembler` (its own init log line printed) and then
+  nothing else, on that attempt.
+- **Root cause, traced through the code**: `TransactionReceiver.__init__()`
+  (`server/receiver.py`) ends with
+  `self.transport.set_message_handler(self._on_message)`, which for
+  MeshCore calls `_subscribe()` (`transport/meshcore_serial.py`), which
+  calls `self._mc.start_auto_message_fetching()` through
+  `self._run_coro(..., self._SEND_TIMEOUT_SECONDS)` - a 10.0s bound. If
+  the device doesn't respond within that window (the same slow-wake
+  behavior this whole session has repeatedly found on other MeshCore
+  calls - Issues 59/61), `future.result(timeout=10.0)` raises a bare
+  `concurrent.futures.TimeoutError()`, which has an *empty* string
+  representation - explaining the blank "Initialization error:" text.
+  That exception is then caught by `btcmesh_server_gui.py`'s
+  `run_server()` "safety net" around `build_receiver()` (added to catch
+  genuine misconfiguration, e.g. a bad `reassembly_timeout`), which
+  treats any exception there as fatal and aborts the whole server
+  startup - even though the mesh `connect()` itself had already
+  succeeded moments earlier.
+- Two separate rough edges bundled into one symptom: (1) the timeout
+  itself is too tight for a call site that can legitimately take longer
+  right after a device reconnects, matching this session's established
+  "our timeout races the device's own slow response" pattern (Issues
+  59/61's root cause, just on a different call); (2) even when it does
+  time out, the resulting user-facing message is useless (empty),
+  because nothing sets a message on that particular timeout before it
+  surfaces to the GUI.
+- **Fix**: confirmed by reading the `meshcore` library
+  (`meshcore.py`/`commands/messaging.py`) that
+  `start_auto_message_fetching()` calls `commands.get_msg()` with no
+  explicit `timeout=`, so it also falls back to the library's own
+  15.0s `CommandHandler.DEFAULT_TIMEOUT` - the same root cause as
+  Issues 59/61, just on this call site. Added a dedicated
+  `_SUBSCRIBE_TIMEOUT_SECONDS = 20.0` (matching the existing
+  `_SEND_MSG_TIMEOUT_SECONDS`/`_CHECK_ALIVE_TIMEOUT_SECONDS` precedent
+  for a single real-radio round trip, comfortably above the library's
+  15.0s) and used it for the `_run_coro()` bound in `_subscribe()`.
+  `FutureTimeoutError` is now caught there and re-raised as
+  `TransportConnectionError` with a real message ("Timed out after
+  20.0s waiting for the device to start message fetching - device may
+  be unresponsive"), instead of letting a bare, empty-message
+  `TimeoutError` reach the GUI unlabeled. Left the failure fatal to
+  server startup (unlike the RPC-tolerance model) - a server that can't
+  receive chunks at all isn't meaningfully "started," and retrying
+  Start Server is already the proven recovery path (it succeeded on a
+  later attempt during this same testing session).
+- **Verified**: new test in `tests/test_meshcore_serial_transport.py` -
+  `test_set_handler_raises_clear_error_when_subscribe_blocks` (a
+  blocked `start_auto_message_fetching()` now raises
+  `TransportConnectionError` with a real "Timed out..." message,
+  instead of a bare empty-message `TimeoutError`) - passes, along with
+  the full existing suite (no regressions).
+- **Recurred a second time the same session**, same signature
+  (`TransactionReassembler initialized with timeout: 120s` as the last
+  log line, nothing after it) - not a rare fluke. Both occurrences came
+  after the V3 had just been going through this session's established
+  slow-wake/wedge pattern (repeated "No response from meshcore node,
+  disconnecting" during background scans right before each Start
+  Server attempt), consistent with the device still being slow to
+  respond specifically to `start_auto_message_fetching()` even though
+  the preceding `connect()` succeeded. Given it blocks the server from
+  starting at all when it happens, this is more disruptive than
+  initially assessed - worth prioritizing the fix, not just documenting
+  it.
+
+---
+
+**Issue 64: a lost final BTC_ACK/BTC_NACK leaves the client with a
+generic "No final ACK from relay" instead of the real, already-known
+reason - no retry/redelivery for the final reply, unlike chunks**
+✅ FIXED
+
+- Found 2026-08-30 during real-hardware testing of Issue 63's fix, with
+  Bitcoin RPC still down (Tor/onion unreachable, the same environmental
+  condition from the previous test pass): a full 21-chunk send
+  completed cleanly - every chunk delivered and ACKed, no retries
+  needed - and the server correctly determined the actual failure
+  reason (`rpc_client is None` -> "Bitcoin RPC not connected") and sent
+  a `BTC_NACK` back. But the client never received it, and reported the
+  generic `"No final ACK from relay"` instead of the real reason the
+  server had already worked out.
+- **Root cause, confirmed in both files**: `server/receiver.py`'s
+  `_send_nack()` (line 330-335) and the `BTC_ACK` send on a successful
+  broadcast (line 309-310) both go through `_send()`, a single
+  best-effort transport send with no ACK/retry of its own - unlike a
+  chunk send, which the client will resend up to `max_retries` times
+  (Issue 62 just fixed that path further). Symmetrically,
+  `client/sender.py`'s `_wait_for_final_ack()` (line 446-455) blocks
+  once for `timeout_seconds * 2` and gives up - `send_transaction()`
+  (line 431-435) then sets the generic `"No final ACK from relay"` with
+  no visibility into whether the server ever even attempted a reply,
+  let alone what it said. On a lossy LoRa/mesh link, a single
+  reply packet going missing is an expected, routine failure mode -
+  exactly the kind of thing the per-chunk protocol already has retry
+  logic for, but the final reply doesn't.
+- The server already has half of a fix in place and unused by this
+  path: `_remember_completed()` (Issue 17) caches the final reply
+  keyed by `(sender_id, session_id)` for `completed_session_grace_seconds`
+  (default 300s) specifically so a client that retransmits its last
+  chunk gets the cached reply resent directly instead of the server
+  treating it as a bogus new session. But nothing on the client
+  currently causes that retransmission - once a chunk gets its
+  `BTC_CHUNK_ACK`, `TransactionSender` has no reason to resend it, so
+  a lost final reply is simply never recovered from today.
+- **Suggested fix direction** (not yet implemented, needs a decision
+  more than the last few timeout-constant fixes did): give
+  `_wait_for_final_ack()` its own retry loop, most naturally by having
+  it re-send the last chunk on each final-ACK timeout (up to
+  `max_retries`) to deliberately trigger the server's existing
+  `_remember_completed()` cache-resend path - reuses server-side
+  machinery that already exists for exactly this purpose, rather than
+  inventing a new "are you done yet?" query message/wire format.
+  Confirmed by reading `_on_message()` (`server/receiver.py` line
+  ~205-215) that this should already work cleanly: the
+  `_completed_sessions` cache lookup runs *before*
+  `reassembler.add_chunk()` is ever called, so a resent last chunk for
+  an already-completed session hits the cache and gets the real cached
+  reply resent directly - it never reaches the reassembler's separate
+  "Duplicate chunk N/M received. Ignoring." path (that path is for
+  duplicates arriving *during* an in-progress session, a different
+  case, already exercised by Issue 61/62's real-hardware tests). No
+  server-side change needed - this is a client-only fix.
+- **Recurred a second time the same session** (2026-08-31, session
+  `6a436`): another full send/reassembly completed cleanly, RPC still
+  down, server sent the same `BTC_NACK`, client again reported the
+  generic "No final ACK from relay" instead of receiving it - not a
+  one-off, the same gap every time the final reply happens to be lost.
+- **Fix**: implemented exactly the suggested direction above -
+  `_send_all_chunks()`'s final-ACK wait (`client/sender.py`) now loops
+  up to `max_retries` times, resending the last chunk (via
+  `get_chunk_message()`, same as the original chunk send) between each
+  timed-out wait, checking `_abort_event` before each retry (same
+  pattern as the chunk-retry loop). Only sets the generic "No final ACK
+  from relay" once the whole budget is exhausted, same as before for
+  that final-failure case - no server-side change needed, since the
+  `_completed_sessions` cache lookup was already confirmed to run
+  before the reassembler.
+- **Verified**: new tests in `tests/test_client_sender.py` -
+  `test_final_ack_retry_resends_last_chunk_then_succeeds` (final ACK
+  lost once, last chunk gets resent, succeeds once the ACK arrives) and
+  `test_final_ack_exhausts_retries_then_fails` (final ACK never
+  arrives, exactly `max_retries` resends happen before failing with the
+  same "No final ACK from relay" message as before) - both pass
+  reliably across repeated runs, along with the full existing suite (no
+  regressions).
+- **Observability follow-up** (2026-08-31, prompted directly by
+  real-hardware testing): confirming this fix actually worked was
+  ambiguous from the operator's side alone - seeing the real NACK
+  reason doesn't prove a retry fired, since the reply could just as
+  easily have arrived on the very first try. Two gaps compounded this:
+  (1) `btcmesh_client_gui.py` had no file logger at all - every
+  send-related message only ever went to the on-screen `status_log`
+  widget, invisible to log-based diagnosis; (2) `on_chunk_sending`'s
+  resend of the last chunk was indistinguishable from an ordinary
+  chunk (re)send in both the log and the UI. Fixed by: adding a
+  `client_gui_logger` (via `core/logger_setup.py`, mirroring
+  `btcmesh_client_cli.py`'s existing `cli_logger` pattern) writing to
+  `logs/btcmesh_client_gui.log`; and adding an `is_final_ack_retry`
+  parameter to `on_chunk_sending` (`client/sender.py`, plus both
+  `btcmesh_client_gui.py`'s and `btcmesh_client_cli.py`'s callback
+  implementations) so a final-ack-triggered resend now reads
+  distinctly - "Resending last chunk N/N to request final ACK (retry
+  X)..." - in both the file log and the GUI's own Activity Log,
+  instead of looking identical to a normal chunk send. `attempt`
+  for a final-ack retry is a separate 1-indexed counter (1 = first
+  resend) rather than reusing `send_session.retry_counts`, which
+  tracks ordinary per-chunk delivery retries and wouldn't reliably
+  distinguish the two cases (this chunk may already have delivered
+  cleanly on its first try, leaving that counter at 0 regardless).
+  Verified with new tests: `test_final_ack_retry_resends_last_chunk_then_succeeds`
+  now also asserts the exact `on_chunk_sending` call sequence
+  (`is_final_ack_retry=False` then `True`), and
+  `test_chunk_sending_final_ack_retry_shows_distinct_message` in
+  `tests/test_btcmesh_client_gui.py` covers the widget-facing message.
+- **Widened to every Activity Log message, same day**: the initial fix
+  above only instrumented the send-specific callbacks directly - live
+  testing immediately surfaced a message from a completely different
+  code path ("Device is initializing, please wait...",
+  `_connect_with_retry()`'s transient-port-busy retry) that still had
+  no file trace at all. Rather than keep instrumenting call sites one
+  at a time, refactored to a single `self._log(msg, color)` helper on
+  `btcmesh_client_gui.py`'s `BTCMeshGUI` that every one of its ~12
+  direct `status_log.add_message()` call sites now routes through (scan
+  status, device/node-fetch results, send-start/error messages, etc.),
+  plus the generic `action.log_messages` loop in `_handle_result()` -
+  the single place *every* result-queue-originated message (including
+  `chunk_sending`/`wire_sent`/`progress`/`wire_received`) ultimately
+  reaches the widget, which made the earlier direct instrumentation in
+  those callbacks redundant, so it was removed. The one exception is
+  the send-success message, which never produces an
+  `action.log_messages` entry (only `show_success_popup`) - kept as a
+  direct `client_gui_logger.info()` call for that one case. Net effect:
+  every message that ever reaches the client GUI's Activity Log now
+  also reaches `logs/btcmesh_client_gui.log`, with no per-call-site
+  instrumentation required going forward - closes the observability gap
+  completely rather than just for the one message type this issue
+  originally needed. Incidentally surfaced potential new evidence for
+  Issue 61's still-open "remainder" question (whether the raw pyserial
+  error text actually contains "busy"/"resource temporarily
+  unavailable") - not yet confirmed with the new logging in place, real
+  hardware testing continuing.
+- **Same fix applied to `btcmesh_server_gui.py`**, same day, at the
+  user's direct request: it had the identical gap - every status_log
+  message only ever reached the widget, including Issue 63's blank
+  "Initialization error:" text, which was never traceable in the file
+  log because of this. Same `self._log(msg, color)` helper pattern,
+  routing all ~27 direct call sites through it - but reusing the
+  existing shared `server_logger` (`core/logger_setup.py`) rather than
+  a new logger/file, since that's already the same file
+  `core/reassembler.py`/`server/receiver.py`/`core/rpc_client.py` write
+  to. Server GUI status messages now interleave into the same
+  `logs/btcmesh_server.log` already being read for protocol-level
+  events, with no separate file to also watch.
+
+---
+
+**Issue 65: MeshCore's `MESSAGES_WAITING`-driven message pull can lag
+well behind actual radio receipt, making a genuinely-delivered chunk
+look lost and triggering a spurious client-side retry**
+Open
+
+- Found 2026-08-31 during real-hardware testing: the operator directly
+  observed a chunk arrive on the receiving device's own screen
+  immediately, but the connected companion software (server GUI, in
+  this case) did not recognize/ACK it for a noticeable while afterward
+  - matching a pattern already seen throughout this session as
+  "Duplicate chunk N/M received. Ignoring." warnings on the server,
+  previously assumed to be purely a client-retry artifact.
+- **Root cause, confirmed by reading the `meshcore` library**
+  (`meshcore.py`'s `start_auto_message_fetching()`, lines 430-473): the
+  active message-pull this transport relies on
+  (`transport/meshcore_serial.py`'s `_subscribe()`, Issue 50) is purely
+  event-driven, not polled - it only calls `commands.get_msg()` when the
+  device emits a `MESSAGES_WAITING` event (plus one immediate pull right
+  at subscribe time). If the device is slow to *signal*
+  `MESSAGES_WAITING` after actually receiving the radio packet - a
+  firmware-side notification delay, not something this codebase
+  controls - the message sits queued on the device with nothing
+  pulling it, even though it's already visibly arrived.
+- This gives a much better explanation for at least some of the
+  "Duplicate chunk N/M received" warnings observed throughout Issue
+  59/61/62's real-hardware testing: the chunk genuinely arrived and was
+  radio-delivered on the very first send, but the server's software
+  didn't notice/ACK it before the client's own ACK-wait timeout fired
+  and triggered a legitimate (from the client's perspective) retry -
+  what showed up as a "duplicate" was actually the delayed pull finally
+  catching up, not a real delivery failure needing a resend at all.
+  Previously chalked up entirely to Issue 61's concurrent-connection
+  race or ordinary radio unreliability; this is a third, distinct
+  contributor to the same symptom.
+- Not yet clear whether anything on our side can reduce this - the
+  delay's source (the device's own `MESSAGES_WAITING` signal timing) is
+  firmware behavior, not a codebase bug. Possible directions worth
+  exploring later: whether `get_msg()` should also be pulled on some
+  short poll interval as a supplement to the event-driven trigger (so a
+  late/missed `MESSAGES_WAITING` doesn't leave a message stranded), or
+  whether this is simply an inherent characteristic of the firmware
+  that the existing chunk-retry logic (Issue 62) already tolerates
+  well enough in practice.
+
+---
+
+**Issue 66: on the client GUI specifically, an idle T190 needs a
+physical replug to reconnect - the same device recovers fine via a
+plain reconnect on the server GUI**
+Open
+
+- Found 2026-08-31 during real-hardware testing: after the T190 went
+  idle, the client GUI could not reconnect to it through repeated scans
+  (matching the V3's already-documented sleep/wedge pattern) and needed
+  a physical unplug/replug to recover - but the *same physical device*,
+  when connected from the server GUI instead, reconnects successfully
+  without ever needing a replug.
+- Not yet root-caused - no code has been read/traced for this yet. The
+  asymmetry is the interesting part: both GUIs share the same
+  `transport/meshcore_serial.py`/`core/meshcore_utils.py` connect path,
+  so if the exact same physical device recovers via one GUI's reconnect
+  attempts but not the other's, the difference must be in something
+  each GUI does differently around connect/reconnect timing or
+  sequencing (e.g. the client's `on_device_selected()` fast-path
+  skipping a connect entirely for MeshCore since Issue 61's fix, a
+  different retry cadence between the client's `_connect_with_retry()`
+  and the server's `run_server()` connect step, or simply how many
+  connect attempts each GUI happens to make before the operator gives
+  up and reaches for the cable) rather than the device itself being in
+  a fundamentally different state depending on which GUI last touched
+  it.
+- Next step: trace both GUIs' exact connect/reconnect call sequences
+  side by side for this device to find the actual difference, rather
+  than guessing further.
+
+---
+
+## GUI: UX design review findings (2026-08-31)
+
+Some GUI (styling) issues that were found after reviewing the client and server GUI
+
+**Issue 67: Section labels carry no visual hierarchy - everything reads at
+the same weight**
+Open
+
+- `create_section_label()` (`gui/gui_common.py:372`) gives every section
+  heading identical size/weight/color, so "Your Device:" and "Raw
+  Transaction Hex:" (client) or "Bitcoin RPC Settings:" and "Server
+  Settings:" (server) all look equally important. The orange separators
+  (`create_separator()`) are the only structural device, and they're used
+  inconsistently between the two GUIs - the server GUI inserts one after
+  every section, the client GUI uses only two total - so the two apps that
+  share this component library don't even read the same way as each other.
+- Why it matters: an operator scanning the screen has no visual shortcut to
+  "primary control" vs. "rarely-touched setting" - everything requires
+  actually reading the label text.
+- Fix direction: introduce one more weight tier (e.g. bold + slightly
+  larger for section labels that gate a primary action, or a subtly
+  different background tint per logical group) and apply separators
+  consistently between the two GUIs.
+
+---
+
+**Issue 68: All real-time feedback funnels through one undifferentiated
+scrolling log**
+Open
+
+- Both GUIs route validation errors, connection state, firmware info, and
+  routine wire traffic through the same `StatusLog` widget via `_log()`
+  (`btcmesh_server_gui.py:1049`, `btcmesh_client_gui.py:1075`). Nothing is
+  ever elevated above log-line priority - e.g. "Test failed: Host is
+  required" (`btcmesh_server_gui.py:675`) has the same visual weight as a
+  routine `wire_sent`/`wire_received` line two rows above it.
+- Why it matters: things the operator needs to act on right now (a failed
+  validation, a security-relevant note) are one scroll-away from being
+  missed entirely once more log lines arrive underneath them.
+- Fix direction: a short-lived `Popup` (already used elsewhere in both
+  files, e.g. the success popup) for the handful of "must be noticed now"
+  cases, leaving the log for routine narration.
+
+---
+
+**Issue 69: Two near-identical oranges carry different meanings in the same
+log stream**
+Open
+
+- `COLOR_PRIMARY` (`#FF6B00`, brand accent + "highlight" narrative log
+  lines) and `COLOR_WARNING` (`#FF9800`, actual warnings) are defined one
+  line apart in `gui/gui_common.py:81-84` and both appear in the same
+  scrolling log for different semantic purposes - one says "this is a
+  protocol-status narrative line," the other says "pay attention, this is
+  a warning."
+- Why it matters: they're distinguishable side by side but not from a
+  glance/memory, since they're adjacent hues. A user relying on log color
+  to triage severity at a glance can't reliably tell them apart.
+- Fix direction: pick a warning color further from the brand orange (amber
+  or yellow reads more universally as "caution") so it isn't competing with
+  the brand accent for the same visual slot.
+
+---
+
+**Issue 70: `StatusLog` bottom-anchors under-full content, leaving a
+misleading blank gap above it**
+Open
+
+- `StatusLog.add_message()` (`gui/gui_common.py:249`) always forces
+  `scroll_y = 0` after appending, which is correct once the log overflows
+  the viewport - but while the log is still short, this pins the existing
+  entries to the bottom of the ScrollView, leaving a blank gap above them
+  (visible in `project/images/gui_main.png`, between "Activity Log:" and
+  the first log line).
+- Why it matters: on first launch, before the log fills up, this reads
+  like a rendering bug ("why is there dead space above my log?") rather
+  than "empty log, more room below."
+- Fix direction: only force `scroll_y = 0` once the inner layout's height
+  actually exceeds the ScrollView's viewport height; otherwise let it
+  anchor to the top.
+
+---
+
+**Issue 71: RPC Host field is masked by default despite not being a secret
+that needs hiding while typing**
+Open
+
+- `_build_rpc_settings()` (`btcmesh_server_gui.py:411-413`) passes
+  `password=True` for the **Host** field, the same treatment as the actual
+  Password field below it. A `.onion` address (the exact hint text shown:
+  `'127.0.0.1 or xyz.onion'`) is precisely the kind of string a user needs
+  to visually verify while typing or pasting it - a single wrong character
+  silently breaks the RPC connection with no early warning.
+- Why it matters: masking a field the user needs to proofread trades a
+  minor privacy nicety (not shoulder-surfing the RPC endpoint) for a much
+  more common failure mode (an unnoticed typo in a long onion address).
+  The Show/Hide toggle mitigates it, but the *default* state hides
+  something the operator is actively trying to get right.
+- Fix direction: default Host to visible; reserve masking for Password and
+  the Cookie path, which are the fields actually worth hiding by default.
+
+---
+
+**Issue 72: Server GUI's settings sections stay fully rendered while
+disabled during a run, starving Active Sessions/Activity Log of space**
+Open
+
+- Once the server is running, `_set_rpc_settings_enabled(False)`,
+  `_set_meshtastic_settings_enabled(False)`, and
+  `_set_timeout_settings_enabled(False)` (called from `on_start_pressed()`,
+  `btcmesh_server_gui.py:850-852`) gray out the RPC/Device/Server settings
+  sections but leave all of them fully rendered at full height - five
+  stacked sections of inputs nobody is touching, above the two things an
+  operator actually watches during normal operation: Active Sessions
+  (fixed at 115px total, `_build_active_sessions_section()`,
+  `btcmesh_server_gui.py:259-323`, showing only 3 sessions before
+  scrolling) and the Activity Log.
+- Why it matters: this is the GUI's primary *steady-state* view - the
+  server sits and relays for most of its runtime - and it's the view most
+  starved for space by content that's provably inert at that exact moment
+  (disabled, non-interactive).
+- Fix direction: Kivy ships a real `Accordion`/`AccordionItem` widget
+  (`kivy.uix.accordion`) suited exactly to this - collapse RPC Settings,
+  Device Settings, and Server Settings into accordion sections that
+  auto-collapse when `is_running` becomes `True` (and re-expand on stop),
+  freeing the reclaimed height for Active Sessions and the Activity Log.
+  This is the single highest-leverage change of this whole review pass.
+
+---
+
+**Issue 73: Plaintext-password-storage warning is a one-off scrolling log
+line instead of a persistent notice**
+Open
+
+- `_on_save_settings()` (`btcmesh_server_gui.py:788-790`) logs "Note:
+  Password is stored in plain text in .env file" through the same
+  transient `_log()` call as everything else, immediately after a save.
+- Why it matters: this is a standing fact about the system's security
+  posture, not a one-time event - once it scrolls off-screen (or the log
+  is cleared), nothing on screen communicates it again, even though it
+  remains true for as long as the `.env` file exists.
+- Fix direction: a small persistent caption under the Password field
+  itself (e.g. "stored in plain text"), always visible while that field is
+  shown, rather than a log line that scrolls away.
+
+---
+
+**Issue 74: "Test Connection" only covers Bitcoin RPC, not the mesh
+transport, creating an asymmetric expectation**
+Open
+
+- `_on_test_connection()` (`btcmesh_server_gui.py:665-714`) tests only the
+  Bitcoin RPC settings. There is no equivalent "test" affordance for the
+  Meshtastic/MeshCore device settings sitting directly above it in the same
+  layout - the first real connection attempt for the mesh device is Start
+  Server itself.
+- Why it matters: an operator who just used Test Connection to validate
+  RPC before committing may reasonably expect the same option for the
+  device settings right next to it, and be surprised there isn't one.
+- Fix direction: either a short explanatory caption near the Scan button
+  ("no separate test - Start Server is the first connection attempt"), or
+  extend the existing Scan+probe flow into an explicit "Test Device"
+  affordance for parity.
+
+---
+
+**Issue 75: Client GUI leaves the known-nodes Spinner/Scan button visible
+but disabled for MeshCore instead of removing them**
+Open
+
+- `on_transport_selected()` (`btcmesh_client_gui.py:616-618`) sets
+  `self.node_spinner.disabled = is_meshcore` and
+  `self.refresh_nodes_btn.disabled = is_meshcore` rather than removing
+  those widgets - MeshCore has no "known contacts" destination-picker
+  equivalent (a deliberate Story 30.4 scope decision), so for that
+  transport these controls are permanently inert, yet still occupy a full
+  row of vertical space in an already-tight 450x700 window.
+- Why it matters: in a window this cramped, two grayed-out, permanently
+  non-functional controls are a real space cost, not just a cosmetic
+  nit - and a new user has no obvious reason from the UI alone why they're
+  disabled versus just "not loaded yet."
+- Fix direction: since Kivy layout is manual (`add_widget`/`remove_widget`,
+  no conditional rendering), swap this row out of the layout entirely (or
+  collapse its height to 0) when MeshCore is selected, reclaiming the space
+  for the destination field, which becomes the sole input for that
+  transport anyway.
+
+---
+
+**Issue 76: Destination Spinner+TextInput pairing has no visual/textual cue
+that they're linked**
+Open
+
+- The destination row (`btcmesh_client_gui.py:470-499`) places the known-
+  nodes `Spinner` and the manual-entry `TextInput` side by side at equal
+  width, styled identically - visually two independent fields, when
+  actually the Spinner is a convenience picker that *fills in* the
+  TextInput (`on_node_selected()`, `btcmesh_client_gui.py:844-857`), which
+  is the actual field read at send time.
+- Why it matters: nothing in the layout communicates the one-way
+  relationship - a new user has to experiment (pick a node, notice the
+  other box changed) to learn it, especially with a known-nodes list that
+  can run into the dozens/hundreds of entries.
+- Fix direction: a small connecting glyph (e.g. an arrow) between the two,
+  or visually de-emphasizing the Spinner slightly relative to the
+  TextInput to signal "picker" vs. "source of truth."
+
+---
+
+**Issue 77: History popup entries give no interactive affordance before
+being clicked**
+Open
+
+- `_create_history_entry_widget()` (`btcmesh_server_gui.py:1369-1500`)
+  binds `on_touch_down` directly on a plain `BoxLayout`
+  (`container.bind(on_touch_down=self._on_history_entry_touch)`,
+  line 1393) with no hover/pressed visual state at all - on a desktop
+  window (Kivy's touch-first widget model has no built-in desktop hover),
+  there is nothing signaling a given entry is clickable until the user
+  actually clicks it and the detail popup appears.
+- Why it matters: the colored background (dark green/red by status) reads
+  as informational, not interactive - a user has no visual reason to
+  expect clicking it does anything.
+- Fix direction: desktop hover is achievable in Kivy even though it isn't
+  automatic - binding to `Window.mouse_pos` to detect when the cursor is
+  over a given entry and applying a lighter highlight/border, or simpler,
+  adding a small chevron ("›") to each row as a static "more detail
+  available" cue.
+
 ---
 
 ## Summary
@@ -2654,3 +4072,31 @@ silently does nothing** ✅ FIXED (2026-08-26)
 | 47    | Server GUI's Scan button re-enables before device identity-probing actually finishes, and the probe's completion sentinel had no handler at all (silently discarded) | Minor (UX - misleading "ready" state) | **FIXED** |
 | 48    | `DeviceWatchdog`'s recovery-candidate scan never filters out the relay board's own control port, corrupting its serial buffer and breaking the very next `power_cycle()` call | **Major (breaks EPIC 5's power-cycle recovery in any relay-equipped deployment)** | **FIXED** |
 | 49    | `LOG_LEVEL` documented in `.env.example` but never actually read anywhere - `core/logger_setup.py` hardcodes INFO | Minor (dead config knob) | **FIXED** |
+| 50    | `MeshCoreSerialTransport` never pulls queued messages, so `CONTACT_MSG_RECV` never fires for real incoming messages | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
+| 51    | `DEFAULT_CHUNK_SIZE` (170) exceeds MeshCore's hard 160-byte per-message cap, so every chunk send fails | **Major (breaks MeshCore relay entirely - confirmed via real hardware)** | **FIXED** |
+| 52    | `_on_event` deadlocks against its own transport when the receive handler sends - misdiagnosed at first as a MeshCore routing delay | **Major (blocked any multi-chunk relay - confirmed via real hardware, both diagnosis and fix)** | **FIXED** |
+| 53    | `disconnect()` has no timeout guard, unlike `send()` (Issue 21) - Stop Server hung indefinitely inside the `meshtastic` library's own `iface.close()` | **Major (requires manual Ctrl+C to recover)** | **FIXED**, real-hardware verified |
+| 54    | MeshCore device dropdown shows name + node ID but never the physical hardware/board model | Minor (UX enhancement) | **FIXED**, real-hardware verified |
+| 55    | MeshCore relay is noticeably slower than the equivalent Meshtastic relay - not yet root-caused | Medium (performance, unexplained) | Open |
+| 56    | `connect()` has no timeout on its port-open step - confirmed to hang both the background device scan and the primary Start Server flow, Issues 21/53's pattern, third occurrence | **Major (can hang the primary Start Server workflow, not just a background scan)** | **FIXED**, real-hardware verified |
+| 57    | `probe_relay_board_id()` has no timeout on its port-open step - the actual cause of the "endlessly scanning" symptom, one call site earlier than Issue 56, fourth occurrence of the same pattern | **Major (blocked the entire sequential probe loop indefinitely)** | **FIXED**, real-hardware verified |
+| 58    | MeshCore Send Transaction shows a raw `{'error_code': ..., 'code_string': ...}` dict instead of a readable message when the destination node ID is unknown | Minor (UX - unclear error message) | Open |
+| 59    | MeshCore connects could leave the device unresponsive until physically reconnected - root-caused to `_CONNECT_TIMEOUT_SECONDS` matching the meshcore library's own internal 15.0s timeout, racing its failure-cleanup path | **Medium-Major (could block a real connect, not just noisy logs)** | **FIXED** (main functional impact), real-hardware verified; low-frequency GC noise remains as a smaller follow-up |
+| 60    | Switching MeshCore -> Meshtastic can hang the resulting scan ~20s on the first candidate - a just-disconnected device entering sleep gets re-probed mid-transition; Issue 56's bound is what eventually releases it | Minor (bounded stall, not a hang - device-timing race) | Open |
+| 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
+| 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
+| 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |
+| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | **FIXED** |
+| 65    | MeshCore's `MESSAGES_WAITING`-driven message pull can lag behind actual radio receipt, making a genuinely-delivered chunk look lost and triggering a spurious client retry (a likely third contributor to "Duplicate chunk" warnings, alongside Issue 61's race and ordinary radio unreliability) | Minor-Medium (extra retries/latency, not data loss - firmware-timing dependent, may not be fixable in this codebase) | Open |
+| 66    | On the client GUI specifically, an idle T190 needs a physical replug to reconnect - the same device recovers fine via a plain reconnect on the server GUI | Medium (client-only reliability gap, not yet root-caused) | Open |
+| 67    | Section labels carry no visual hierarchy - everything reads at the same weight | Minor (UX polish) | Open |
+| 68    | All real-time feedback funnels through one undifferentiated scrolling log | Minor (UX polish) | Open |
+| 69    | Two near-identical oranges (`COLOR_PRIMARY`/`COLOR_WARNING`) carry different meanings in the same log stream | Minor (UX polish) | Open |
+| 70    | `StatusLog` bottom-anchors under-full content, leaving a misleading blank gap above it | Minor (UX polish) | Open |
+| 71    | RPC Host field is masked by default despite not being a secret that needs hiding while typing | Minor (UX - error-prone default) | Open |
+| 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | Open |
+| 73    | Plaintext-password-storage warning is a one-off scrolling log line instead of a persistent notice | Minor (UX/security disclosure) | Open |
+| 74    | "Test Connection" only covers Bitcoin RPC, not the mesh transport, creating an asymmetric expectation | Minor (UX polish) | Open |
+| 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | Open |
+| 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
+| 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |

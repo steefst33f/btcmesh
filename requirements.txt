@@ -1,4 +1,5 @@
 meshtastic
+meshcore
 python-dotenv
 requests[socks]
 kivy

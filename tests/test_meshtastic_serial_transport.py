@@ -165,6 +165,32 @@ class TestMeshtasticSerialTransportConnect(unittest.TestCase):
             transport.connect(None)
         self.assertIn("Multiple Meshtastic devices detected", str(ctx.exception))
 
+    def test_connect_raises_timeout_error_when_port_open_blocks(self):
+        """Issue 56: SerialInterface(connectNow=False) still does a
+        blocking OS-level open() internally, which can hang indefinitely
+        against a wedged device (confirmed via real-hardware sampling -
+        the underlying call never raises on its own, so nothing could
+        previously time it out). connect() must give up after
+        _CONNECT_TIMEOUT_SECONDS rather than hanging forever, and (unlike
+        disconnect()'s Issue 53 fix) must raise, matching connect()'s
+        existing "raises on any failure" contract."""
+        release_event = threading.Event()
+
+        def blocking_construction(*args, **kwargs):
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        self.mock_meshtastic.serial_interface.SerialInterface.side_effect = blocking_construction
+
+        transport = MeshtasticSerialTransport()
+        transport._CONNECT_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertRaises(TransportConnectionError) as ctx:
+            transport.connect("/dev/ttyUSB0")
+        self.assertIn("timed out", str(ctx.exception))
+        self.assertFalse(transport.is_connected)
+
+        release_event.set()  # let the abandoned worker thread finish, tidy shutdown
+
     def test_connect_closes_iface_when_handshake_times_out(self):
         """Test that a failure during the handshake (connect()/waitForConfig(),
         which runs after the serial port is already open) still closes the
@@ -352,6 +378,36 @@ class TestMeshtasticSerialTransportDisconnect(unittest.TestCase):
 
         # Verify unsubscribe was called
         self.mock_pubsub.pub.unsubscribe.assert_called()
+
+    def test_disconnect_does_not_hang_or_raise_when_close_blocks(self):
+        """Issue 53: a device with a backed-up outgoing queue can make
+        iface.close() block indefinitely (observed on real hardware -
+        the meshtastic library's own "Waiting for free space in TX
+        Queue" debug loop). disconnect() must give up after
+        _SEND_TIMEOUT_SECONDS rather than hanging forever, and - unlike
+        send() - must not raise either, since every real caller treats
+        disconnect() as safe-to-call with no exception handling of its
+        own (e.g. DeviceWatchdog._recover_once())."""
+        release_event = threading.Event()
+
+        def blocking_close():
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        mock_iface = MockSerialInterface()
+        mock_iface.close = MagicMock(side_effect=blocking_close)
+        self.mock_meshtastic.serial_interface.SerialInterface.return_value = mock_iface
+
+        transport = MeshtasticSerialTransport()
+        transport.connect()
+        transport._SEND_TIMEOUT_SECONDS = 0.05  # keep the test fast
+
+        with self.assertLogs('transport.meshtastic_serial', level='WARNING') as ctx:
+            transport.disconnect()  # must return, not hang or raise
+
+        self.assertFalse(transport.is_connected)
+        self.assertTrue(any('did not return' in msg for msg in ctx.output))
+
+        release_event.set()  # let the abandoned worker thread finish, tidy shutdown
 
 
 # ---------------------------------------------------------------------------
@@ -1076,10 +1132,10 @@ class TestMeshtasticSerialTransportCheckAlive(unittest.TestCase):
 class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase):
     """Tests for scan_for_reconnect_candidates() - the BaseTransport method
     DeviceWatchdog (core/device_watchdog.py) uses instead of importing
-    core.meshtastic_utils directly, keeping it transport-agnostic."""
+    core.device_scan directly, keeping it transport-agnostic."""
 
     def test_returns_paths_from_detailed_scan(self):
-        from core.meshtastic_utils import DeviceInfo
+        from core.device_scan import DeviceInfo
 
         transport = MeshtasticSerialTransport()
         devices = [
@@ -1087,7 +1143,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
             DeviceInfo(path="/dev/ttyUSB1", serial_number=None, description="y"),
         ]
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
@@ -1099,7 +1155,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
     def test_returns_empty_list_when_no_devices(self):
         transport = MeshtasticSerialTransport()
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed", return_value=[]
+            "core.device_scan.scan_serial_devices_detailed", return_value=[]
         ), patch(
             "transport.power_control.probe_relay_board_id", return_value=None
         ):
@@ -1113,7 +1169,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
         filtering has to happen here - otherwise recovery sends the
         relay board a Meshtastic handshake, corrupting its serial
         buffer and breaking the next power_cycle() call."""
-        from core.meshtastic_utils import DeviceInfo
+        from core.device_scan import DeviceInfo
 
         transport = MeshtasticSerialTransport()
         devices = [
@@ -1125,7 +1181,7 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
             return "000E55D8" if path == "/dev/ttyRELAY" else None
 
         with patch(
-            "core.meshtastic_utils.scan_meshtastic_devices_detailed",
+            "core.device_scan.scan_serial_devices_detailed",
             return_value=devices,
         ), patch(
             "transport.power_control.probe_relay_board_id", side_effect=fake_probe
@@ -1133,6 +1189,39 @@ class TestMeshtasticSerialTransportScanForReconnectCandidates(unittest.TestCase)
             result = transport.scan_for_reconnect_candidates()
 
         self.assertEqual(result, ["/dev/ttyUSB0"])
+
+
+class TestMeshtasticSerialTransportValidateDestination(unittest.TestCase):
+    """Story 30.2: destination-format validation, moved here from
+    core/protocol.py's Meshtastic-only free function - same rule, same
+    messages, no behavior change."""
+
+    def test_valid_destination(self):
+        MeshtasticSerialTransport().validate_destination("!abcdef12")  # no raise
+
+    def test_empty_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination("")
+
+    def test_missing_bang_prefix_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination("abcdef12")
+
+    def test_none_destination_raises(self):
+        with self.assertRaises(ValueError):
+            MeshtasticSerialTransport().validate_destination(None)
+
+
+class TestMeshtasticSerialTransportMaxChunkSize(unittest.TestCase):
+    """Issue 51: chunk size is now transport-specific - Meshtastic keeps
+    its existing value, no behavior change."""
+
+    def test_max_chunk_size_matches_default_chunk_size(self):
+        from core.constants import DEFAULT_CHUNK_SIZE
+
+        self.assertEqual(
+            MeshtasticSerialTransport().max_chunk_size, DEFAULT_CHUNK_SIZE
+        )
 
 
 if __name__ == "__main__":

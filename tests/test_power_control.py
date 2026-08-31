@@ -5,6 +5,7 @@ SerialRelayPowerControl's serial protocol handling. No real hardware/uhubctl
 binary/ESP32 needed - subprocess.run and serial.Serial are mocked throughout.
 """
 import subprocess
+import threading
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -118,6 +119,18 @@ def _mock_serial(mock_serial_cls, response=b"OK\n"):
     return mock_port
 
 
+def _mock_serial_direct(mock_serial_cls, response=b"OK\n"):
+    """Configure a patched serial.Serial class to return a mock port
+    directly from the constructor (not via the context-manager protocol) -
+    probe_relay_board_id() (Issue 57) constructs the port on a worker
+    thread and uses it directly, rather than via `with serial.Serial(...)
+    as ser:`."""
+    mock_port = MagicMock()
+    mock_port.readline.return_value = response
+    mock_serial_cls.return_value = mock_port
+    return mock_port
+
+
 class TestSerialRelayPowerControlInvocation(unittest.TestCase):
     """Tests for the exact serial command SerialRelayPowerControl sends."""
 
@@ -225,7 +238,7 @@ class TestProbeRelayBoardId(unittest.TestCase):
 
     def test_id_response_returns_unique_id(self):
         with patch("transport.power_control.serial.Serial") as mock_serial_cls:
-            mock_port = _mock_serial(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
+            mock_port = _mock_serial_direct(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
 
             result = probe_relay_board_id("/dev/ttyUSB0")
 
@@ -236,7 +249,7 @@ class TestProbeRelayBoardId(unittest.TestCase):
         """Must never send anything that could be mistaken for a real
         CYCLE command."""
         with patch("transport.power_control.serial.Serial") as mock_serial_cls:
-            mock_port = _mock_serial(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
+            mock_port = _mock_serial_direct(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
 
             probe_relay_board_id("/dev/ttyUSB0")
 
@@ -250,7 +263,7 @@ class TestProbeRelayBoardId(unittest.TestCase):
         the ID command) - neither confirms this is the relay board."""
         for response in (b"\x94\xc3\x00\x02garbage", b"ERR unknown command\n"):
             with patch("transport.power_control.serial.Serial") as mock_serial_cls:
-                _mock_serial(mock_serial_cls, response=response)
+                _mock_serial_direct(mock_serial_cls, response=response)
 
                 result = probe_relay_board_id("/dev/ttyUSB0")
 
@@ -258,7 +271,7 @@ class TestProbeRelayBoardId(unittest.TestCase):
 
     def test_no_response_returns_none(self):
         with patch("transport.power_control.serial.Serial") as mock_serial_cls:
-            _mock_serial(mock_serial_cls, response=b"")
+            _mock_serial_direct(mock_serial_cls, response=b"")
 
             result = probe_relay_board_id("/dev/ttyUSB0")
 
@@ -284,11 +297,36 @@ class TestProbeRelayBoardId(unittest.TestCase):
 
     def test_custom_baudrate_and_timeout_are_used(self):
         with patch("transport.power_control.serial.Serial") as mock_serial_cls:
-            _mock_serial(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
+            _mock_serial_direct(mock_serial_cls, response=b"BTCMESH-RELAY 246F28AECB34\n")
 
             probe_relay_board_id("/dev/ttyUSB0", baudrate=9600, timeout=1.5)
 
             mock_serial_cls.assert_called_once_with("/dev/ttyUSB0", 9600, timeout=1.5)
+
+    def test_open_blocking_forever_returns_none_not_hang(self):
+        """Issue 57: serial.Serial()'s own port-open can block forever -
+        the timeout= constructor arg only bounds the subsequent
+        readline(), not the open itself. probe_relay_board_id() must give
+        up and return None (its documented 'never raises' contract)
+        rather than hanging indefinitely."""
+        release_event = threading.Event()
+
+        def blocking_open(*args, **kwargs):
+            release_event.wait()  # never set - simulates an indefinite hang
+
+        with patch(
+            "transport.power_control.serial.Serial", side_effect=blocking_open
+        ):
+            with patch("transport.power_control._OPEN_TIMEOUT_SECONDS", 0.05):
+                with self.assertLogs(
+                    "transport.power_control", level="WARNING"
+                ) as cm:
+                    result = probe_relay_board_id("/dev/ttyUSB0")
+
+        self.assertIsNone(result)
+        self.assertTrue(any("did not return" in msg for msg in cm.output))
+
+        release_event.set()  # let the abandoned worker thread finish, for cleanup
 
 
 if __name__ == "__main__":

@@ -151,6 +151,16 @@ class BaseTransport(ABC):
         ...
 
     @abstractmethod
+    def validate_destination(self, destination: str) -> None:
+        """Validate a destination identifier's structural format for this
+        transport's addressing scheme.
+
+        Raises:
+            ValueError: If destination is empty or malformed for this transport.
+        """
+        ...
+
+    @abstractmethod
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Return candidate connection targets to try reconnecting to
         (e.g. serial ports for a serial transport, discovered addresses
@@ -160,6 +170,16 @@ class BaseTransport(ABC):
         means (a path? a BLE address?) depends entirely on the concrete
         transport. Returns an empty list rather than raising if scanning
         isn't possible."""
+        ...
+
+    @property
+    @abstractmethod
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character payload size this transport can carry in a
+        single chunk message, accounting for this transport's own
+        per-message size limit and BTCMesh's wire-format framing overhead
+        (Issue 51 - a size tuned for one transport can be silently rejected
+        outright by another's stricter per-message cap)."""
         ...
 
     @property

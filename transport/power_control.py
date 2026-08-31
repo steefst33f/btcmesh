@@ -8,11 +8,15 @@ unplug/replug the device.
 """
 from __future__ import annotations
 
+import logging
 import subprocess
+import threading
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import serial
+
+logger = logging.getLogger(__name__)
 
 
 class PowerControlError(Exception):
@@ -101,9 +105,9 @@ class SerialRelayPowerControl(BasePowerControl):
     One instance controls one channel (one device), mirroring how
     UhubctlPowerControl is constructed per hub/port. The serial port is
     always explicit - never auto-detected - since this project's own
-    device-scanning helper (core.meshtastic_utils.scan_meshtastic_devices(),
-    which filters candidates by a VID blacklist rather than a whitelist)
-    would otherwise treat this board's own serial port as a false-positive
+    device-scanning helper (core.device_scan.scan_serial_devices(), which
+    filters candidates by a VID blacklist rather than a whitelist) would
+    otherwise treat this board's own serial port as a false-positive
     device candidate.
     """
 
@@ -133,6 +137,15 @@ class SerialRelayPowerControl(BasePowerControl):
             raise PowerControlError(f"Relay board error: {response}")
 
 
+_OPEN_TIMEOUT_SECONDS: float = 5.0
+# Bounds serial.Serial(...)'s own port-open step (Issue 57) - the
+# `timeout=` constructor arg only bounds the subsequent readline(), not
+# the open itself, which can block forever the same way Issues 21/53/56
+# found elsewhere. Generous relative to a healthy port's near-instant
+# open, but far shorter than a full connect/handshake bound since this
+# is just a raw port claim with no protocol handshake involved.
+
+
 def probe_relay_board_id(port: str, baudrate: int = 115200, timeout: float = 2.0) -> Optional[str]:
     """Quick, non-destructive check for whether `port` is a Story 26.7
     relay board - not a full connect, just a short raw-serial round trip
@@ -154,12 +167,41 @@ def probe_relay_board_id(port: str, baudrate: int = 115200, timeout: float = 2.0
     the candidate as an unknown, ordinary probe target, never to assume
     it's safe to skip.
     """
+    outcome: dict = {}
+
+    def _do_open() -> None:
+        try:
+            outcome["ser"] = serial.Serial(port, baudrate, timeout=timeout)
+        except (serial.SerialException, OSError) as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_do_open, daemon=True)
+    worker.start()
+    worker.join(timeout=_OPEN_TIMEOUT_SECONDS)
+
+    if worker.is_alive():
+        # Can't forcibly stop the underlying blocked open() - abandoned,
+        # not killed, same as send()/disconnect()/connect()'s worker
+        # threads elsewhere in this codebase.
+        logger.warning(
+            "probe_relay_board_id(%s): serial.Serial() open did not "
+            "return within %ss - device may be unresponsive; treating "
+            "as not a relay board",
+            port, _OPEN_TIMEOUT_SECONDS,
+        )
+        return None
+
+    if "error" in outcome:
+        return None
+
+    ser = outcome["ser"]
     try:
-        with serial.Serial(port, baudrate, timeout=timeout) as ser:
-            ser.write(b"ID\n")
-            response = ser.readline().decode("ascii", errors="replace").strip()
+        ser.write(b"ID\n")
+        response = ser.readline().decode("ascii", errors="replace").strip()
     except (serial.SerialException, OSError):
         return None
+    finally:
+        ser.close()
 
     prefix = "BTCMESH-RELAY "
     if response.startswith(prefix):

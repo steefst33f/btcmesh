@@ -9,6 +9,7 @@ import logging
 import threading
 from typing import Any, List, Optional
 
+from core.constants import DEFAULT_CHUNK_SIZE
 from transport.base import (
     BaseTransport,
     MessageHandler,
@@ -58,6 +59,15 @@ class MeshtasticSerialTransport(BaseTransport):
     # dump` mid-stall (see Issue 46's write-up). check_alive() instead
     # builds its own short-lived Timeout below, scoped to just this one
     # probe, without touching the interface's other reply-wait behavior.
+    _CONNECT_TIMEOUT_SECONDS: float = 20.0
+    # Bounds SerialInterface(connectNow=False)'s own port-open step
+    # (Issue 56) - confirmed via real-hardware `sample` traces (100% of
+    # samples sitting in the raw OS open() syscall, no bound of any kind)
+    # that a wedged/unresponsive device can block this forever, hanging
+    # both the background device-scan probe and the primary Start Server
+    # flow. Generous enough for a genuine connect (can take a few real
+    # seconds, especially right after a power cycle) while still a huge
+    # improvement over an unbounded hang.
 
     def __init__(self) -> None:
         self._iface: Any = None
@@ -96,37 +106,73 @@ class MeshtasticSerialTransport(BaseTransport):
                 "Install it with: pip install meshtastic"
             )
 
-        try:
-            # connectNow=False: open the serial port but don't perform the
-            # handshake yet. meshtastic's SerialInterface otherwise does the
-            # handshake inside its own constructor, so if it fails partway
-            # through (e.g. a timeout waiting for the device's config), the
-            # assignment to `iface` never completes and we have no reference
-            # to close the already-opened port/reader thread - leaking an
-            # exclusive OS-level lock on the port for the rest of the process
-            # lifetime. Doing the handshake ourselves below keeps `iface`
-            # reachable so we can clean it up on failure.
-            if device_path:
-                iface = meshtastic.serial_interface.SerialInterface(
-                    devPath=device_path, connectNow=False
-                )
-            else:
-                # Auto-detect device if no path provided
-                iface = meshtastic.serial_interface.SerialInterface(connectNow=False)
-        except SystemExit as exc:
-            # meshtastic.util.findPorts()-based auto-detect (devPath=None)
-            # calls meshtastic.util.our_exit() - print() + sys.exit() -
-            # when more than one candidate serial port is found, rather
-            # than raising a catchable exception. SystemExit is a
-            # BaseException, not an Exception, so it would otherwise skip
-            # the `except Exception` below entirely and silently kill
-            # whatever thread called connect() (Issue 41). Only reachable
-            # from the auto-detect branch above.
+        # connectNow=False: open the serial port but don't perform the
+        # handshake yet. meshtastic's SerialInterface otherwise does the
+        # handshake inside its own constructor, so if it fails partway
+        # through (e.g. a timeout waiting for the device's config), the
+        # assignment to `iface` never completes and we have no reference
+        # to close the already-opened port/reader thread - leaking an
+        # exclusive OS-level lock on the port for the rest of the process
+        # lifetime. Doing the handshake ourselves below keeps `iface`
+        # reachable so we can clean it up on failure.
+        #
+        # This construction call itself is bounded on a worker thread
+        # (Issue 56): it can block forever in the underlying OS open()
+        # syscall against a wedged device, confirmed via real-hardware
+        # `sample` traces - never raises on its own, so nothing here could
+        # previously time it out. Mirrors send()'s Issue 21 fix: run it on
+        # a daemon thread, join(timeout=...), and raise on timeout - unlike
+        # disconnect() (Issue 53), connect() already has a "raises on any
+        # failure" contract every real caller expects, so timing out raises
+        # here rather than swallowing. The exception dispatch below
+        # (SystemExit / NoDeviceError / generic) is unchanged from before -
+        # only where the construction call itself runs has changed.
+        outcome: dict = {}
+
+        def _do_open() -> None:
+            try:
+                if device_path:
+                    outcome["iface"] = meshtastic.serial_interface.SerialInterface(
+                        devPath=device_path, connectNow=False
+                    )
+                else:
+                    # Auto-detect device if no path provided
+                    outcome["iface"] = meshtastic.serial_interface.SerialInterface(connectNow=False)
+            except BaseException as exc:
+                # BaseException, not Exception: SystemExit (Issue 41, see
+                # below) must be caught here too, or it would just
+                # silently end this worker thread instead of reaching the
+                # calling thread's dispatch below.
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=_do_open, daemon=True)
+        worker.start()
+        worker.join(timeout=self._CONNECT_TIMEOUT_SECONDS)
+
+        if worker.is_alive():
+            # Can't forcibly stop the underlying blocked open() - it's
+            # abandoned, not killed, same as send()/disconnect()'s worker
+            # threads (Python has no API to force-stop a thread).
             raise TransportConnectionError(
-                "Multiple Meshtastic devices detected - please select a "
-                "specific device instead of Auto-detect"
-            ) from exc
-        except Exception as exc:
+                f"Connect timed out after {self._CONNECT_TIMEOUT_SECONDS}s - "
+                "device may be unresponsive"
+            )
+
+        if "error" in outcome:
+            exc = outcome["error"]
+            if isinstance(exc, SystemExit):
+                # meshtastic.util.findPorts()-based auto-detect (devPath=None)
+                # calls meshtastic.util.our_exit() - print() + sys.exit() -
+                # when more than one candidate serial port is found, rather
+                # than raising a catchable exception. SystemExit is a
+                # BaseException, not an Exception, so it would otherwise skip
+                # the check below entirely and silently kill whatever thread
+                # called connect() (Issue 41). Only reachable from the
+                # auto-detect branch above.
+                raise TransportConnectionError(
+                    "Multiple Meshtastic devices detected - please select a "
+                    "specific device instead of Auto-detect"
+                ) from exc
             err_type = type(exc).__name__
             if (
                 err_type == "NoDeviceError"
@@ -138,6 +184,8 @@ class MeshtasticSerialTransport(BaseTransport):
             raise TransportConnectionError(
                 f"Failed to connect: {exc}"
             ) from exc
+
+        iface = outcome["iface"]
 
         try:
             iface.connect()
@@ -197,17 +245,45 @@ class MeshtasticSerialTransport(BaseTransport):
     def disconnect(self) -> None:
         """Disconnect from the Meshtastic device.
 
-        Safe to call even if not currently connected.
+        Safe to call even if not currently connected - never raises,
+        including if close() itself hangs (Issue 53: a device with a
+        backed-up outgoing queue can make the meshtastic library's
+        iface.close() block indefinitely; bounded the same way send()
+        already is - Issue 21 - since every real caller of disconnect()
+        treats it as safe-to-call with no exception handling of its own,
+        e.g. DeviceWatchdog._recover_once()).
         Does NOT clear the message handler (preserved for reconnect).
         """
         if self._subscribed:
             self._unsubscribe()
 
         if self._iface is not None:
-            try:
-                self._iface.close()
-            except Exception:
-                pass
+            iface = self._iface
+            outcome: dict = {}
+
+            def _do_close() -> None:
+                try:
+                    iface.close()
+                except Exception as exc:
+                    outcome["error"] = exc
+
+            worker = threading.Thread(target=_do_close, daemon=True)
+            worker.start()
+            worker.join(timeout=self._SEND_TIMEOUT_SECONDS)
+
+            if worker.is_alive():
+                # Can't forcibly stop the underlying blocked call - it's
+                # abandoned, not killed, same as send()'s worker thread.
+                # disconnect() must never raise (see docstring), so just
+                # log and move on to the state cleanup below.
+                logger.warning(
+                    "iface.close() did not return within %ss - device may "
+                    "be unresponsive; abandoning the close and continuing",
+                    self._SEND_TIMEOUT_SECONDS,
+                )
+            elif "error" in outcome:
+                logger.warning("iface.close() raised: %s", outcome["error"])
+
             self._iface = None
 
         self._my_node_num = None
@@ -344,13 +420,28 @@ class MeshtasticSerialTransport(BaseTransport):
         except Exception:
             return False
 
+    def validate_destination(self, destination: str) -> None:
+        """Validate a Meshtastic destination node ID's structural format
+        (Issue 30 / Story 30.2 - moved here from core/protocol.py verbatim,
+        no behavior change).
+
+        Raises:
+            ValueError: If destination is empty or doesn't start with '!'.
+        """
+        if not destination:
+            raise ValueError("Destination cannot be empty")
+        if not destination.startswith("!"):
+            raise ValueError("Destination must start with '!'")
+
     def scan_for_reconnect_candidates(self) -> List[str]:
         """Serial ports to try reconnecting to, for DeviceWatchdog's
         post-power-cycle recovery. Reuses
-        core.meshtastic_utils.scan_meshtastic_devices_detailed() (the
-        stable-identity-aware scan from Story 26.3), returning just the
-        paths - identity verification against the expected device happens
-        in DeviceWatchdog via local_node_id, not here.
+        core.device_scan.scan_serial_devices_detailed() (the
+        stable-identity-aware scan from Story 26.3 - candidate-port
+        enumeration has nothing Meshtastic-specific about it, so it's
+        shared with MeshCoreSerialTransport's equivalent method), returning
+        just the paths - identity verification against the expected device
+        happens in DeviceWatchdog via local_node_id, not here.
 
         Excludes any Story 26.7 relay board's own control port via
         probe_relay_board_id() - the same guard Issue 37 already put in
@@ -362,14 +453,19 @@ class MeshtasticSerialTransport(BaseTransport):
         next power_control.power_cycle() call (Issue 48, confirmed via
         real-hardware test - reproduced twice in a row before this fix).
         """
-        from core.meshtastic_utils import scan_meshtastic_devices_detailed
+        from core.device_scan import scan_serial_devices_detailed
         from transport.power_control import probe_relay_board_id
 
         return [
             d.path
-            for d in scan_meshtastic_devices_detailed()
+            for d in scan_serial_devices_detailed()
             if probe_relay_board_id(d.path) is None
         ]
+
+    @property
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character payload size per chunk (Issue 51)."""
+        return DEFAULT_CHUNK_SIZE
 
     @property
     def is_connected(self) -> bool:

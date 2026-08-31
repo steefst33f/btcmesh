@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Thin CLI entry point for sending a Bitcoin transaction via Meshtastic relay.
+"""Thin CLI entry point for sending a Bitcoin transaction via a mesh relay.
 
 All business logic lives in client/sender.py (chunking, ARQ, retries) and
-transport/meshtastic_serial.py (device connection). This file only handles:
+the transport/ implementations (device connection). This file only handles:
 argument parsing, output formatting, and exit codes.
 """
 import argparse
@@ -11,9 +11,9 @@ import os
 
 from core.config_loader import get_meshtastic_serial_port, load_app_config, load_log_level
 from core.logger_setup import setup_logger, set_logger_level
-from core.protocol import validate_destination, validate_transaction_hex
+from core.protocol import validate_transaction_hex
 from client.sender import TransactionSender, create_preview
-from transport.meshtastic_serial import MeshtasticSerialTransport
+from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLAY_NAMES
 from transport.base import TransportConnectionError
 
 CLI_LOG_FILE = os.path.join(
@@ -39,45 +39,65 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "-p", "--port",
-        help="Meshtastic serial port to use (e.g. /dev/ttyUSB0). "
-             "Overrides MESHTASTIC_SERIAL_PORT in .env. If neither is set, "
-             "auto-detects - which fails or picks unpredictably if more than "
-             "one device is connected.",
+        help="Serial port to use (e.g. /dev/ttyUSB0). For --transport "
+             "meshtastic, overrides MESHTASTIC_SERIAL_PORT in .env when set, "
+             "otherwise auto-detects - which fails or picks unpredictably if "
+             "more than one device is connected. For --transport meshcore, "
+             "auto-detects only when exactly one serial port is present.",
+    )
+    parser.add_argument(
+        "--transport", choices=TRANSPORT_CHOICES, default="meshtastic",
+        help="Mesh transport to use (default: meshtastic).",
     )
     return parser.parse_args(argv)
 
 
-def run_preview(tx_hex: str) -> int:
+def run_preview(tx_hex: str, chunk_size: int) -> int:
     """Show how the transaction would be chunked, without sending."""
-    preview = create_preview(tx_hex)
+    preview = create_preview(tx_hex, chunk_size=chunk_size)
     print(f"Preview: {preview.total_chunks} chunk(s)")
     for chunk in preview.chunks:
         print(chunk.wire_format)
     return 0
 
 
-def run_send(destination: str, tx_hex: str, port: str = None) -> int:
-    """Connect to the Meshtastic device and send the transaction."""
-    resolved_port = port or get_meshtastic_serial_port()
-    print(f"Connecting to Meshtastic device ({resolved_port or 'auto-detect'})...")
+def run_send(
+    destination: str, tx_hex: str, transport_name: str = "meshtastic", port: str = None
+) -> int:
+    """Connect to the mesh device and send the transaction."""
+    resolved_port = port
+    if resolved_port is None and transport_name == "meshtastic":
+        resolved_port = get_meshtastic_serial_port()
+    display_name = TRANSPORT_DISPLAY_NAMES.get(transport_name, transport_name)
+    print(f"Connecting to {display_name} device ({resolved_port or 'auto-detect'})...")
 
-    transport = MeshtasticSerialTransport()
+    transport = get_transport(transport_name)
     try:
-        transport.connect(resolved_port, log_firmware_info=True)
+        if transport_name == "meshtastic":
+            transport.connect(resolved_port, log_firmware_info=True)
+        else:
+            transport.connect(resolved_port)
     except TransportConnectionError as e:
-        print(f"Failed to connect to Meshtastic device: {e}", file=sys.stderr)
+        print(f"Failed to connect to {display_name} device: {e}", file=sys.stderr)
         cli_logger.error(f"Failed to connect: {e}")
         return 2
 
     try:
         sender = TransactionSender(transport)
 
-        def on_chunk_sending(chunk_num, total, attempt, wire_format):
-            if attempt > 1:
+        def on_chunk_sending(chunk_num, total, attempt, wire_format, is_final_ack_retry):
+            if is_final_ack_retry:
+                print(f"Resending last chunk {chunk_num}/{total} to request final ACK (retry {attempt})...")
+                cli_logger.info(
+                    f"Resending last chunk {chunk_num}/{total} to request final "
+                    f"ACK (retry {attempt}): {wire_format}"
+                )
+            elif attempt > 1:
                 print(f"Retrying chunk {chunk_num}/{total} (retry {attempt - 1})...")
+                cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
             else:
                 print(f"Sending chunk {chunk_num}/{total}...")
-            cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
+                cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
 
         def on_progress(chunk_num, total):
             print(f"Received ACK for chunk {chunk_num}/{total}")
@@ -114,7 +134,7 @@ def cli_main(argv=None) -> int:
     args = parse_args(argv)
 
     try:
-        validate_destination(args.destination)
+        get_transport(args.transport).validate_destination(args.destination)
     except ValueError as e:
         print(f"Invalid destination: {e}", file=sys.stderr)
         return 1
@@ -126,8 +146,8 @@ def cli_main(argv=None) -> int:
         return 1
 
     if args.dry_run:
-        return run_preview(args.tx)
-    return run_send(args.destination, args.tx, args.port)
+        return run_preview(args.tx, get_transport(args.transport).max_chunk_size)
+    return run_send(args.destination, args.tx, args.transport, args.port)
 
 
 def main():

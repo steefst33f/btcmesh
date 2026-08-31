@@ -1460,7 +1460,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport') as mock_get_transport, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
@@ -1485,7 +1485,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with(None, log_firmware_info=True)
+                        mock_get_transport.return_value.connect.assert_called_once_with(None, log_firmware_info=True)
 
     def test_selected_device_passes_to_server(self):
         """Given device selected, Then serial_port should be passed when connecting."""
@@ -1493,7 +1493,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport') as mock_get_transport, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
@@ -1513,7 +1513,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     # Call the target function to trigger the real run_server() body
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
+                        mock_get_transport.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
 
     def test_labeled_device_selection_resolves_to_real_path(self):
         """Story 27.3: once probing has labeled a device "Name (!nodeid)",
@@ -1525,7 +1525,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport') as mock_get_transport, \
                      unittest.mock.patch.object(btcmesh_server_gui, 'probe_relay_board_id', return_value=None), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'):
@@ -1546,7 +1546,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
                     if target_fn:
                         target_fn()
-                        mock_transport_cls.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
+                        mock_get_transport.return_value.connect.assert_called_once_with('/dev/ttyUSB0', log_firmware_info=True)
 
     def test_start_pressed_rejects_relay_board_without_attempting_connect(self):
         """Issue 37 follow-up: given the selected device is confirmed to be
@@ -1558,7 +1558,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport') as mock_get_transport, \
                      unittest.mock.patch.object(
                          btcmesh_server_gui, 'probe_relay_board_id',
                          return_value='246F28AECB34',
@@ -1580,7 +1580,7 @@ class TestMeshtasticDeviceSettingsStory182(unittest.TestCase):
                     if target_fn:
                         target_fn()
                         mock_probe_relay.assert_called_once_with('/dev/ttyRelay')
-                        mock_transport_cls.assert_not_called()
+                        mock_get_transport.assert_not_called()
                         result = gui.result_queue.get_nowait()
                         self.assertEqual(result[0], 'meshtastic_failed')
                         self.assertIn('relay board', result[1])
@@ -1624,7 +1624,10 @@ class TestNodeIdDisplayStory273(unittest.TestCase):
                  'firmware_version': None, 'hw_model': None},
             ],
         )
-        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+        mock_probe.assert_called_once_with(
+            gui.devices, gui.result_queue,
+            transport_name=gui.selected_transport, should_abort=unittest.mock.ANY,
+        )
 
     def test_devices_found_single_device_still_probes(self):
         """Given a single device found, Then it's auto-selected AND still
@@ -1639,7 +1642,10 @@ class TestNodeIdDisplayStory273(unittest.TestCase):
                 gui._handle_result(('devices_found', ['/dev/ttyUSB0']))
 
         self.assertEqual(gui.device_spinner.text, '/dev/ttyUSB0')
-        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+        mock_probe.assert_called_once_with(
+            gui.devices, gui.result_queue,
+            transport_name=gui.selected_transport, should_abort=unittest.mock.ANY,
+        )
 
     def test_device_identity_result_updates_matching_device_and_dedupes(self):
         """Given a device_identity probe result, Then the matching
@@ -1744,7 +1750,7 @@ class TestServerDeviceWatchdogStory283(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport'), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver') as mock_receiver_cls, \
                      unittest.mock.patch.object(
@@ -1853,7 +1859,7 @@ class TestServerLivenessLogStory282(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport') as mock_transport_cls, \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport'), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver') as mock_receiver_cls, \
                      unittest.mock.patch('server.run_loop.time') as mock_time:
@@ -2047,7 +2053,7 @@ class TestReassemblyTimeoutSettingsStory183(unittest.TestCase):
 
         with unittest.mock.patch.object(btcmesh_server_gui, 'Clock'):
             with unittest.mock.patch.object(btcmesh_server_gui, 'threading') as mock_threading:
-                with unittest.mock.patch.object(btcmesh_server_gui, 'MeshtasticSerialTransport'), \
+                with unittest.mock.patch.object(btcmesh_server_gui, 'get_transport'), \
                      unittest.mock.patch.object(btcmesh_server_gui, 'BitcoinRPCClient'), \
                      unittest.mock.patch('server.run_loop.TransactionReceiver'), \
                      unittest.mock.patch('server.run_loop.TransactionReassembler') as mock_reassembler_cls:

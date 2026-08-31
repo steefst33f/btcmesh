@@ -161,7 +161,6 @@ from btcmesh_client_gui import (
     process_result,
     validate_send_inputs,
     ResultAction,
-    scan_meshtastic_devices,
     NO_DEVICES_TEXT,
     SCANNING_TEXT,
     SELECT_DEVICE_TEXT,
@@ -351,6 +350,22 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
 
         self.assertIn('retry 2', action.log_messages[0][0])
 
+    def test_chunk_sending_final_ack_retry_shows_distinct_message(self):
+        """Issue 64: a final-ACK-triggered resend of the last chunk must
+        read differently from an ordinary chunk retry, so an operator (or
+        anyone reading the log) can tell the two apart - previously
+        real-hardware testing had no way to distinguish "the reply arrived
+        on the first try" from "the retry mechanism actually fired"."""
+        result = ('chunk_sending', 3, 3, 1, True)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Resending last chunk 3/3', action.log_messages[0][0])
+        self.assertIn('final ACK', action.log_messages[0][0])
+        self.assertIn('retry 1', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
     def test_wire_sent_shows_protocol_detail(self):
         """Given wire_sent result, Then shows arrow and wire format in secondary color."""
         wire_format = 'BTC_TX|abc123|1/3|020000...'
@@ -450,35 +465,13 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
 # =============================================================================
 
 class TestDeviceSelectionStory111(unittest.TestCase):
-    """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown."""
+    """Tests for device selection dropdown - Story 11.1: Device Selection Dropdown.
 
-    def test_scan_handles_import_error(self):
-        """Given serial port enumeration fails to import, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=ImportError):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_empty_list_on_exception(self):
-        """Given comports raises exception, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', side_effect=Exception("Test error")):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
-
-    def test_scan_returns_device_list(self):
-        """Given comports returns non-blacklisted devices, Then returns those devices."""
-        mock_ports = [
-            unittest.mock.MagicMock(device='/dev/ttyACM0', vid=0x303a),
-            unittest.mock.MagicMock(device='/dev/ttyUSB0', vid=0x2886),
-        ]
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=mock_ports):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, ['/dev/ttyACM0', '/dev/ttyUSB0'])
-
-    def test_scan_returns_empty_list_when_no_devices(self):
-        """Given comports returns empty list, Then returns empty list."""
-        with unittest.mock.patch('serial.tools.list_ports.comports', return_value=[]):
-            result = scan_meshtastic_devices()
-            self.assertEqual(result, [])
+    scan_serial_devices()'s own behavior (VID-blacklist filtering,
+    import/exception handling) is tested once, directly, in
+    tests/test_device_scan.py - btcmesh_client_gui.py no longer imports
+    it under a Meshtastic-specific name (Story 30.4 cleanup), so there's
+    nothing GUI-specific left to test here beyond these constants."""
 
     def test_no_devices_text_constant(self):
         """Verify NO_DEVICES_TEXT constant is defined correctly."""
@@ -526,6 +519,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         failing_transport = unittest.mock.MagicMock()
         failing_transport.connect.side_effect = TransportConnectionError(
@@ -538,7 +532,7 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
         transports = [failing_transport, succeeding_transport]
 
-        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', side_effect=transports), \
+        with unittest.mock.patch('btcmesh_client_gui.get_transport', side_effect=transports), \
              unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None), \
              unittest.mock.patch('btcmesh_client_gui.time.sleep'):
             result = btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyFake')
@@ -557,13 +551,14 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         always_failing_transport = unittest.mock.MagicMock()
         always_failing_transport.connect.side_effect = TransportConnectionError(
             "Resource temporarily unavailable"
         )
 
-        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport', return_value=always_failing_transport), \
+        with unittest.mock.patch('btcmesh_client_gui.get_transport', return_value=always_failing_transport), \
              unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None), \
              unittest.mock.patch('btcmesh_client_gui.time.sleep'):
             with self.assertRaises(TransportConnectionError):
@@ -582,15 +577,16 @@ class TestDeviceConnectionRetryAndSelectionFix(unittest.TestCase):
 
         gui = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
-        with unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
+        with unittest.mock.patch('btcmesh_client_gui.get_transport') as mock_get_transport, \
              unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value='246F28AECB34') as mock_probe_relay:
             with self.assertRaises(TransportConnectionError) as ctx:
                 btcmesh_client_gui.BTCMeshGUI._connect_with_retry(gui, '/dev/ttyRelay')
 
         mock_probe_relay.assert_called_once_with('/dev/ttyRelay')
         self.assertIn("relay board", str(ctx.exception))
-        mock_transport_cls.assert_not_called()
+        mock_get_transport.assert_not_called()
 
     def test_devices_found_multiple_sets_placeholder(self):
         """Given multiple devices found, Then the spinner shows the
@@ -647,7 +643,10 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
                  'firmware_version': None, 'hw_model': None},
             ],
         )
-        mock_probe.assert_called_once_with(gui.devices, gui.result_queue)
+        mock_probe.assert_called_once_with(
+            gui.devices, gui.result_queue,
+            transport_name=gui.selected_transport, should_abort=unittest.mock.ANY,
+        )
 
     def test_devices_found_single_auto_selects_without_separate_probe(self):
         """Given a single device found, Then it's auto-selected but not
@@ -746,6 +745,7 @@ class TestNodeIdDisplayStory272(unittest.TestCase):
         gui.status_log = unittest.mock.MagicMock()
         gui.send_btn = unittest.mock.MagicMock()
         gui.abort_btn = unittest.mock.MagicMock()
+        gui.selected_transport = "meshtastic"
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread') as mock_thread:
             btcmesh_client_gui.BTCMeshGUI.on_send_pressed(gui, None)
@@ -1146,10 +1146,11 @@ class TestScanDevicesBusyIndicator(unittest.TestCase):
         gui.device_spinner = unittest.mock.MagicMock(disabled=False)
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.scan_meshtastic_devices', return_value=['/dev/ttyUSB0']
+                 'btcmesh_client_gui.scan_serial_devices', return_value=['/dev/ttyUSB0']
              ):
             btcmesh_client_gui.BTCMeshGUI._scan_devices(gui)
 
@@ -1455,6 +1456,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
@@ -1463,7 +1465,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+                 'btcmesh_client_gui.get_transport', return_value=mock_transport
              ), unittest.mock.patch(
                  'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
@@ -1495,13 +1497,14 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.dest_input = unittest.mock.MagicMock(disabled=False)
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+                 'btcmesh_client_gui.get_transport', return_value=mock_transport
              ), unittest.mock.patch(
                  'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
@@ -1530,13 +1533,14 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': '!7c5b4418', 'name': 'Meshtastic 4418'}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.local_node_id = '!7c5b4418'
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+                 'btcmesh_client_gui.get_transport', return_value=mock_transport
              ), unittest.mock.patch(
                  'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ), unittest.mock.patch(
@@ -1558,13 +1562,14 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.connect.side_effect = TransportConnectionError("No Meshtastic device found")
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+                 'btcmesh_client_gui.get_transport', return_value=mock_transport
              ), unittest.mock.patch(
                  'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ):
@@ -1591,6 +1596,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         mock_transport = unittest.mock.MagicMock()
         mock_transport.connect.side_effect = TransportConnectionError(
@@ -1599,7 +1605,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch(
-                 'btcmesh_client_gui.MeshtasticSerialTransport', return_value=mock_transport
+                 'btcmesh_client_gui.get_transport', return_value=mock_transport
              ), unittest.mock.patch(
                  'btcmesh_client_gui.probe_relay_board_id', return_value=None
              ):
@@ -1620,6 +1626,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyUSB0', 'node_id': None, 'name': None}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         call_order = []
         gui._update_known_nodes = unittest.mock.MagicMock(
@@ -1629,7 +1636,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         with unittest.mock.patch(
             'btcmesh_client_gui.threading.Thread',
             side_effect=lambda target, daemon: call_order.append(('thread_started',)) or self._ImmediateThread(target, daemon),
-        ), unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport'), \
+        ), unittest.mock.patch('btcmesh_client_gui.get_transport'), \
              unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id', return_value=None):
             btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
 
@@ -1647,6 +1654,7 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         gui.devices = [{'path': '/dev/ttyRelay', 'node_id': None, 'name': 'Relay board (not a Meshtastic device)'}]
         gui.status_log = unittest.mock.MagicMock()
         gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshtastic"
 
         with unittest.mock.patch('btcmesh_client_gui.threading.Thread', self._ImmediateThread), \
              unittest.mock.patch('btcmesh_client_gui.MeshtasticSerialTransport') as mock_transport_cls, \
@@ -1667,6 +1675,63 @@ class TestDeviceSelectedFetchFlow(unittest.TestCase):
         self.assertEqual(results[0][0], 'log')
         self.assertIn('relay board', results[0][1])
         self.assertEqual(results[1], ('device_and_nodes_fetch_complete',))
+
+    def test_meshcore_selection_reuses_scan_identity_without_connecting(self):
+        """Issue 61: MeshCore has no known-nodes fetch to justify a fresh
+        connect on selection, and the identity is already known from the
+        background scan that populated self.devices - re-probing it here
+        is a redundant connect/disconnect cycle that directly increases
+        the odds of racing this fetch's own still-settling port right
+        before the operator presses Send. Selecting a MeshCore device
+        must reuse the already-known identity and never call connect()
+        at all."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = [{
+            'path': '/dev/ttyUSB0', 'node_id': 'a1b2c3d4e5f6', 'name': 'MC Node',
+            'firmware_version': None, 'hw_model': 'Heltec V3',
+        }]
+        gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshcore"
+
+        with unittest.mock.patch('btcmesh_client_gui.get_transport') as mock_get_transport, \
+             unittest.mock.patch('btcmesh_client_gui.probe_relay_board_id') as mock_probe_relay:
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        mock_get_transport.assert_not_called()
+        mock_probe_relay.assert_not_called()
+        gui.device_busy.start.assert_not_called()
+        results = self._drain(gui.result_queue)
+        self.assertEqual(
+            results,
+            [
+                ('device_identity', '/dev/ttyUSB0', 'a1b2c3d4e5f6', 'MC Node', None, 'Heltec V3'),
+                ('device_and_nodes_fetch_complete',),
+            ],
+        )
+
+    def test_meshcore_selection_of_unknown_path_still_fires_completion(self):
+        """Given the selected path somehow isn't in self.devices (stale
+        list race), Then no device_identity result is pushed, but the
+        completion sentinel still fires - the busy-indicator stop() call
+        it triggers is itself a safe no-op without a matching start()
+        (see BusyIndicator.stop()), so this can't desync the ref count."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.devices = []
+        gui.result_queue = queue.Queue()
+        gui.selected_transport = "meshcore"
+
+        with unittest.mock.patch('btcmesh_client_gui.get_transport') as mock_get_transport:
+            btcmesh_client_gui.BTCMeshGUI.on_device_selected(gui, None, '/dev/ttyUSB0')
+
+        mock_get_transport.assert_not_called()
+        self.assertEqual(
+            self._drain(gui.result_queue),
+            [('device_and_nodes_fetch_complete',)],
+        )
 
 
 # =============================================================================
@@ -1912,6 +1977,7 @@ class TestDisableControlsStory95(unittest.TestCase):
         gui.result_queue = queue.Queue()
         gui.is_sending = False
         gui.abort_requested = False
+        gui.selected_transport = "meshtastic"
 
         # Mock threading to prevent actual thread start
         with unittest.mock.patch('threading.Thread'):

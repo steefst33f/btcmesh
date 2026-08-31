@@ -30,6 +30,22 @@ class TestParseArgs(unittest.TestCase):
         self.assertTrue(args.dry_run)
         self.assertEqual(args.port, "/dev/ttyUSB0")
 
+    def test_transport_defaults_to_meshtastic(self):
+        args = cli.parse_args(["-d", "!abcdef12", "-tx", "deadbeef"])
+        self.assertEqual(args.transport, "meshtastic")
+
+    def test_transport_flag_accepts_meshcore(self):
+        args = cli.parse_args([
+            "-d", "aabbccddeeff", "-tx", "deadbeef", "--transport", "meshcore",
+        ])
+        self.assertEqual(args.transport, "meshcore")
+
+    def test_transport_flag_rejects_unknown_value(self):
+        with self.assertRaises(SystemExit):
+            cli.parse_args([
+                "-d", "!abcdef12", "-tx", "deadbeef", "--transport", "bogus",
+            ])
+
     def test_missing_destination_raises_system_exit(self):
         with self.assertRaises(SystemExit):
             cli.parse_args(["-tx", "deadbeef"])
@@ -57,10 +73,10 @@ class TestCliMainValidation(unittest.TestCase):
         self.assertIn("Invalid raw transaction hex", printed)
 
     def test_invalid_hex_does_not_attempt_connection(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             cli.cli_main(["-d", "!abcdef12", "-tx", "zz"])
-        mock_transport_cls.assert_not_called()
+        mock_run_send.assert_not_called()
 
     def test_missing_bang_prefix_prints_error_and_returns_1(self):
         """Issue 30: destination is now validated same as tx hex."""
@@ -78,10 +94,42 @@ class TestCliMainValidation(unittest.TestCase):
         self.assertIn("Invalid destination", printed)
 
     def test_invalid_destination_does_not_attempt_connection(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             cli.cli_main(["-d", "notanodeid", "-tx", "deadbeef"])
-        mock_transport_cls.assert_not_called()
+        mock_run_send.assert_not_called()
+
+    def test_meshcore_transport_accepts_its_own_hex_format(self):
+        """Story 30.2: MeshCore's own hex-based destination format (no '!'
+        prefix required) is validated - and accepted - via
+        MeshCoreSerialTransport.validate_destination(), dispatched through
+        get_transport(args.transport)."""
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+             patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
+             patch("builtins.print"):
+            mock_sender_cls.return_value.send_transaction.return_value = SendResult(
+                success=True, session_id="abc12", txid="txid123"
+            )
+            code = cli.cli_main([
+                "-d", "aabbccddeeff", "-tx", "deadbeef", "--transport", "meshcore",
+            ])
+        self.assertEqual(code, 0)
+        mock_get_transport.assert_called_with("meshcore")
+
+    def test_meshcore_transport_rejects_malformed_destination(self):
+        """Story 30.2: a MeshCore destination that fails its own hex-format
+        check is now rejected up front - previously (the Story 30.1 stopgap)
+        it passed through unchecked here and would only fail, if at all, at
+        send time inside meshcore_py itself."""
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
+             patch("builtins.print") as mock_print:
+            code = cli.cli_main([
+                "-d", "not-hex!", "-tx", "deadbeef", "--transport", "meshcore",
+            ])
+        self.assertEqual(code, 1)
+        printed = "\n".join(str(c.args[0]) for c in mock_print.call_args_list)
+        self.assertIn("Invalid destination", printed)
+        mock_run_send.assert_not_called()
 
 
 class TestCliMainDryRun(unittest.TestCase):
@@ -101,21 +149,39 @@ class TestCliMainDryRun(unittest.TestCase):
             self.assertIn(f"|{i}/3|", line)
 
     def test_dry_run_does_not_connect_to_device(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.run_send") as mock_run_send, \
              patch("builtins.print"):
             code = cli.cli_main(["-d", "!abcdef12", "-tx", "deadbeef", "--dry-run"])
         self.assertEqual(code, 0)
-        mock_transport_cls.assert_not_called()
+        mock_run_send.assert_not_called()
+
+    def test_dry_run_meshcore_uses_meshcore_chunk_size(self):
+        """Issue 51: --transport meshcore's dry-run preview must reflect
+        MeshCore's own (smaller) chunk size, not Meshtastic's - a tx_hex
+        sized to be a single chunk under Meshtastic's 170 shows as two
+        chunks under MeshCore's 120."""
+        tx_hex = "a" * 150  # 1 chunk at 170 (meshtastic), 2 chunks at 120 (meshcore)
+        with patch("builtins.print") as mock_print:
+            code = cli.cli_main([
+                "-d", "aabbccddeeff", "-tx", tx_hex,
+                "--transport", "meshcore", "--dry-run",
+            ])
+        self.assertEqual(code, 0)
+        printed_lines = [
+            str(c.args[0]) for c in mock_print.call_args_list
+            if str(c.args[0]).startswith("BTC_TX|")
+        ]
+        self.assertEqual(len(printed_lines), 2)
 
 
 class TestRunSendConnection(unittest.TestCase):
     """Tests for run_send()'s device connection / port resolution."""
 
     def test_connection_failure_prints_error_and_returns_2(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
              patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
              patch("builtins.print") as mock_print:
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             mock_transport.connect.side_effect = TransportConnectionError("no device found")
 
             code = cli.run_send("!abcdef12", "deadbeef")
@@ -126,11 +192,11 @@ class TestRunSendConnection(unittest.TestCase):
         mock_sender_cls.assert_not_called()
 
     def test_explicit_port_overrides_env(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
              patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
              patch("btcmesh_client_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
              patch("builtins.print"):
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             mock_sender = mock_sender_cls.return_value
             mock_sender.send_transaction.return_value = SendResult(
                 success=True, session_id="abc12", txid="txid123"
@@ -141,11 +207,11 @@ class TestRunSendConnection(unittest.TestCase):
         mock_transport.connect.assert_called_once_with("/dev/explicit_port", log_firmware_info=True)
 
     def test_omitted_port_falls_back_to_env(self):
-        with patch("btcmesh_client_cli.MeshtasticSerialTransport") as mock_transport_cls, \
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
              patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
              patch("btcmesh_client_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
              patch("builtins.print"):
-            mock_transport = mock_transport_cls.return_value
+            mock_transport = mock_get_transport.return_value
             mock_sender = mock_sender_cls.return_value
             mock_sender.send_transaction.return_value = SendResult(
                 success=True, session_id="abc12", txid="txid123"
@@ -155,19 +221,50 @@ class TestRunSendConnection(unittest.TestCase):
 
         mock_transport.connect.assert_called_once_with("/dev/env_port", log_firmware_info=True)
 
+    def test_default_transport_name_is_meshtastic(self):
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+             patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
+             patch("btcmesh_client_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
+             patch("builtins.print"):
+            mock_sender_cls.return_value.send_transaction.return_value = SendResult(
+                success=True, session_id="abc12", txid="txid123"
+            )
+
+            cli.run_send("!abcdef12", "deadbeef")
+
+        mock_get_transport.assert_called_once_with("meshtastic")
+
+    def test_meshcore_transport_does_not_fall_back_to_meshtastic_env_port(self):
+        """Auto-detect for --transport meshcore is the transport's own job
+        (MeshCoreSerialTransport._autodetect_port()) - MESHTASTIC_SERIAL_PORT
+        must not leak into a MeshCore connection attempt."""
+        with patch("btcmesh_client_cli.get_transport") as mock_get_transport, \
+             patch("btcmesh_client_cli.TransactionSender") as mock_sender_cls, \
+             patch("btcmesh_client_cli.get_meshtastic_serial_port", return_value="/dev/env_port"), \
+             patch("builtins.print"):
+            mock_transport = mock_get_transport.return_value
+            mock_sender_cls.return_value.send_transaction.return_value = SendResult(
+                success=True, session_id="abc12", txid="txid123"
+            )
+
+            cli.run_send("aabbccddeeff", "deadbeef", transport_name="meshcore")
+
+        mock_get_transport.assert_called_once_with("meshcore")
+        mock_transport.connect.assert_called_once_with(None)
+
 
 class TestRunSendResult(unittest.TestCase):
     """Tests for run_send()'s handling of the SendResult from TransactionSender."""
 
     def _patch_transport_and_sender(self, send_result=None, send_side_effect=None):
-        transport_patch = patch("btcmesh_client_cli.MeshtasticSerialTransport")
+        transport_patch = patch("btcmesh_client_cli.get_transport")
         sender_patch = patch("btcmesh_client_cli.TransactionSender")
-        mock_transport_cls = transport_patch.start()
+        mock_get_transport = transport_patch.start()
         mock_sender_cls = sender_patch.start()
         self.addCleanup(transport_patch.stop)
         self.addCleanup(sender_patch.stop)
 
-        mock_transport = mock_transport_cls.return_value
+        mock_transport = mock_get_transport.return_value
         mock_sender = mock_sender_cls.return_value
         if send_side_effect is not None:
             mock_sender.send_transaction.side_effect = send_side_effect
