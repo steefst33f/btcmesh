@@ -78,6 +78,7 @@ from transport.base import TransportConnectionError
 from transport.power_control import probe_relay_board_id
 from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLAY_NAMES
 from server.run_loop import build_receiver, run_polling_loop
+from core.logger_setup import server_logger
 
 
 # Set window size for desktop
@@ -221,7 +222,7 @@ class BTCMeshServerGUI(BoxLayout):
         self.add_widget(self.clear_btn)
 
         # Initial log message
-        self.status_log.add_message("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
+        self._log("Server GUI initialized. Click 'Start Server' to begin.", COLOR_PRIMARY)
 
     def _build_status_section(self):
         """Build the connection status section."""
@@ -671,19 +672,19 @@ class BTCMeshServerGUI(BoxLayout):
 
         # Basic validation
         if not host:
-            self.status_log.add_message("Test failed: Host is required", COLOR_ERROR)
+            self._log("Test failed: Host is required", COLOR_ERROR)
             return
         if not port:
-            self.status_log.add_message("Test failed: Port is required", COLOR_ERROR)
+            self._log("Test failed: Port is required", COLOR_ERROR)
             return
         if not cookie_path and (not user or not password):
-            self.status_log.add_message(
+            self._log(
                 "Test failed: Provide a Cookie file path, or both User and Password",
                 COLOR_ERROR,
             )
             return
 
-        self.status_log.add_message("Testing RPC connection...", COLOR_WARNING)
+        self._log("Testing RPC connection...", COLOR_WARNING)
         self.test_connection_btn.disabled = True
         self.start_btn.disabled = True
 
@@ -780,19 +781,19 @@ class BTCMeshServerGUI(BoxLayout):
             with open(DOTENV_PATH, 'w') as f:
                 f.writelines(existing_lines)
 
-            self.status_log.add_message(
+            self._log(
                 f"Settings saved to {DOTENV_PATH}", COLOR_SUCCESS)
 
             # Security note for password
             if settings.get('BITCOIN_RPC_PASSWORD'):
-                self.status_log.add_message(
+                self._log(
                     "Note: Password is stored in plain text in .env file", COLOR_WARNING)
 
         except PermissionError:
-            self.status_log.add_message(
+            self._log(
                 f"Permission denied: Cannot write to {DOTENV_PATH}", COLOR_ERROR)
         except Exception as e:
-            self.status_log.add_message(
+            self._log(
                 f"Failed to save settings: {e}", COLOR_ERROR)
 
     def on_start_pressed(self, instance):
@@ -805,11 +806,11 @@ class BTCMeshServerGUI(BoxLayout):
         cookie_path = self.rpc_cookie_input.text.strip()
 
         if not host or not port:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Host and Port are required", COLOR_ERROR)
             return
         if not cookie_path and (not user or not password):
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Provide a Cookie file path, or both User and Password",
                 COLOR_ERROR,
             )
@@ -818,7 +819,7 @@ class BTCMeshServerGUI(BoxLayout):
         # Validate timeout (must be positive integer)
         timeout_text = self.timeout_input.text.strip()
         if not timeout_text:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Reassembly timeout is required", COLOR_ERROR)
             return
         try:
@@ -826,7 +827,7 @@ class BTCMeshServerGUI(BoxLayout):
             if reassembly_timeout <= 0:
                 raise ValueError()
         except ValueError:
-            self.status_log.add_message(
+            self._log(
                 "Cannot start: Reassembly timeout must be a positive integer", COLOR_ERROR)
             return
 
@@ -840,10 +841,10 @@ class BTCMeshServerGUI(BoxLayout):
                 host, port, user or None, password or None, cookie_path or None
             )
         except ValueError as e:
-            self.status_log.add_message(f"Cannot start: {e}", COLOR_ERROR)
+            self._log(f"Cannot start: {e}", COLOR_ERROR)
             return
 
-        self.status_log.add_message("Starting server...", COLOR_WARNING)
+        self._log("Starting server...", COLOR_WARNING)
         self.start_btn.disabled = True
         self.save_btn.disabled = True
         self._set_rpc_settings_enabled(False)
@@ -1030,7 +1031,7 @@ class BTCMeshServerGUI(BoxLayout):
 
     def on_stop_pressed(self, instance):
         """Handle Stop Server button press."""
-        self.status_log.add_message("Stopping server...", COLOR_WARNING)
+        self._log("Stopping server...", COLOR_WARNING)
         self.stop_btn.disabled = True
 
         # Signal server to stop
@@ -1044,6 +1045,24 @@ class BTCMeshServerGUI(BoxLayout):
                 self._handle_result(result)
         except queue.Empty:
             pass
+
+    def _log(self, msg: str, color=None) -> None:
+        """Show a message in the Activity Log widget and mirror it to the
+        server's own file logger (logs/btcmesh_server.log, the same file
+        core/reassembler.py, server/receiver.py, and core/rpc_client.py
+        already write to via the shared server_logger instance).
+
+        Every status_log message in this GUI should go through this
+        method rather than calling self.status_log.add_message()
+        directly - previously every one of these only ever reached the
+        on-screen widget, invisible to any file-based diagnosis (same
+        gap found and fixed in btcmesh_client_gui.py during Issue 64's
+        real-hardware testing - e.g. the blank "Initialization error:"
+        text from Issue 63 was never traceable in the file log because
+        of this).
+        """
+        self.status_log.add_message(msg, color)
+        server_logger.info(msg)
 
     def _handle_result(self, result):
         """Handle a single result from the queue."""
@@ -1060,7 +1079,7 @@ class BTCMeshServerGUI(BoxLayout):
             # e.g. wire-sent NACKs/successful broadcasts still get
             # highlighted red/green automatically.
             color = result[3] if len(result) > 3 else get_log_color(level, data)
-            self.status_log.add_message(data, color)
+            self._log(data, color)
 
         elif result_type in ('rpc_connected', 'rpc_failed', 'meshtastic_connected',
                             'meshtastic_failed', 'server_started', 'server_stopped',
@@ -1081,9 +1100,9 @@ class BTCMeshServerGUI(BoxLayout):
             self.test_connection_btn.disabled = False
             self.start_btn.disabled = False
             if success:
-                self.status_log.add_message(f"RPC test successful: {message}", COLOR_SUCCESS)
+                self._log(f"RPC test successful: {message}", COLOR_SUCCESS)
             else:
-                self.status_log.add_message(f"RPC test failed: {message}", COLOR_ERROR)
+                self._log(f"RPC test failed: {message}", COLOR_ERROR)
 
         elif result_type == 'devices_found':
             # Result of the "Scan" button (_on_scan_devices) refreshing the
@@ -1111,7 +1130,7 @@ class BTCMeshServerGUI(BoxLayout):
                     # operator doesn't have to open the dropdown manually.
                     # Still a raw path at this point (nothing probed yet).
                     self.device_spinner.text = devices[0]
-                    self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
+                    self._log(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
                     # Multiple devices - keep current selection or show
                     # first. No count stated (unlike the single-device case
@@ -1120,7 +1139,7 @@ class BTCMeshServerGUI(BoxLayout):
                     # aliases of the same physical device (Issue 37);
                     # "device(s)" stays accurate either way, and the
                     # dropdown is the real source of truth for "how many."
-                    self.status_log.add_message("Found device(s)", COLOR_SUCCESS)
+                    self._log("Found device(s)", COLOR_SUCCESS)
                 # Always probe every found device's identity, including the
                 # single-device case - unlike the client GUI, the server
                 # never auto-connects on selection, so this background probe
@@ -1137,7 +1156,7 @@ class BTCMeshServerGUI(BoxLayout):
                 self.device_spinner.values = [DEVICE_AUTO_DETECT]
                 self.device_spinner.text = DEVICE_AUTO_DETECT
                 display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
-                self.status_log.add_message(f"No {display_name} devices found", COLOR_WARNING)
+                self._log(f"No {display_name} devices found", COLOR_WARNING)
             # The scan itself is done either way - a follow-on
             # probe_devices_in_background() call above (if any) owns its
             # own start()/stop() pair independently (ref-counted).
@@ -1187,7 +1206,7 @@ class BTCMeshServerGUI(BoxLayout):
                 self.rpc_label.text = STATE_RPC_CONNECTED.text
             self.rpc_label.color = STATE_RPC_CONNECTED.color
             chain_suffix = f". Chain: {chain}" if chain else ""
-            self.status_log.add_message(
+            self._log(
                 f"Connected to Bitcoin RPC{f' ({host})' if host else ''}{tor_badge}{chain_suffix}",
                 COLOR_SUCCESS,
             )
@@ -1208,7 +1227,7 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'rpc_failed':
             self.rpc_label.text = STATE_RPC_FAILED.text
             self.rpc_label.color = STATE_RPC_FAILED.color
-            self.status_log.add_message(f"Bitcoin RPC connection failed: {data}", COLOR_ERROR)
+            self._log(f"Bitcoin RPC connection failed: {data}", COLOR_ERROR)
 
         elif status_type == 'meshtastic_connected':
             # data is dict with 'node_id', 'device', 'node_name',
@@ -1235,13 +1254,13 @@ class BTCMeshServerGUI(BoxLayout):
             message = f"Connected to {display_name} device: {id_display}" + (f" on {device}" if device else "")
             if firmware_version or hw_model:
                 message += f" - firmware {firmware_version or 'unknown'}, hardware {hw_model or 'unknown'}"
-            self.status_log.add_message(message, COLOR_SUCCESS)
+            self._log(message, COLOR_SUCCESS)
 
         elif status_type == 'meshtastic_failed':
             display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
             self.meshtastic_label.text = STATE_MESHTASTIC_FAILED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_FAILED.color
-            self.status_log.add_message(f"{display_name} connection failed: {data}", COLOR_ERROR)
+            self._log(f"{display_name} connection failed: {data}", COLOR_ERROR)
             # Re-enable start button and settings on failure
             self.start_btn.disabled = False
             self.save_btn.disabled = False
@@ -1252,11 +1271,11 @@ class BTCMeshServerGUI(BoxLayout):
         elif status_type == 'server_started':
             self.is_running = True
             self.stop_btn.disabled = False
-            self.status_log.add_message("Server started. Listening for incoming transactions...", COLOR_SUCCESS)
+            self._log("Server started. Listening for incoming transactions...", COLOR_SUCCESS)
 
         elif status_type == 'server_stopped':
             self.is_running = False
-            self.status_log.add_message("Server stopped.", COLOR_WARNING)
+            self._log("Server stopped.", COLOR_WARNING)
             self.meshtastic_label.text = STATE_MESHTASTIC_DISCONNECTED.text
             self.meshtastic_label.color = STATE_MESHTASTIC_DISCONNECTED.color
             self.rpc_label.text = STATE_RPC_DISCONNECTED.text
@@ -1274,7 +1293,7 @@ class BTCMeshServerGUI(BoxLayout):
             self._set_timeout_settings_enabled(True)
 
         elif status_type == 'init_error':
-            self.status_log.add_message(f"Initialization error: {data}", COLOR_ERROR)
+            self._log(f"Initialization error: {data}", COLOR_ERROR)
             self.start_btn.disabled = False
             self.save_btn.disabled = False
             self._set_rpc_settings_enabled(True)
@@ -1608,12 +1627,12 @@ class BTCMeshServerGUI(BoxLayout):
     def _copy_to_clipboard(self, text, label):
         """Copy text to clipboard and show confirmation."""
         Clipboard.copy(text)
-        self.status_log.add_message(f"{label} copied to clipboard", COLOR_SUCCESS)
+        self._log(f"{label} copied to clipboard", COLOR_SUCCESS)
 
     def on_clear_pressed(self, instance):
         """Handle Clear Log button press."""
         self.status_log.clear()
-        self.status_log.add_message("Log cleared", COLOR_PRIMARY)
+        self._log("Log cleared", COLOR_PRIMARY)
 
 
 class BTCMeshServerApp(App):

@@ -85,12 +85,19 @@ def run_send(
     try:
         sender = TransactionSender(transport)
 
-        def on_chunk_sending(chunk_num, total, attempt, wire_format):
-            if attempt > 1:
+        def on_chunk_sending(chunk_num, total, attempt, wire_format, is_final_ack_retry):
+            if is_final_ack_retry:
+                print(f"Resending last chunk {chunk_num}/{total} to request final ACK (retry {attempt})...")
+                cli_logger.info(
+                    f"Resending last chunk {chunk_num}/{total} to request final "
+                    f"ACK (retry {attempt}): {wire_format}"
+                )
+            elif attempt > 1:
                 print(f"Retrying chunk {chunk_num}/{total} (retry {attempt - 1})...")
+                cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
             else:
                 print(f"Sending chunk {chunk_num}/{total}...")
-            cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
+                cli_logger.info(f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}")
 
         def on_progress(chunk_num, total):
             print(f"Received ACK for chunk {chunk_num}/{total}")

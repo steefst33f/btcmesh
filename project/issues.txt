@@ -3568,7 +3568,7 @@ aborts server startup entirely, with a blank error message**
 **Issue 64: a lost final BTC_ACK/BTC_NACK leaves the client with a
 generic "No final ACK from relay" instead of the real, already-known
 reason - no retry/redelivery for the final reply, unlike chunks**
-Open
+✅ FIXED
 
 - Found 2026-08-30 during real-hardware testing of Issue 63's fix, with
   Bitcoin RPC still down (Tor/onion unreachable, the same environmental
@@ -3625,6 +3625,92 @@ Open
   down, server sent the same `BTC_NACK`, client again reported the
   generic "No final ACK from relay" instead of receiving it - not a
   one-off, the same gap every time the final reply happens to be lost.
+- **Fix**: implemented exactly the suggested direction above -
+  `_send_all_chunks()`'s final-ACK wait (`client/sender.py`) now loops
+  up to `max_retries` times, resending the last chunk (via
+  `get_chunk_message()`, same as the original chunk send) between each
+  timed-out wait, checking `_abort_event` before each retry (same
+  pattern as the chunk-retry loop). Only sets the generic "No final ACK
+  from relay" once the whole budget is exhausted, same as before for
+  that final-failure case - no server-side change needed, since the
+  `_completed_sessions` cache lookup was already confirmed to run
+  before the reassembler.
+- **Verified**: new tests in `tests/test_client_sender.py` -
+  `test_final_ack_retry_resends_last_chunk_then_succeeds` (final ACK
+  lost once, last chunk gets resent, succeeds once the ACK arrives) and
+  `test_final_ack_exhausts_retries_then_fails` (final ACK never
+  arrives, exactly `max_retries` resends happen before failing with the
+  same "No final ACK from relay" message as before) - both pass
+  reliably across repeated runs, along with the full existing suite (no
+  regressions).
+- **Observability follow-up** (2026-08-31, prompted directly by
+  real-hardware testing): confirming this fix actually worked was
+  ambiguous from the operator's side alone - seeing the real NACK
+  reason doesn't prove a retry fired, since the reply could just as
+  easily have arrived on the very first try. Two gaps compounded this:
+  (1) `btcmesh_client_gui.py` had no file logger at all - every
+  send-related message only ever went to the on-screen `status_log`
+  widget, invisible to log-based diagnosis; (2) `on_chunk_sending`'s
+  resend of the last chunk was indistinguishable from an ordinary
+  chunk (re)send in both the log and the UI. Fixed by: adding a
+  `client_gui_logger` (via `core/logger_setup.py`, mirroring
+  `btcmesh_client_cli.py`'s existing `cli_logger` pattern) writing to
+  `logs/btcmesh_client_gui.log`; and adding an `is_final_ack_retry`
+  parameter to `on_chunk_sending` (`client/sender.py`, plus both
+  `btcmesh_client_gui.py`'s and `btcmesh_client_cli.py`'s callback
+  implementations) so a final-ack-triggered resend now reads
+  distinctly - "Resending last chunk N/N to request final ACK (retry
+  X)..." - in both the file log and the GUI's own Activity Log,
+  instead of looking identical to a normal chunk send. `attempt`
+  for a final-ack retry is a separate 1-indexed counter (1 = first
+  resend) rather than reusing `send_session.retry_counts`, which
+  tracks ordinary per-chunk delivery retries and wouldn't reliably
+  distinguish the two cases (this chunk may already have delivered
+  cleanly on its first try, leaving that counter at 0 regardless).
+  Verified with new tests: `test_final_ack_retry_resends_last_chunk_then_succeeds`
+  now also asserts the exact `on_chunk_sending` call sequence
+  (`is_final_ack_retry=False` then `True`), and
+  `test_chunk_sending_final_ack_retry_shows_distinct_message` in
+  `tests/test_btcmesh_client_gui.py` covers the widget-facing message.
+- **Widened to every Activity Log message, same day**: the initial fix
+  above only instrumented the send-specific callbacks directly - live
+  testing immediately surfaced a message from a completely different
+  code path ("Device is initializing, please wait...",
+  `_connect_with_retry()`'s transient-port-busy retry) that still had
+  no file trace at all. Rather than keep instrumenting call sites one
+  at a time, refactored to a single `self._log(msg, color)` helper on
+  `btcmesh_client_gui.py`'s `BTCMeshGUI` that every one of its ~12
+  direct `status_log.add_message()` call sites now routes through (scan
+  status, device/node-fetch results, send-start/error messages, etc.),
+  plus the generic `action.log_messages` loop in `_handle_result()` -
+  the single place *every* result-queue-originated message (including
+  `chunk_sending`/`wire_sent`/`progress`/`wire_received`) ultimately
+  reaches the widget, which made the earlier direct instrumentation in
+  those callbacks redundant, so it was removed. The one exception is
+  the send-success message, which never produces an
+  `action.log_messages` entry (only `show_success_popup`) - kept as a
+  direct `client_gui_logger.info()` call for that one case. Net effect:
+  every message that ever reaches the client GUI's Activity Log now
+  also reaches `logs/btcmesh_client_gui.log`, with no per-call-site
+  instrumentation required going forward - closes the observability gap
+  completely rather than just for the one message type this issue
+  originally needed. Incidentally surfaced potential new evidence for
+  Issue 61's still-open "remainder" question (whether the raw pyserial
+  error text actually contains "busy"/"resource temporarily
+  unavailable") - not yet confirmed with the new logging in place, real
+  hardware testing continuing.
+- **Same fix applied to `btcmesh_server_gui.py`**, same day, at the
+  user's direct request: it had the identical gap - every status_log
+  message only ever reached the widget, including Issue 63's blank
+  "Initialization error:" text, which was never traceable in the file
+  log because of this. Same `self._log(msg, color)` helper pattern,
+  routing all ~27 direct call sites through it - but reusing the
+  existing shared `server_logger` (`core/logger_setup.py`) rather than
+  a new logger/file, since that's already the same file
+  `core/reassembler.py`/`server/receiver.py`/`core/rpc_client.py` write
+  to. Server GUI status messages now interleave into the same
+  `logs/btcmesh_server.log` already being read for protocol-level
+  events, with no separate file to also watch.
 
 ---
 
@@ -3769,6 +3855,6 @@ Open
 | 61    | Overlapping scan batches could open concurrent connections to the same physical serial port - should_abort only stops a batch from starting a new probe, not from finishing one already in flight | **Major (real "could not open port" failures + orphaned tasks, confirmed real-hardware)** | Open - app-level race fixed + verified (incl. a disconnect settle-delay and a separate send-timeout fix); a real, lower-frequency "could not open port" remainder still observed |
 | 62    | `TransactionSender`'s retry loop never retries a chunk send that raises an exception - only an ACK timeout gets retried, at all; the first transient send failure ends the whole transaction | **Major (defeats the retry budget entirely on a common transient failure)** | **FIXED** |
 | 63    | A slow MeshCore `start_auto_message_fetching()` response during server startup raises a bare, empty-message `TimeoutError` that aborts the whole server instead of just the subscribe step | Medium (server fails to start with an unhelpful blank error, on an otherwise-successful mesh connect) | **FIXED** |
-| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | Open |
+| 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | **FIXED** |
 | 65    | MeshCore's `MESSAGES_WAITING`-driven message pull can lag behind actual radio receipt, making a genuinely-delivered chunk look lost and triggering a spurious client retry (a likely third contributor to "Duplicate chunk" warnings, alongside Issue 61's race and ordinary radio unreliability) | Minor-Medium (extra retries/latency, not data loss - firmware-timing dependent, may not be fixable in this codebase) | Open |
 | 66    | On the client GUI specifically, an idle T190 needs a physical replug to reconnect - the same device recovers fine via a plain reconnect on the server GUI | Medium (client-only reliability gap, not yet root-caused) | Open |
