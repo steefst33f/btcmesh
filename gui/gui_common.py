@@ -377,7 +377,11 @@ class CollapsibleSection(BoxLayout):
         self.header = Button(
             text='',
             size_hint_y=None,
-            height=32,
+            # 40, up from 32 (Issue 78) - scaled up along with the row
+            # height bump elsewhere so the header stays proportionally
+            # sized to what it sits above, rather than looking
+            # comparatively squat next to now-48px rows.
+            height=40,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
             color=COLOR_SECONDARY,
@@ -692,7 +696,7 @@ def create_status_row(label_text: str, initial_value: str = '',
 
 
 def create_input_row(label_text: str, initial_value: str = '',
-                    hint_text: str = '', height: int = 40,
+                    hint_text: str = '', height: int = 48,
                     password: bool = False, input_filter: str = None,
                     input_size_hint_x: float = 0.7) -> Tuple[BoxLayout, TextInput]:
     """Create an input row with a description label and text input field.
@@ -705,7 +709,12 @@ def create_input_row(label_text: str, initial_value: str = '',
         label_text: Text for the description label (e.g., 'Host:', 'Password:')
         initial_value: Initial text value for the input. Defaults to empty.
         hint_text: Placeholder hint text for the input. Defaults to empty.
-        height: Height of the row in pixels. Defaults to 40.
+        height: Height of the row in pixels. Defaults to 48 (Issue 78:
+            TextInput's default 6px top/bottom padding leaves only
+            height-12px for actual text - 40 wasn't enough room for a
+            30sp font's full glyph height, clipping descenders like
+            "p"/"g"; 48 leaves 36px, matching the ~1.2x font_size a full
+            ascent+descent line typically needs).
         password: Whether to mask input as password. Defaults to False.
         input_filter: Optional input filter (e.g., 'int' for numbers only).
         input_size_hint_x: Proportional width for the input field. Defaults to 0.7.

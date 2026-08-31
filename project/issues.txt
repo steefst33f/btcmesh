@@ -4049,7 +4049,7 @@ Open
 
 **Issue 78: `create_input_row()`'s TextInput fields clip descenders
 (p, g, y, etc.) at the bottom of the field**
-Open
+✅ FIXED
 
 - Found 2026-09-01 during real-hardware testing of Issue 72's server GUI
   collapsible settings sections - unrelated to that change itself, and
@@ -4079,6 +4079,34 @@ Open
   44-48px) and/or adjust `TextInput`'s `padding`/`font_size` so descenders
   render fully, then verify visually against a string containing
   descenders in each affected field.
+- **Root-caused 2026-09-01**: `TextInput`'s default `padding` is
+  `[6, 6, 6, 6]` (Button/Spinner/Label all default to `[0, 0, 0, 0]`),
+  reserving 12px of vertical padding inside the row - at the shared
+  default `font_size=30`, that left only 28px of the previous 40px row
+  for the glyph itself, well under the ~36px (`1.2 * font_size`) a full
+  ascent+descent line typically needs.
+- **Resolved**: `create_input_row()`'s default `height` raised 40 -> 48px
+  (`gui/gui_common.py`), giving TextInput 36px of usable space. Scaled
+  proportionally everywhere else sharing this row rhythm, so nothing
+  reads inconsistent next to the taller inputs: `CollapsibleSection`
+  headers 32 -> 40px, the server GUI's Test Connection/Scan buttons and
+  the client GUI's Transport/Device spinners and Scan buttons all
+  40 -> 48px, and the client GUI's destination row 45 -> 48px (its
+  `dest_input` is a plain `TextInput` built inline rather than through
+  `create_input_row()`, but shares the identical default padding).
+- Along the way, fixed two more small inconsistencies found via the same
+  real-hardware pass: the Reassembly Timeout row previously used a
+  proportional `input_size_hint_x=0.3` + a proportional spacer, leaving
+  the field ending ~440px short of the row's right edge - now uses the
+  same convention as every other row. And Port/User/Cookie/Timeout (rows
+  with no Show/Hide button) had a leftover fixed 60px trailing spacer
+  that served no purpose without a button to align with - removed, so
+  those fields now clip flush to the row's right edge, the same 0px gap
+  the Show button itself has to its own right edge on Host/Password.
+- Verified via direct Kivy widget introspection (not just visual
+  screenshots) - including a live window-resize test proving the
+  TextInput width is still proportionally bound to the row's right edge,
+  not a hardcoded pixel value. 973/973 tests pass.
 
 ---
 
@@ -4160,4 +4188,4 @@ Open
 | 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | Open |
 | 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
 | 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |
-| 78    | `create_input_row()`'s TextInput fields clip descenders (p, g, y) at the bottom of the field | Minor (UX/cosmetic) | Open |
+| 78    | `create_input_row()`'s TextInput fields clip descenders (p, g, y) at the bottom of the field | Minor (UX/cosmetic) | **FIXED** |

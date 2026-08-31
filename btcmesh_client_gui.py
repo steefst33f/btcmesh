@@ -417,7 +417,11 @@ class BTCMeshGUI(BoxLayout):
             values=[TRANSPORT_DISPLAY_NAMES[t] for t in TRANSPORT_CHOICES],
             size_hint_x=1,
             size_hint_y=None,
-            height=40,
+            # 48, matching the server GUI's Device Settings spinners and
+            # this file's own dest_selection_box row (Issue 78) - keeps
+            # spinner/button heights consistent between both GUIs, which
+            # share this same styling via gui/gui_common.py.
+            height=48,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
             color=COLOR_SECONDARY,
@@ -439,7 +443,7 @@ class BTCMeshGUI(BoxLayout):
             values=[],
             size_hint_x=1,
             size_hint_y=None,
-            height=40,
+            height=48,
             background_color=COLOR_BG_LIGHT,
             background_normal='',
             color=COLOR_SECONDARY,
@@ -459,7 +463,7 @@ class BTCMeshGUI(BoxLayout):
         self.refresh_btn = create_refresh_button('Scan')
         self.refresh_btn.size_hint_x = 1
         self.refresh_btn.size_hint_y = None
-        self.refresh_btn.height = 40
+        self.refresh_btn.height = 48
         self.refresh_btn.bind(on_press=self.on_refresh_devices)
         self.device_busy = BusyIndicator(self.refresh_btn, idle_text='Scan')
         self.add_widget(self.refresh_btn)
@@ -467,8 +471,12 @@ class BTCMeshGUI(BoxLayout):
         # Destination input section
         self.add_widget(create_section_label('Destination Node ID:'))
 
-        # Node selection row (Spinner + TextInput)
-        dest_selection_box = BoxLayout(size_hint_y=None, height=45, spacing=5)
+        # Node selection row (Spinner + TextInput). height=48 (Issue 78,
+        # up from 45): dest_input is a plain TextInput built inline here
+        # rather than through create_input_row(), but shares the exact
+        # same default 6px top/bottom padding that clips descenders like
+        # "p"/"g" at less than ~48px.
+        dest_selection_box = BoxLayout(size_hint_y=None, height=48, spacing=5)
 
         # Known nodes cache for mapping display text back to node id
         self.known_nodes = []
@@ -508,7 +516,7 @@ class BTCMeshGUI(BoxLayout):
         self.refresh_nodes_btn = create_refresh_button('Scan')
         self.refresh_nodes_btn.size_hint_x = 1
         self.refresh_nodes_btn.size_hint_y = None
-        self.refresh_nodes_btn.height = 40
+        self.refresh_nodes_btn.height = 48
         self.refresh_nodes_btn.bind(on_press=self.on_refresh_nodes)
         self.nodes_busy = BusyIndicator(self.refresh_nodes_btn, idle_text='Scan')
         self.add_widget(self.refresh_nodes_btn)

@@ -426,15 +426,20 @@ class BTCMeshServerGUI(BoxLayout):
         default_password = os.getenv("BITCOIN_RPC_PASSWORD", "")
         default_cookie = os.getenv("BITCOIN_RPC_COOKIE", "")
 
-        # height = 5 input rows @ 40 + 1 explicit 5px spacer + test_row @ 40,
-        # plus 6 inter-child gaps @ this container's own spacing=14 - keep
-        # this in sync with spacing below (real-hardware testing already
-        # found one mismatch here, Issue 72: the original 265 was 10px
-        # short of the real total at the previous spacing=5, invisible
-        # before Issue 72 only because the root layout's generous 20px
-        # inter-section spacing quietly absorbed the shortfall - the
-        # CollapsibleSection header/body boundary has no such cushion).
-        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=329, spacing=14)
+        # height = 5 input rows @ 48 (Issue 78: create_input_row()'s
+        # default, up from 40 to stop TextInput clipping descenders) + 1
+        # explicit 5px spacer + test_row @ 48 (bumped along with the input
+        # rows so Test Connection stays proportionally sized to what's
+        # above it, even though its plain Button text was never affected
+        # by Issue 78's clipping issue), plus 6 inter-child gaps @ this
+        # container's own spacing=14 - keep this in sync with spacing
+        # below (real-hardware testing already found a mismatch here once,
+        # Issue 72: the original 265 was 10px short of the real total at
+        # the previous spacing=5/row-height=40, invisible before Issue 72
+        # only because the root layout's generous 20px inter-section
+        # spacing quietly absorbed the shortfall - the CollapsibleSection
+        # header/body boundary has no such cushion).
+        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=377, spacing=14)
 
         # Row 1: Host input with Show/Hide toggle
         host_row, self.rpc_host_input = create_input_row(
@@ -446,20 +451,20 @@ class BTCMeshServerGUI(BoxLayout):
         host_row.add_widget(self.show_host_btn)
         settings_container.add_widget(host_row)
 
-        # Row 2: Port input
+        # Row 2: Port input. No trailing spacer (removed per real-hardware
+        # visual feedback): unlike Host/Password, there's no Show button
+        # to make room for, so the field clips all the way to the row's
+        # right edge - the same 0px gap the Show button itself has to
+        # its own right edge on those rows.
         port_row, self.rpc_port_input = create_input_row(
             'Port:', default_port, hint_text='8332', input_filter='int'
         )
-        # Spacer to align with host row (Show button = 60px)
-        port_row.add_widget(Widget(size_hint_x=None, width=60))
         settings_container.add_widget(port_row)
 
-        # Row 3: User input
+        # Row 3: User input - same reasoning as Port above.
         user_row, self.rpc_user_input = create_input_row(
             'User:', default_user, hint_text='rpcuser'
         )
-        # Spacer to align with host row
-        user_row.add_widget(Widget(size_hint_x=None, width=60))
         settings_container.add_widget(user_row)
 
         # Row 4: Password input with Show/Hide toggle
@@ -479,15 +484,14 @@ class BTCMeshServerGUI(BoxLayout):
             'Cookie:', default_cookie,
             hint_text='/path/to/.cookie (optional, overrides User/Password)',
         )
-        # Spacer to align with host row
-        cookie_row.add_widget(Widget(size_hint_x=None, width=60))
+        # No trailing spacer - same reasoning as Port/User above.
         settings_container.add_widget(cookie_row)
 
         # add spacer
         settings_container.add_widget(Widget(size_hint_y=None, height=5))
 
         # Row 5: Test Connection button
-        test_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+        test_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=48, spacing=5)
         # Left spacer to center button
         test_row.add_widget(Widget(size_hint_x=0.3))
 
@@ -514,7 +518,12 @@ class BTCMeshServerGUI(BoxLayout):
         straight onto the root GUI widget individually."""
         import os
 
-        # height = 3 rows @ 40 + 1 explicit 5px spacer before Scan + 3
+        # height = 2 rows @ 48 (Issue 78: matches create_input_row()'s new
+        # default, so Transport/Device stay visually consistent with
+        # RPC's now-48 rows) + 1 explicit 5px spacer + scan_btn @ 48
+        # (bumped along with the input rows so Scan stays proportionally
+        # sized to what's above it, even though its plain Button text was
+        # never affected by Issue 78's clipping issue), plus 3
         # inter-child gaps @ this container's own spacing=20 - keep in
         # sync with spacing below. Deliberately more than
         # _build_rpc_settings()'s 14: real-hardware testing found the
@@ -525,10 +534,10 @@ class BTCMeshServerGUI(BoxLayout):
         # background (a softer, slightly inset border), so the same
         # numeric gap has less visible breathing room between two flat-
         # edged Spinners than between two inset TextInputs.
-        container = BoxLayout(orientation='vertical', size_hint_y=None, height=185, spacing=20)
+        container = BoxLayout(orientation='vertical', size_hint_y=None, height=209, spacing=20)
 
         # Transport selector (Story 30.4)
-        transport_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        transport_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=48, spacing=10)
         transport_label = Label(
             text='Transport:',
             size_hint_x=None,
@@ -555,7 +564,7 @@ class BTCMeshServerGUI(BoxLayout):
         load_app_config()
         default_device = os.getenv("MESHTASTIC_SERIAL_PORT", "")
 
-        settings_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+        settings_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=48, spacing=5)
 
         # Device label
         device_label = Label(
@@ -602,7 +611,7 @@ class BTCMeshServerGUI(BoxLayout):
         self.scan_btn = create_refresh_button('Scan')
         self.scan_btn.size_hint_x = 1
         self.scan_btn.size_hint_y = None
-        self.scan_btn.height = 40
+        self.scan_btn.height = 48
         self.scan_btn.bind(on_press=self._on_scan_devices)
         self.device_busy = BusyIndicator(self.scan_btn, idle_text='Scan')
         container.add_widget(self.scan_btn)
@@ -624,10 +633,13 @@ class BTCMeshServerGUI(BoxLayout):
             default_timeout,
             hint_text='seconds',
             input_filter='int',
-            input_size_hint_x=0.3,
         )
-        # Add a spacer to balance the row
-        timeout_row.add_widget(Widget(size_hint_x=0.4))
+        # No trailing spacer (Issue 78/79 follow-up) - same reasoning as
+        # Port/User/Cookie above: no Show button to make room for, so the
+        # field clips all the way to the row's right edge. The previous
+        # proportional input_size_hint_x=0.3 + a size_hint_x=0.4 spacer
+        # left the field ending far short of the row's right edge (~440px
+        # of empty space).
         return timeout_row
 
     def _set_timeout_settings_enabled(self, enabled: bool):
