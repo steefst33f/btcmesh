@@ -2032,5 +2032,90 @@ class TestDisableControlsStory95(unittest.TestCase):
             self.assertFalse(action.stop_sending, f"stop_sending should be False for {result}")
 
 
+class TestKnownNodesPickerVisibilityIssue75(unittest.TestCase):
+    """Tests for _set_known_nodes_picker_visible() (Issue 75): the known-
+    nodes Spinner/Scan button used to stay in the layout merely disabled
+    for MeshCore, wasting a full row of space with two permanently inert
+    controls. They're now actually removed/re-added instead."""
+
+    def test_hiding_removes_spinner_and_widens_dest_input(self):
+        """Given the picker is hidden (MeshCore selected), Then the row
+        is rebuilt with only dest_input, which is widened to fill it."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.refresh_nodes_btn.parent = unittest.mock.MagicMock()  # currently attached
+
+        btcmesh_client_gui.BTCMeshGUI._set_known_nodes_picker_visible(gui, False)
+
+        gui.dest_selection_box.clear_widgets.assert_called_once()
+        gui.dest_selection_box.add_widget.assert_called_once_with(gui.dest_input)
+        self.assertEqual(gui.dest_input.size_hint_x, 1)
+        gui.remove_widget.assert_called_once_with(gui.refresh_nodes_btn)
+        gui.add_widget.assert_not_called()
+
+    def test_hiding_is_a_no_op_on_the_button_if_already_removed(self):
+        """Given the button is already absent (e.g. two MeshCore selects
+        in a row), Then remove_widget isn't called again."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.refresh_nodes_btn.parent = None
+
+        btcmesh_client_gui.BTCMeshGUI._set_known_nodes_picker_visible(gui, False)
+
+        gui.remove_widget.assert_not_called()
+
+    def test_showing_restores_spinner_before_input_and_narrows_it(self):
+        """Given the picker is shown (Meshtastic selected), Then the row
+        is rebuilt with node_spinner before dest_input, back at 0.5 width
+        each."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.refresh_nodes_btn.parent = None  # currently absent
+
+        btcmesh_client_gui.BTCMeshGUI._set_known_nodes_picker_visible(gui, True)
+
+        gui.dest_selection_box.clear_widgets.assert_called_once()
+        self.assertEqual(
+            gui.dest_selection_box.add_widget.call_args_list,
+            [unittest.mock.call(gui.node_spinner), unittest.mock.call(gui.dest_input)],
+        )
+        self.assertEqual(gui.dest_input.size_hint_x, 0.5)
+        gui.remove_widget.assert_not_called()
+
+    def test_showing_re_inserts_button_right_before_the_raw_tx_label(self):
+        """Given refresh_nodes_btn needs restoring, Then it's inserted at
+        index = children.index(_raw_tx_label) + 1 - Widget.children stores
+        widgets in reverse visual order, so this places it immediately
+        *before* the label visually (verified directly against real Kivy
+        separately, since this MagicMock-based test can only confirm the
+        call, not real layout behavior)."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.refresh_nodes_btn.parent = None
+        sentinel_before, sentinel_after = object(), object()
+        gui._raw_tx_label = object()
+        gui.children = [sentinel_after, gui._raw_tx_label, sentinel_before]
+
+        btcmesh_client_gui.BTCMeshGUI._set_known_nodes_picker_visible(gui, True)
+
+        gui.add_widget.assert_called_once_with(gui.refresh_nodes_btn, index=2)
+
+    def test_showing_is_a_no_op_on_the_button_if_already_present(self):
+        """Given the button is already attached (e.g. two Meshtastic
+        selects in a row), Then add_widget isn't called again for it."""
+        import btcmesh_client_gui
+
+        gui = unittest.mock.MagicMock()
+        gui.refresh_nodes_btn.parent = unittest.mock.MagicMock()
+
+        btcmesh_client_gui.BTCMeshGUI._set_known_nodes_picker_visible(gui, True)
+
+        gui.add_widget.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

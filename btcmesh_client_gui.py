@@ -476,7 +476,11 @@ class BTCMeshGUI(BoxLayout):
         # rather than through create_input_row(), but shares the exact
         # same default 6px top/bottom padding that clips descenders like
         # "p"/"g" at less than ~48px.
-        dest_selection_box = BoxLayout(size_hint_y=None, height=48, spacing=5)
+        # Stored on self (Issue 75) so on_transport_selected() can
+        # rebuild it - removing node_spinner entirely for MeshCore,
+        # rather than just disabling it, reclaims the space.
+        self.dest_selection_box = BoxLayout(size_hint_y=None, height=48, spacing=5)
+        dest_selection_box = self.dest_selection_box
 
         # Known nodes cache for mapping display text back to node id
         self.known_nodes = []
@@ -521,8 +525,11 @@ class BTCMeshGUI(BoxLayout):
         self.nodes_busy = BusyIndicator(self.refresh_nodes_btn, idle_text='Scan')
         self.add_widget(self.refresh_nodes_btn)
 
-        # TX Hex input
-        self.add_widget(create_section_label('Raw Transaction Hex:'))
+        # TX Hex input. _raw_tx_label kept on self (Issue 75) as the
+        # anchor on_transport_selected() re-inserts refresh_nodes_btn
+        # before, when re-adding it after a MeshCore->Meshtastic switch.
+        self._raw_tx_label = create_section_label('Raw Transaction Hex:')
+        self.add_widget(self._raw_tx_label)
         self.tx_input = TextInput(
             hint_text='Paste raw transaction hex here...',
             multiline=True,
@@ -606,12 +613,19 @@ class BTCMeshGUI(BoxLayout):
 
     def on_transport_selected(self, spinner, text):
         """Handle transport selector change (Story 30.4): reset the
-        device list/spinner and known-nodes state, disable the known-
-        nodes picker for MeshCore (no "known contacts" equivalent this
-        story - destination stays manual hex entry, matching the CLI's
-        --transport flag precedent), then re-scan under the newly
-        selected transport (reuses the existing scan flow, not a new
-        one)."""
+        device list/spinner and known-nodes state, remove the known-
+        nodes picker entirely for MeshCore (no "known contacts"
+        equivalent this story - destination stays manual hex entry,
+        matching the CLI's --transport flag precedent), then re-scan
+        under the newly selected transport (reuses the existing scan
+        flow, not a new one).
+
+        Issue 75: node_spinner/refresh_nodes_btn used to stay in the
+        layout merely `disabled` for MeshCore - two permanently inert
+        controls wasting a full row of vertical space in this already-
+        tight window, with no visual explanation of why they were
+        greyed out. Now actually removed from the layout (and dest_input
+        widened to fill the reclaimed row), restored on switching back."""
         transport_name = _DISPLAY_NAME_TO_TRANSPORT.get(text, "meshtastic")
         if transport_name == self.selected_transport:
             return
@@ -622,8 +636,7 @@ class BTCMeshGUI(BoxLayout):
         self._update_known_nodes([])
 
         is_meshcore = transport_name == "meshcore"
-        self.node_spinner.disabled = is_meshcore
-        self.refresh_nodes_btn.disabled = is_meshcore
+        self._set_known_nodes_picker_visible(not is_meshcore)
         self.dest_input.hint_text = 'hex public key/prefix' if is_meshcore else '!node_id'
 
         display_name = TRANSPORT_DISPLAY_NAMES[transport_name]
@@ -631,6 +644,41 @@ class BTCMeshGUI(BoxLayout):
         self.connection_label.color = COLOR_DISCONNECTED
 
         self._scan_devices()
+
+    def _set_known_nodes_picker_visible(self, visible: bool) -> None:
+        """Show or hide the known-nodes Spinner and its Scan button
+        (Issue 75) - MeshCore has no equivalent, so for that transport
+        these are removed from the layout entirely (not just disabled),
+        reclaiming their space rather than leaving two permanently inert
+        controls on screen.
+
+        node_spinner shares a row with dest_input (self.dest_selection_box):
+        rebuilt via clear_widgets() + re-add in the fixed [spinner, input]
+        order rather than a manual index calculation, since that row only
+        ever holds these two widgets - always correct regardless of which
+        widget was previously present.
+
+        refresh_nodes_btn is its own full-width row directly in the root
+        layout, alongside many permanent siblings - removed/re-added by
+        reference instead, using self._raw_tx_label (the section label
+        immediately below it) as a stable anchor for where it belongs.
+        Widget.children stores widgets in reverse visual order, so
+        re-inserting it visually *before* that anchor means inserting it
+        at `children.index(anchor) + 1` in the raw (reversed) list -
+        verified directly against Kivy, not assumed.
+        """
+        self.dest_selection_box.clear_widgets()
+        if visible:
+            self.dest_selection_box.add_widget(self.node_spinner)
+        self.dest_selection_box.add_widget(self.dest_input)
+        self.dest_input.size_hint_x = 0.5 if visible else 1
+
+        has_button = self.refresh_nodes_btn.parent is not None
+        if visible and not has_button:
+            anchor_index = self.children.index(self._raw_tx_label)
+            self.add_widget(self.refresh_nodes_btn, index=anchor_index + 1)
+        elif not visible and has_button:
+            self.remove_widget(self.refresh_nodes_btn)
 
     def _scan_devices(self):
         """Scan for available candidate serial devices in background.
