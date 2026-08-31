@@ -3672,6 +3672,33 @@ reason - no retry/redelivery for the final reply, unlike chunks**
   (`is_final_ack_retry=False` then `True`), and
   `test_chunk_sending_final_ack_retry_shows_distinct_message` in
   `tests/test_btcmesh_client_gui.py` covers the widget-facing message.
+- **Widened to every Activity Log message, same day**: the initial fix
+  above only instrumented the send-specific callbacks directly - live
+  testing immediately surfaced a message from a completely different
+  code path ("Device is initializing, please wait...",
+  `_connect_with_retry()`'s transient-port-busy retry) that still had
+  no file trace at all. Rather than keep instrumenting call sites one
+  at a time, refactored to a single `self._log(msg, color)` helper on
+  `btcmesh_client_gui.py`'s `BTCMeshGUI` that every one of its ~12
+  direct `status_log.add_message()` call sites now routes through (scan
+  status, device/node-fetch results, send-start/error messages, etc.),
+  plus the generic `action.log_messages` loop in `_handle_result()` -
+  the single place *every* result-queue-originated message (including
+  `chunk_sending`/`wire_sent`/`progress`/`wire_received`) ultimately
+  reaches the widget, which made the earlier direct instrumentation in
+  those callbacks redundant, so it was removed. The one exception is
+  the send-success message, which never produces an
+  `action.log_messages` entry (only `show_success_popup`) - kept as a
+  direct `client_gui_logger.info()` call for that one case. Net effect:
+  every message that ever reaches the client GUI's Activity Log now
+  also reaches `logs/btcmesh_client_gui.log`, with no per-call-site
+  instrumentation required going forward - closes the observability gap
+  completely rather than just for the one message type this issue
+  originally needed. Incidentally surfaced potential new evidence for
+  Issue 61's still-open "remainder" question (whether the raw pyserial
+  error text actually contains "busy"/"resource temporarily
+  unavailable") - not yet confirmed with the new logging in place, real
+  hardware testing continuing.
 
 ---
 

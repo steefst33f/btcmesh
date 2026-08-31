@@ -639,7 +639,7 @@ class BTCMeshGUI(BoxLayout):
         self._scan_generation += 1
         display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
         self.device_spinner.text = SCANNING_TEXT
-        self.status_log.add_message(f"Scanning for {display_name} devices...")
+        self._log(f"Scanning for {display_name} devices...")
         self.device_busy.start("Scanning devices...")
 
         def scan_thread():
@@ -775,7 +775,7 @@ class BTCMeshGUI(BoxLayout):
             self.result_queue.put(('device_and_nodes_fetch_complete',))
             return
 
-        self.status_log.add_message(
+        self._log(
             "Fetching device info and known nodes..." if fetch_known_nodes
             else "Fetching device info..."
         )
@@ -863,7 +863,7 @@ class BTCMeshGUI(BoxLayout):
         see project/plans/story_27_1.md's "Architecture Revision"
         section)."""
         port = device_path_from_display(self.devices, self.device_spinner.text)
-        self.status_log.add_message("Fetching known nodes...")
+        self._log("Fetching known nodes...")
         self.nodes_busy.start("Fetching known nodes...")
 
         def fetch_thread():
@@ -918,7 +918,7 @@ class BTCMeshGUI(BoxLayout):
             formatted_nodes = [format_node_display(n) for n in nodes]
             self.node_spinner.values = [MANUAL_ENTRY_TEXT] + formatted_nodes
             self.node_spinner.text = MANUAL_ENTRY_TEXT
-            self.status_log.add_message(f"Found {len(nodes)} known node(s)", COLOR_SUCCESS)
+            self._log(f"Found {len(nodes)} known node(s)", COLOR_SUCCESS)
 
     def _check_results(self, dt):
         """Check for results from background threads."""
@@ -959,7 +959,7 @@ class BTCMeshGUI(BoxLayout):
                     # section for why probing the same sole device twice
                     # at once would just race itself).
                     self.device_spinner.text = devices[0]
-                    self.status_log.add_message(f"Found device: {devices[0]}", COLOR_SUCCESS)
+                    self._log(f"Found device: {devices[0]}", COLOR_SUCCESS)
                 else:
                     # Multiple devices - SELECT_DEVICE_TEXT is a sentinel
                     # on_device_selected ignores, so setting it here
@@ -975,7 +975,7 @@ class BTCMeshGUI(BoxLayout):
                     # stays accurate either way. The dropdown itself is
                     # the real, already-visible source of truth for
                     # "how many."
-                    self.status_log.add_message("Device(s) found - select one to connect", COLOR_WARNING)
+                    self._log("Device(s) found - select one to connect", COLOR_WARNING)
                     # Own start() paired with the device_probe_complete
                     # handler's stop() - independent of the scan's own
                     # start()/stop() pair below (Issue 39, ref-counted).
@@ -990,7 +990,7 @@ class BTCMeshGUI(BoxLayout):
                 self.device_spinner.values = [NO_DEVICES_TEXT]
                 self.device_spinner.text = NO_DEVICES_TEXT
                 display_name = TRANSPORT_DISPLAY_NAMES[self.selected_transport]
-                self.status_log.add_message(f"No {display_name} devices found", COLOR_ERROR)
+                self._log(f"No {display_name} devices found", COLOR_ERROR)
             # The scan itself (device_busy.start() in _scan_devices()) is
             # done either way - a follow-on probe_devices_in_background()
             # call above owns its own device_busy.start()/stop() pair
@@ -1060,7 +1060,7 @@ class BTCMeshGUI(BoxLayout):
 
         # Add log messages
         for msg, color in action.log_messages:
-            self.status_log.add_message(msg, color)
+            self._log(msg, color)
 
         # Handle state changes
         if action.stop_sending:
@@ -1071,6 +1071,21 @@ class BTCMeshGUI(BoxLayout):
         # Show popups
         if action.show_success_popup is not None:
             self._show_success_popup(action.show_success_popup)
+
+    def _log(self, msg: str, color: Optional[Tuple] = None) -> None:
+        """Show a message in the Activity Log widget and mirror it to the
+        file logger (logs/btcmesh_client_gui.log).
+
+        Every status_log message in this GUI should go through this
+        method rather than calling self.status_log.add_message()
+        directly - previously every one of these only ever reached the
+        on-screen widget, invisible to any file-based diagnosis. Found
+        directly during Issue 64's real-hardware testing, when a
+        connect-retry message ("Device is initializing, please wait...")
+        turned out to have no log trace at all despite extensive testing.
+        """
+        self.status_log.add_message(msg, color)
+        client_gui_logger.info(msg)
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable input controls during transaction send.
@@ -1112,7 +1127,7 @@ class BTCMeshGUI(BoxLayout):
 
         error = validate_send_inputs(dest, tx_hex, self.selected_transport)
         if error:
-            self.status_log.add_message(f"Error: {error}", COLOR_ERROR)
+            self._log(f"Error: {error}", COLOR_ERROR)
             return
 
         # Resolve which physical device to use now, while the dropdown's
@@ -1129,9 +1144,9 @@ class BTCMeshGUI(BoxLayout):
         self._set_controls_enabled(False)  # Disable input controls during send
         self.status_log.clear()
         if dry_run:
-            self.status_log.add_message(f"Starting DRY RUN transaction send to {dest}...")
+            self._log(f"Starting DRY RUN transaction send to {dest}...")
         else:
-            self.status_log.add_message(f"Starting transaction send to {dest}...")
+            self._log(f"Starting transaction send to {dest}...")
 
         # Run send in background thread
         self.send_thread = threading.Thread(
@@ -1186,23 +1201,12 @@ class BTCMeshGUI(BoxLayout):
             def on_chunk_sending(chunk_num, total, attempt, wire_format, is_final_ack_retry):
                 self.result_queue.put(('chunk_sending', chunk_num, total, attempt, is_final_ack_retry))
                 self.result_queue.put(('wire_sent', wire_format))
-                if is_final_ack_retry:
-                    client_gui_logger.info(
-                        f"Resending last chunk {chunk_num}/{total} to request final "
-                        f"ACK (retry {attempt}): {wire_format}"
-                    )
-                else:
-                    client_gui_logger.info(
-                        f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}"
-                    )
 
             def on_progress(chunk_num, total):
                 self.result_queue.put(('progress', chunk_num, total))
-                client_gui_logger.info(f"ACK for chunk {chunk_num}/{total}")
 
             def on_response_received(message_text):
                 self.result_queue.put(('wire_received', message_text))
-                client_gui_logger.debug(f"Received: {message_text}")
 
             result = sender.send_transaction(
                 tx_hex, dest,
@@ -1212,9 +1216,12 @@ class BTCMeshGUI(BoxLayout):
             )
             self.result_queue.put(('send_result', result))
             if result.success:
+                # The only path here that doesn't already flow through
+                # action.log_messages (see _handle_result) - a success
+                # only sets show_success_popup, no log line - so this is
+                # the one direct call still needed alongside the blanket
+                # sweep there.
                 client_gui_logger.info(f"Success: TXID {result.txid}")
-            else:
-                client_gui_logger.error(f"Failed: {result.error}")
 
         except Exception as e:
             self.result_queue.put(('error', str(e)))
@@ -1343,7 +1350,7 @@ class BTCMeshGUI(BoxLayout):
     def on_load_example(self, instance):
         """Load example transaction hex."""
         self.tx_input.text = EXAMPLE_RAW_TX
-        self.status_log.add_message("Loaded example transaction hex")
+        self._log("Loaded example transaction hex")
 
     def on_abort_pressed(self, instance):
         """Handle abort button press."""
@@ -1355,7 +1362,7 @@ class BTCMeshGUI(BoxLayout):
     def on_clear(self, instance):
         """Clear the status log."""
         self.status_log.clear()
-        self.status_log.add_message("Log cleared")
+        self._log("Log cleared")
 
 
 class BTCMeshApp(App):
