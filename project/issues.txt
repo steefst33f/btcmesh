@@ -3984,7 +3984,7 @@ Open
 
 **Issue 75: Client GUI leaves the known-nodes Spinner/Scan button visible
 but disabled for MeshCore instead of removing them**
-Open
+✅ FIXED
 
 - `on_transport_selected()` (`btcmesh_client_gui.py:616-618`) sets
   `self.node_spinner.disabled = is_meshcore` and
@@ -4002,6 +4002,28 @@ Open
   collapse its height to 0) when MeshCore is selected, reclaiming the space
   for the destination field, which becomes the sole input for that
   transport anyway.
+- **Resolved 2026-09-01**: `on_transport_selected()` now calls a new
+  `_set_known_nodes_picker_visible()` helper instead of setting
+  `.disabled`. `node_spinner` shares a row with `dest_input`
+  (`self.dest_selection_box`) - rebuilt via `clear_widgets()` + re-add in
+  the fixed `[spinner, input]` order (only for Meshtastic) rather than
+  index math, since that row only ever holds these two widgets;
+  `dest_input.size_hint_x` widens from 0.5 to 1 when the spinner is
+  absent. `refresh_nodes_btn` is its own full-width row directly in the
+  root layout alongside many permanent siblings, so it's removed/
+  re-added by reference instead, using the "Raw Transaction Hex:" label
+  (`self._raw_tx_label`) as a stable anchor - `Widget.children` stores
+  widgets in reverse visual order, so re-inserting it visually *before*
+  that anchor means inserting at `children.index(anchor) + 1`, verified
+  directly against real Kivy (not assumed) before relying on it.
+- Verified via real Kivy widget introspection (not just visual
+  screenshots): switching to MeshCore sets both widgets' `.parent` to
+  `None` and widens `dest_input` to `size_hint_x=1`; switching back
+  restores both to their original position and width, with
+  `refresh_nodes_btn` landing exactly between `dest_selection_box` and
+  the "Raw Transaction Hex:" label as before. 5 new tests added
+  (`TestKnownNodesPickerVisibilityIssue75` in
+  `tests/test_btcmesh_client_gui.py`); 978/978 tests pass.
 
 ---
 
@@ -4185,7 +4207,7 @@ Open
 | 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | **FIXED** |
 | 73    | Plaintext-password-storage warning is a one-off scrolling log line instead of a persistent notice | Minor (UX/security disclosure) | Open |
 | 74    | "Test Connection" only covers Bitcoin RPC, not the mesh transport, creating an asymmetric expectation | Minor (UX polish) | Open |
-| 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | Open |
+| 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | **FIXED** |
 | 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
 | 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |
 | 78    | `create_input_row()`'s TextInput fields clip descenders (p, g, y) at the bottom of the field | Minor (UX/cosmetic) | **FIXED** |
