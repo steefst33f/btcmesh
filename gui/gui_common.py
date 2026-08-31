@@ -322,6 +322,115 @@ class BusyIndicator:
         self._button.text = self._message + '.' * self._frame_index
 
 
+class CollapsibleSection(BoxLayout):
+    """A clickable header that shows/hides a body widget below it
+    (Issue 72) - lets a settings section be tucked away to make room for
+    whatever's below it, without touching anything else on screen.
+
+    Deliberately not Kivy's stock Accordion widget: this file's test
+    suite runs against hand-mocked stand-ins for the specific kivy.uix
+    submodules this app already imports (see the sys.modules mocking at
+    the top of tests/test_btcmesh_server_gui.py) rather than real Kivy,
+    and kivy.uix.accordion isn't among them - using it here would need
+    the real graphics library at import time. Built instead from
+    BoxLayout/Button, both already covered by that mock, so the same
+    collapse/expand behavior needs no new test scaffolding.
+
+    Manual only, by design (2026-08-31 UX review, Issue 72): nothing
+    collapses or expands this automatically (e.g. on server start/stop).
+    Settings fields that stay meaningful to glance at while the server is
+    running - Port and User in particular, neither echoed anywhere in the
+    Connection Status section - would otherwise disappear from view the
+    moment they became most relevant to double-check.
+    """
+
+    # Plain ASCII, not the ▸/▾ disclosure-triangle glyphs typically used
+    # for this - real-hardware testing showed those render as tofu boxes
+    # under Kivy's default font, which has no glyph for them.
+    _COLLAPSED_MARK = '+'
+    _EXPANDED_MARK = '-'
+
+    def __init__(self, title: str, body, start_collapsed: bool = False, **kwargs):
+        kwargs.setdefault('orientation', 'vertical')
+        kwargs.setdefault('size_hint_y', None)
+        # A small visual gap between header and body - flush (0) read as
+        # an overlap at a glance during real-hardware testing, even once
+        # the two were confirmed contiguous with no actual clipping.
+        kwargs.setdefault('spacing', 16)
+        super().__init__(**kwargs)
+        self._title = title
+        self.body = body
+        self._collapsed = False
+
+        # Bound before either child is added (unlike the header's own
+        # text_size bind below) - Kivy's bind() only fires on a *future*
+        # change to the property, not the value it already holds. Adding
+        # both children first would let minimum_height reach its final
+        # value before anything was listening, so self.height would
+        # never actually update from Kivy's 100px Widget default -
+        # exactly the overlapping-rows bug real-hardware testing caught
+        # here. _build_active_sessions_section()'s sessions_container
+        # (elsewhere in this file) already binds this the same way, for
+        # the same reason.
+        self.bind(minimum_height=self.setter('height'))
+
+        self.header = Button(
+            text='',
+            size_hint_y=None,
+            height=32,
+            background_color=COLOR_BG_LIGHT,
+            background_normal='',
+            color=COLOR_SECONDARY,
+            halign='left',
+            valign='middle',
+            padding=(10, 0),
+        )
+        # halign only takes effect once text_size is set (same gotcha
+        # create_section_label()/create_status_row() already work around
+        # for Labels below) - real-hardware testing showed this header
+        # rendering center-aligned, inconsistent with every other section
+        # label on the page, without this.
+        self.header.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+        self.header.bind(on_press=self.toggle)
+        self.add_widget(self.header)
+        self.add_widget(self.body)
+
+        self._refresh_header_text()
+
+        if start_collapsed:
+            self.collapse()
+
+    def _refresh_header_text(self) -> None:
+        mark = self._COLLAPSED_MARK if self._collapsed else self._EXPANDED_MARK
+        self.header.text = f'{mark} {self._title}'
+
+    @property
+    def collapsed(self) -> bool:
+        return self._collapsed
+
+    def toggle(self, *_args) -> None:
+        """Bound directly to the header's on_press - takes (and ignores)
+        the button instance Kivy passes to press callbacks, so it works
+        as both an event handler and a plain collapse()/expand() flip."""
+        self.expand() if self._collapsed else self.collapse()
+
+    def collapse(self) -> None:
+        if self._collapsed:
+            return
+        self._collapsed = True
+        if self.body.parent is not None:
+            self.remove_widget(self.body)
+        self._refresh_header_text()
+
+    def expand(self) -> None:
+        if not self._collapsed:
+            return
+        self._collapsed = False
+        if self.body.parent is None:
+            self.add_widget(self.body)
+        self._refresh_header_text()
+
+
 # =============================================================================
 # Widget Factory Functions
 # =============================================================================
