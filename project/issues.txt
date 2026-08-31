@@ -3699,6 +3699,18 @@ reason - no retry/redelivery for the final reply, unlike chunks**
   error text actually contains "busy"/"resource temporarily
   unavailable") - not yet confirmed with the new logging in place, real
   hardware testing continuing.
+- **Same fix applied to `btcmesh_server_gui.py`**, same day, at the
+  user's direct request: it had the identical gap - every status_log
+  message only ever reached the widget, including Issue 63's blank
+  "Initialization error:" text, which was never traceable in the file
+  log because of this. Same `self._log(msg, color)` helper pattern,
+  routing all ~27 direct call sites through it - but reusing the
+  existing shared `server_logger` (`core/logger_setup.py`) rather than
+  a new logger/file, since that's already the same file
+  `core/reassembler.py`/`server/receiver.py`/`core/rpc_client.py` write
+  to. Server GUI status messages now interleave into the same
+  `logs/btcmesh_server.log` already being read for protocol-level
+  events, with no separate file to also watch.
 
 ---
 
