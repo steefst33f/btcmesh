@@ -3896,7 +3896,7 @@ Open
 
 **Issue 72: Server GUI's settings sections stay fully rendered while
 disabled during a run, starving Active Sessions/Activity Log of space**
-Open
+✅ FIXED
 
 - Once the server is running, `_set_rpc_settings_enabled(False)`,
   `_set_meshtastic_settings_enabled(False)`, and
@@ -3918,6 +3918,31 @@ Open
   auto-collapse when `is_running` becomes `True` (and re-expand on stop),
   freeing the reclaimed height for Active Sessions and the Activity Log.
   This is the single highest-leverage change of this whole review pass.
+- **Resolved 2026-09-01**: implemented as a hand-rolled `CollapsibleSection`
+  widget (`gui/gui_common.py`) rather than the stock `kivy.uix.accordion` -
+  this file's test suite runs against hand-mocked stand-ins for the
+  specific `kivy.uix` submodules the app already imports (see the
+  `sys.modules` mocking in `tests/test_btcmesh_server_gui.py`), and
+  `kivy.uix.accordion` isn't among them; `CollapsibleSection` is built
+  from `BoxLayout`/`Button` instead, both already covered, so no new test
+  scaffolding was needed. Also **manual only, not auto-collapse on
+  start/stop** - a deliberate scope change from the fix direction above,
+  decided with the user during implementation: Port and User aren't
+  echoed anywhere in the Connection Status section, so auto-hiding them
+  the moment the server starts running would hide exactly the fields an
+  operator might want to double-check while it's live.
+- Found and fixed a real, pre-existing bug while wiring this up:
+  `_build_rpc_settings()`'s container declared `height=265`, 10px short
+  of what its 7 real child rows actually need (275) - invisible before
+  this issue only because the root layout's generous 20px inter-section
+  spacing absorbed the shortfall; `CollapsibleSection`'s header/body
+  boundary has no such cushion, so real-hardware testing caught it as the
+  Host row visibly overlapping the header above it.
+- Real-hardware testing also surfaced a separate, unrelated bug in
+  `create_input_row()`'s `TextInput` styling (descenders like "p"/"g"
+  clipped at the bottom of input fields) - not fixed here, logged
+  separately as **Issue 78** per the project's one-issue-per-branch
+  convention.
 
 ---
 
@@ -4022,6 +4047,41 @@ Open
 
 ---
 
+**Issue 78: `create_input_row()`'s TextInput fields clip descenders
+(p, g, y, etc.) at the bottom of the field**
+Open
+
+- Found 2026-09-01 during real-hardware testing of Issue 72's server GUI
+  collapsible settings sections - unrelated to that change itself, and
+  pre-existing since `create_input_row()` (`gui/gui_common.py:690`) has
+  used the same fixed `height: int = 40` default since long before Issue
+  72 existed. Only surfaced now because Issue 72's work had the operator
+  looking closely at this exact screen for the first time in a while.
+- The operator noticed while comparing row heights: `Spinner`-based rows
+  (Transport/Device in the server GUI's Device Settings) visually read
+  as taller/more comfortable than `TextInput`-based rows (Host/Port/
+  User/Password/Cookie in RPC Settings) at the same declared 40px row
+  height, and specifically that characters with descenders - "p", "g" -
+  render visibly cut off at the bottom of the TextInput fields. The
+  Spinner rows don't exhibit this.
+- Not yet root-caused precisely (no code changed here) - likely
+  candidates worth checking first: `TextInput`'s default `padding`
+  leaving too little vertical room for its line height at the current
+  `font_size` inside a 40px row, or its default vertical text alignment
+  not reserving space for descenders the way `Spinner`'s (Button-derived)
+  text layout does.
+- Affects every `create_input_row()` call site in both GUIs (RPC Settings
+  and Reassembly Timeout in the server GUI; none currently in the client
+  GUI, which uses `TextInput` directly rather than through this helper -
+  worth checking those too once root-caused, since they'd share the same
+  underlying `TextInput` default styling).
+- Fix direction: increase the row's declared height slightly (e.g. 40 ->
+  44-48px) and/or adjust `TextInput`'s `padding`/`font_size` so descenders
+  render fully, then verify visually against a string containing
+  descenders in each affected field.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -4094,9 +4154,10 @@ Open
 | 69    | Two near-identical oranges (`COLOR_PRIMARY`/`COLOR_WARNING`) carry different meanings in the same log stream | Minor (UX polish) | Open |
 | 70    | `StatusLog` bottom-anchors under-full content, leaving a misleading blank gap above it | Minor (UX polish) | Open |
 | 71    | RPC Host field is masked by default despite not being a secret that needs hiding while typing | Minor (UX - error-prone default) | Open |
-| 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | Open |
+| 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | **FIXED** |
 | 73    | Plaintext-password-storage warning is a one-off scrolling log line instead of a persistent notice | Minor (UX/security disclosure) | Open |
 | 74    | "Test Connection" only covers Bitcoin RPC, not the mesh transport, creating an asymmetric expectation | Minor (UX polish) | Open |
 | 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | Open |
 | 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
 | 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |
+| 78    | `create_input_row()`'s TextInput fields clip descenders (p, g, y) at the bottom of the field | Minor (UX/cosmetic) | Open |

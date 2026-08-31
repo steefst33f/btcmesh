@@ -45,6 +45,7 @@ from gui.gui_common import (
     ConnectionState,
     StatusLog,
     BusyIndicator,
+    CollapsibleSection,
     # Functions
     get_log_color,
     create_separator,
@@ -186,23 +187,43 @@ class BTCMeshServerGUI(BoxLayout):
         # Orange separator line after active sessions section
         self.add_widget(create_separator())
 
-        # Bitcoin RPC Settings section
-        self.add_widget(create_section_label('Bitcoin RPC Settings:'))
-        self._build_rpc_settings()
+        # Bitcoin RPC Settings section - collapsible (Issue 72): the
+        # header is the section label itself, with a click-to-collapse
+        # affordance to free up space for Active Sessions/Activity Log
+        # below, which is what this GUI is mostly used to watch once the
+        # server's actually running. Manual only - nothing collapses
+        # these automatically (see CollapsibleSection's docstring).
+        self._rpc_section = CollapsibleSection(
+            'Bitcoin RPC Settings:', self._build_rpc_settings()
+        )
+        self.add_widget(self._rpc_section)
 
         # Orange separator line after RPC settings section
         self.add_widget(create_separator())
 
-        # Device Settings section (transport selector + device scan)
-        self.add_widget(create_section_label('Device Settings:'))
-        self._build_device_settings()
+        # Device Settings section (transport selector + device scan).
+        # spacing=20 overrides CollapsibleSection's shared default (16,
+        # matched by RPC/Server Settings below): its body's first row is
+        # a Spinner, which - like the Scan-button spacer inside
+        # _build_device_settings() - explicitly clears background_normal
+        # for a hard-edged flat rectangle, unlike create_input_row()'s
+        # TextInput (RPC/Server's first row), which keeps Kivy's default
+        # themed background with its own inset border. Real-hardware
+        # testing found the shared 16px gap read as tighter here for the
+        # same reason.
+        self._device_section = CollapsibleSection(
+            'Device Settings:', self._build_device_settings(), spacing=20
+        )
+        self.add_widget(self._device_section)
 
         # Orange separator line after device settings
         self.add_widget(create_separator())
 
         # Reassembly timeout setting
-        self.add_widget(create_section_label('Server Settings:'))
-        self._build_timeout_settings()
+        self._server_settings_section = CollapsibleSection(
+            'Server Settings:', self._build_timeout_settings()
+        )
+        self.add_widget(self._server_settings_section)
 
         # Orange separator line after timeout settings
         self.add_widget(create_separator())
@@ -405,7 +426,15 @@ class BTCMeshServerGUI(BoxLayout):
         default_password = os.getenv("BITCOIN_RPC_PASSWORD", "")
         default_cookie = os.getenv("BITCOIN_RPC_COOKIE", "")
 
-        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=265, spacing=5)
+        # height = 5 input rows @ 40 + 1 explicit 5px spacer + test_row @ 40,
+        # plus 6 inter-child gaps @ this container's own spacing=14 - keep
+        # this in sync with spacing below (real-hardware testing already
+        # found one mismatch here, Issue 72: the original 265 was 10px
+        # short of the real total at the previous spacing=5, invisible
+        # before Issue 72 only because the root layout's generous 20px
+        # inter-section spacing quietly absorbed the shortfall - the
+        # CollapsibleSection header/body boundary has no such cushion).
+        settings_container = BoxLayout(orientation='vertical', size_hint_y=None, height=329, spacing=14)
 
         # Row 1: Host input with Show/Hide toggle
         host_row, self.rpc_host_input = create_input_row(
@@ -476,14 +505,30 @@ class BTCMeshServerGUI(BoxLayout):
 
         settings_container.add_widget(test_row)
 
-        self.add_widget(settings_container)
+        return settings_container
 
     def _build_device_settings(self):
-        """Build the transport selector + device settings section."""
+        """Build the transport selector + device settings section body,
+        wrapped in one container so it can be handed to a
+        CollapsibleSection (Issue 72) - previously each row was added
+        straight onto the root GUI widget individually."""
         import os
 
+        # height = 3 rows @ 40 + 1 explicit 5px spacer before Scan + 3
+        # inter-child gaps @ this container's own spacing=20 - keep in
+        # sync with spacing below. Deliberately more than
+        # _build_rpc_settings()'s 14: real-hardware testing found the
+        # Transport/Device rows still read as tighter than RPC's rows
+        # even at matching spacing values - Spinner here explicitly
+        # clears background_normal for a hard-edged flat rectangle, while
+        # create_input_row()'s TextInput keeps Kivy's default themed
+        # background (a softer, slightly inset border), so the same
+        # numeric gap has less visible breathing room between two flat-
+        # edged Spinners than between two inset TextInputs.
+        container = BoxLayout(orientation='vertical', size_hint_y=None, height=185, spacing=20)
+
         # Transport selector (Story 30.4)
-        transport_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=5)
+        transport_container = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
         transport_label = Label(
             text='Transport:',
             size_hint_x=None,
@@ -504,7 +549,7 @@ class BTCMeshServerGUI(BoxLayout):
         )
         self.transport_spinner.bind(text=self._on_transport_selected)
         transport_container.add_widget(self.transport_spinner)
-        self.add_widget(transport_container)
+        container.add_widget(transport_container)
 
         # Load default from environment
         load_app_config()
@@ -534,7 +579,15 @@ class BTCMeshServerGUI(BoxLayout):
         )
         settings_container.add_widget(self.device_spinner)
 
-        self.add_widget(settings_container)
+        container.add_widget(settings_container)
+
+        # Extra breathing room before the action button, matching
+        # _build_rpc_settings()'s own spacer before Test Connection -
+        # without it, Scan sat right up against the Device row with only
+        # this container's regular row-to-row spacing (10px) between it
+        # and the last input row, inconsistent with the ~25px RPC gives
+        # its own action button.
+        container.add_widget(Widget(size_hint_y=None, height=5))
 
         # Scan button - also the busy indicator itself (Issue 47,
         # mirroring the client GUI's Story 29.1/Issue 39 fix): reads
@@ -552,10 +605,12 @@ class BTCMeshServerGUI(BoxLayout):
         self.scan_btn.height = 40
         self.scan_btn.bind(on_press=self._on_scan_devices)
         self.device_busy = BusyIndicator(self.scan_btn, idle_text='Scan')
-        self.add_widget(self.scan_btn)
+        container.add_widget(self.scan_btn)
+
+        return container
 
     def _build_timeout_settings(self):
-        """Build the reassembly timeout settings section."""
+        """Build the reassembly timeout settings section body."""
         import os
 
         # Load default from environment, fallback to 300 seconds
@@ -573,7 +628,7 @@ class BTCMeshServerGUI(BoxLayout):
         )
         # Add a spacer to balance the row
         timeout_row.add_widget(Widget(size_hint_x=0.4))
-        self.add_widget(timeout_row)
+        return timeout_row
 
     def _set_timeout_settings_enabled(self, enabled: bool):
         """Enable or disable timeout settings."""
