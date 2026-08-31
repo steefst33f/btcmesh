@@ -268,7 +268,7 @@ class TransactionSender:
         tx_hex: str,
         destination: str,
         on_progress: Optional[Callable[[int, int], None]] = None,
-        on_chunk_sending: Optional[Callable[[int, int, int, str], None]] = None,
+        on_chunk_sending: Optional[Callable[[int, int, int, str, bool], None]] = None,
         on_response_received: Optional[Callable[[str], None]] = None,
     ) -> SendResult:
         """Send a transaction using stop-and-wait ARQ.
@@ -280,8 +280,20 @@ class TransactionSender:
             tx_hex: Raw transaction hex to send
             destination: Meshtastic node ID (e.g., "!deadbeef")
             on_progress: Optional callback(chunk_num, total_chunks) after each ACK
-            on_chunk_sending: Optional callback(chunk_num, total, attempt, wire_format)
-                called just before each send attempt (including retries)
+            on_chunk_sending: Optional callback(chunk_num, total, attempt,
+                wire_format, is_final_ack_retry) called just before each
+                send attempt (including retries). is_final_ack_retry is
+                True only for a resend of the last chunk after all chunks
+                already succeeded, deliberately triggered because the
+                final BTC_ACK/BTC_NACK reply itself was lost (Issue 64) -
+                False for every ordinary chunk send/retry, so callers can
+                tell the two apart instead of both just looking like
+                another chunk-send attempt. When is_final_ack_retry is
+                True, attempt is a separate 1-indexed count of *this*
+                resend specifically (1 = first resend, 2 = second, ...) -
+                deliberately not the same counter as an ordinary chunk's
+                own delivery-retry attempt number, since this chunk may
+                already have been delivered on its very first try.
             on_response_received: Optional callback(message_text) called for each
                 incoming ACK/NACK wire message belonging to this session
 
@@ -374,7 +386,7 @@ class TransactionSender:
                     wire_format = chunk_msg.format()
                     attempt = send_session.retry_counts.get(chunk_num, 0) + 1
                     if on_chunk_sending:
-                        on_chunk_sending(chunk_num, total, attempt, wire_format)
+                        on_chunk_sending(chunk_num, total, attempt, wire_format, False)
                     self.transport.send(wire_format, destination)
                     send_session.mark_chunk_sent(chunk_num)
 
@@ -437,6 +449,13 @@ class TransactionSender:
         # with a generic "No final ACK from relay" when the server had
         # already worked out (and sent) the real reason.
         max_final_attempts = self.max_retries + 1  # +1 for initial wait
+        # Deliberately separate from send_session.retry_counts, which
+        # tracks ordinary per-chunk delivery retries - this chunk may
+        # already have been delivered on its very first attempt (the most
+        # common case), so retry_counts wouldn't reliably distinguish "the
+        # final reply just arrived normally" from "this resend actually
+        # fired" the way the operator/log needs it to (Issue 64 follow-up).
+        final_ack_retry_num = 0
         while max_final_attempts > 0:
             if self._wait_for_final_ack(send_session):
                 return
@@ -454,15 +473,14 @@ class TransactionSender:
                 send_session.failed = True
                 return
 
+            final_ack_retry_num += 1
             try:
                 last_chunk_index = total - 1
                 chunk_msg = get_chunk_message(protocol_session, last_chunk_index)
                 wire_format = chunk_msg.format()
-                attempt = send_session.retry_counts.get(total, 0) + 1
                 if on_chunk_sending:
-                    on_chunk_sending(total, total, attempt, wire_format)
+                    on_chunk_sending(total, total, final_ack_retry_num, wire_format, True)
                 self.transport.send(wire_format, destination)
-                send_session.increment_retry(total)
             except Exception:
                 # Best-effort - if the resend itself fails, the next
                 # wait cycle simply times out again and consumes another

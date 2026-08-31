@@ -350,6 +350,22 @@ class TestTransactionSenderResultsStory222(unittest.TestCase):
 
         self.assertIn('retry 2', action.log_messages[0][0])
 
+    def test_chunk_sending_final_ack_retry_shows_distinct_message(self):
+        """Issue 64: a final-ACK-triggered resend of the last chunk must
+        read differently from an ordinary chunk retry, so an operator (or
+        anyone reading the log) can tell the two apart - previously
+        real-hardware testing had no way to distinguish "the reply arrived
+        on the first try" from "the retry mechanism actually fired"."""
+        result = ('chunk_sending', 3, 3, 1, True)
+
+        action = process_result(result)
+
+        self.assertEqual(len(action.log_messages), 1)
+        self.assertIn('Resending last chunk 3/3', action.log_messages[0][0])
+        self.assertIn('final ACK', action.log_messages[0][0])
+        self.assertIn('retry 1', action.log_messages[0][0])
+        self.assertEqual(action.log_messages[0][1], COLOR_PRIMARY)
+
     def test_wire_sent_shows_protocol_detail(self):
         """Given wire_sent result, Then shows arrow and wire format in secondary color."""
         wire_format = 'BTC_TX|abc123|1/3|020000...'

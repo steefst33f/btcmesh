@@ -3643,6 +3643,35 @@ reason - no retry/redelivery for the final reply, unlike chunks**
   same "No final ACK from relay" message as before) - both pass
   reliably across repeated runs, along with the full existing suite (no
   regressions).
+- **Observability follow-up** (2026-08-31, prompted directly by
+  real-hardware testing): confirming this fix actually worked was
+  ambiguous from the operator's side alone - seeing the real NACK
+  reason doesn't prove a retry fired, since the reply could just as
+  easily have arrived on the very first try. Two gaps compounded this:
+  (1) `btcmesh_client_gui.py` had no file logger at all - every
+  send-related message only ever went to the on-screen `status_log`
+  widget, invisible to log-based diagnosis; (2) `on_chunk_sending`'s
+  resend of the last chunk was indistinguishable from an ordinary
+  chunk (re)send in both the log and the UI. Fixed by: adding a
+  `client_gui_logger` (via `core/logger_setup.py`, mirroring
+  `btcmesh_client_cli.py`'s existing `cli_logger` pattern) writing to
+  `logs/btcmesh_client_gui.log`; and adding an `is_final_ack_retry`
+  parameter to `on_chunk_sending` (`client/sender.py`, plus both
+  `btcmesh_client_gui.py`'s and `btcmesh_client_cli.py`'s callback
+  implementations) so a final-ack-triggered resend now reads
+  distinctly - "Resending last chunk N/N to request final ACK (retry
+  X)..." - in both the file log and the GUI's own Activity Log,
+  instead of looking identical to a normal chunk send. `attempt`
+  for a final-ack retry is a separate 1-indexed counter (1 = first
+  resend) rather than reusing `send_session.retry_counts`, which
+  tracks ordinary per-chunk delivery retries and wouldn't reliably
+  distinguish the two cases (this chunk may already have delivered
+  cleanly on its first try, leaving that counter at 0 regardless).
+  Verified with new tests: `test_final_ack_retry_resends_last_chunk_then_succeeds`
+  now also asserts the exact `on_chunk_sending` call sequence
+  (`is_final_ack_retry=False` then `True`), and
+  `test_chunk_sending_final_ack_retry_shows_distinct_message` in
+  `tests/test_btcmesh_client_gui.py` covers the widget-facing message.
 
 ---
 

@@ -482,7 +482,11 @@ class TestTransactionSenderRetry(unittest.TestCase):
         """A lost final BTC_ACK now gets retried by resending the last
         chunk (Issue 64), instead of failing on the first missed reply -
         mirrors the server's real behavior of resending its cached final
-        reply when it sees the last chunk again."""
+        reply when it sees the last chunk again. Also confirms
+        on_chunk_sending's is_final_ack_retry flag correctly distinguishes
+        this resend from an ordinary chunk send - without it, real-hardware
+        testing had no way to tell whether a retry actually fired or the
+        reply simply arrived on the first try."""
         transport = Mock(spec=BaseTransport, max_chunk_size=170)
         sender = TransactionSender(transport, timeout_seconds=0.2, max_retries=3)
 
@@ -490,9 +494,15 @@ class TestTransactionSenderRetry(unittest.TestCase):
 
         tx_hex = "beef" * 20  # 1 chunk
         result_holder = []
+        chunk_sending_calls = []
+
+        def on_chunk_sending(chunk_num, total, attempt, wire_format, is_final_ack_retry):
+            chunk_sending_calls.append((chunk_num, total, attempt, is_final_ack_retry))
 
         def send_in_thread():
-            result = sender.send_transaction(tx_hex, "!dest1234")
+            result = sender.send_transaction(
+                tx_hex, "!dest1234", on_chunk_sending=on_chunk_sending
+            )
             result_holder.append(result)
 
         thread = threading.Thread(target=send_in_thread, daemon=True)
@@ -513,6 +523,10 @@ class TestTransactionSenderRetry(unittest.TestCase):
         handler(f"BTC_ACK|{session_id}|TXID:retried_final", "!server")
 
         thread.join(timeout=10)
+
+        self.assertEqual(len(chunk_sending_calls), 2)
+        self.assertEqual(chunk_sending_calls[0], (1, 1, 1, False), "initial send must not be flagged as a final-ack retry")
+        self.assertEqual(chunk_sending_calls[1], (1, 1, 1, True), "the resend triggered by the lost final ACK must be flagged, numbered as its own first retry")
 
         self.assertEqual(len(result_holder), 1)
         result = result_holder[0]

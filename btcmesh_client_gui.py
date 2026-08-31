@@ -10,6 +10,7 @@ UI concerns: widget setup, user interaction, and displaying progress/results.
 import threading
 import queue
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
@@ -81,6 +82,22 @@ from transport.factory import get_transport, TRANSPORT_CHOICES, TRANSPORT_DISPLA
 # Import transaction sending logic
 from client.sender import TransactionSender, SendResult, create_preview
 from core.protocol import is_valid_hex
+from core.logger_setup import setup_logger
+
+# GUI_LOG_FILE is separate from btcmesh_client_cli.py's own log file - the
+# GUI is a distinct entry point, often left running across many sends
+# (unlike a one-shot CLI invocation), so a shared file would interleave
+# unrelated sessions. Mirrors that file's own on_chunk_sending/
+# on_response_received instrumentation (retry attempt number, wire
+# traffic, final success/failure) - previously only shown in the GUI's
+# own status_log widget, with no file trace at all (Issue 64's real-
+# hardware testing had no way to independently confirm whether a final-
+# ACK retry actually fired versus the reply just arriving on the first
+# try).
+GUI_LOG_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "logs", "btcmesh_client_gui.log"
+)
+client_gui_logger = setup_logger("btcmesh_client_gui", GUI_LOG_FILE)
 
 # Device selection constants
 NO_DEVICES_TEXT = "No devices found"
@@ -225,7 +242,10 @@ def process_result(result: tuple) -> ResultAction:
 
     elif result_type == 'chunk_sending':
         chunk_num, total, attempt = result[1], result[2], result[3]
-        if attempt > 1:
+        is_final_ack_retry = result[4] if len(result) > 4 else False
+        if is_final_ack_retry:
+            msg = f'Resending last chunk {chunk_num}/{total} to request final ACK (retry {attempt})...'
+        elif attempt > 1:
             msg = f'Sending chunk {chunk_num}/{total} (retry {attempt - 1})...'
         else:
             msg = f'Sending chunk {chunk_num}/{total}...'
@@ -1163,15 +1183,26 @@ class BTCMeshGUI(BoxLayout):
             sender = TransactionSender(self.transport)
             self._active_sender = sender
 
-            def on_chunk_sending(chunk_num, total, attempt, wire_format):
-                self.result_queue.put(('chunk_sending', chunk_num, total, attempt))
+            def on_chunk_sending(chunk_num, total, attempt, wire_format, is_final_ack_retry):
+                self.result_queue.put(('chunk_sending', chunk_num, total, attempt, is_final_ack_retry))
                 self.result_queue.put(('wire_sent', wire_format))
+                if is_final_ack_retry:
+                    client_gui_logger.info(
+                        f"Resending last chunk {chunk_num}/{total} to request final "
+                        f"ACK (retry {attempt}): {wire_format}"
+                    )
+                else:
+                    client_gui_logger.info(
+                        f"Sending chunk {chunk_num}/{total} (attempt {attempt}): {wire_format}"
+                    )
 
             def on_progress(chunk_num, total):
                 self.result_queue.put(('progress', chunk_num, total))
+                client_gui_logger.info(f"ACK for chunk {chunk_num}/{total}")
 
             def on_response_received(message_text):
                 self.result_queue.put(('wire_received', message_text))
+                client_gui_logger.debug(f"Received: {message_text}")
 
             result = sender.send_transaction(
                 tx_hex, dest,
@@ -1180,6 +1211,10 @@ class BTCMeshGUI(BoxLayout):
                 on_response_received=on_response_received,
             )
             self.result_queue.put(('send_result', result))
+            if result.success:
+                client_gui_logger.info(f"Success: TXID {result.txid}")
+            else:
+                client_gui_logger.error(f"Failed: {result.error}")
 
         except Exception as e:
             self.result_queue.put(('error', str(e)))
