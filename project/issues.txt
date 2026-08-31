@@ -3791,6 +3791,237 @@ Open
 
 ---
 
+## GUI: UX design review findings (2026-08-31)
+
+Some GUI (styling) issues that were found after reviewing the client and server GUI
+
+**Issue 67: Section labels carry no visual hierarchy - everything reads at
+the same weight**
+Open
+
+- `create_section_label()` (`gui/gui_common.py:372`) gives every section
+  heading identical size/weight/color, so "Your Device:" and "Raw
+  Transaction Hex:" (client) or "Bitcoin RPC Settings:" and "Server
+  Settings:" (server) all look equally important. The orange separators
+  (`create_separator()`) are the only structural device, and they're used
+  inconsistently between the two GUIs - the server GUI inserts one after
+  every section, the client GUI uses only two total - so the two apps that
+  share this component library don't even read the same way as each other.
+- Why it matters: an operator scanning the screen has no visual shortcut to
+  "primary control" vs. "rarely-touched setting" - everything requires
+  actually reading the label text.
+- Fix direction: introduce one more weight tier (e.g. bold + slightly
+  larger for section labels that gate a primary action, or a subtly
+  different background tint per logical group) and apply separators
+  consistently between the two GUIs.
+
+---
+
+**Issue 68: All real-time feedback funnels through one undifferentiated
+scrolling log**
+Open
+
+- Both GUIs route validation errors, connection state, firmware info, and
+  routine wire traffic through the same `StatusLog` widget via `_log()`
+  (`btcmesh_server_gui.py:1049`, `btcmesh_client_gui.py:1075`). Nothing is
+  ever elevated above log-line priority - e.g. "Test failed: Host is
+  required" (`btcmesh_server_gui.py:675`) has the same visual weight as a
+  routine `wire_sent`/`wire_received` line two rows above it.
+- Why it matters: things the operator needs to act on right now (a failed
+  validation, a security-relevant note) are one scroll-away from being
+  missed entirely once more log lines arrive underneath them.
+- Fix direction: a short-lived `Popup` (already used elsewhere in both
+  files, e.g. the success popup) for the handful of "must be noticed now"
+  cases, leaving the log for routine narration.
+
+---
+
+**Issue 69: Two near-identical oranges carry different meanings in the same
+log stream**
+Open
+
+- `COLOR_PRIMARY` (`#FF6B00`, brand accent + "highlight" narrative log
+  lines) and `COLOR_WARNING` (`#FF9800`, actual warnings) are defined one
+  line apart in `gui/gui_common.py:81-84` and both appear in the same
+  scrolling log for different semantic purposes - one says "this is a
+  protocol-status narrative line," the other says "pay attention, this is
+  a warning."
+- Why it matters: they're distinguishable side by side but not from a
+  glance/memory, since they're adjacent hues. A user relying on log color
+  to triage severity at a glance can't reliably tell them apart.
+- Fix direction: pick a warning color further from the brand orange (amber
+  or yellow reads more universally as "caution") so it isn't competing with
+  the brand accent for the same visual slot.
+
+---
+
+**Issue 70: `StatusLog` bottom-anchors under-full content, leaving a
+misleading blank gap above it**
+Open
+
+- `StatusLog.add_message()` (`gui/gui_common.py:249`) always forces
+  `scroll_y = 0` after appending, which is correct once the log overflows
+  the viewport - but while the log is still short, this pins the existing
+  entries to the bottom of the ScrollView, leaving a blank gap above them
+  (visible in `project/images/gui_main.png`, between "Activity Log:" and
+  the first log line).
+- Why it matters: on first launch, before the log fills up, this reads
+  like a rendering bug ("why is there dead space above my log?") rather
+  than "empty log, more room below."
+- Fix direction: only force `scroll_y = 0` once the inner layout's height
+  actually exceeds the ScrollView's viewport height; otherwise let it
+  anchor to the top.
+
+---
+
+**Issue 71: RPC Host field is masked by default despite not being a secret
+that needs hiding while typing**
+Open
+
+- `_build_rpc_settings()` (`btcmesh_server_gui.py:411-413`) passes
+  `password=True` for the **Host** field, the same treatment as the actual
+  Password field below it. A `.onion` address (the exact hint text shown:
+  `'127.0.0.1 or xyz.onion'`) is precisely the kind of string a user needs
+  to visually verify while typing or pasting it - a single wrong character
+  silently breaks the RPC connection with no early warning.
+- Why it matters: masking a field the user needs to proofread trades a
+  minor privacy nicety (not shoulder-surfing the RPC endpoint) for a much
+  more common failure mode (an unnoticed typo in a long onion address).
+  The Show/Hide toggle mitigates it, but the *default* state hides
+  something the operator is actively trying to get right.
+- Fix direction: default Host to visible; reserve masking for Password and
+  the Cookie path, which are the fields actually worth hiding by default.
+
+---
+
+**Issue 72: Server GUI's settings sections stay fully rendered while
+disabled during a run, starving Active Sessions/Activity Log of space**
+Open
+
+- Once the server is running, `_set_rpc_settings_enabled(False)`,
+  `_set_meshtastic_settings_enabled(False)`, and
+  `_set_timeout_settings_enabled(False)` (called from `on_start_pressed()`,
+  `btcmesh_server_gui.py:850-852`) gray out the RPC/Device/Server settings
+  sections but leave all of them fully rendered at full height - five
+  stacked sections of inputs nobody is touching, above the two things an
+  operator actually watches during normal operation: Active Sessions
+  (fixed at 115px total, `_build_active_sessions_section()`,
+  `btcmesh_server_gui.py:259-323`, showing only 3 sessions before
+  scrolling) and the Activity Log.
+- Why it matters: this is the GUI's primary *steady-state* view - the
+  server sits and relays for most of its runtime - and it's the view most
+  starved for space by content that's provably inert at that exact moment
+  (disabled, non-interactive).
+- Fix direction: Kivy ships a real `Accordion`/`AccordionItem` widget
+  (`kivy.uix.accordion`) suited exactly to this - collapse RPC Settings,
+  Device Settings, and Server Settings into accordion sections that
+  auto-collapse when `is_running` becomes `True` (and re-expand on stop),
+  freeing the reclaimed height for Active Sessions and the Activity Log.
+  This is the single highest-leverage change of this whole review pass.
+
+---
+
+**Issue 73: Plaintext-password-storage warning is a one-off scrolling log
+line instead of a persistent notice**
+Open
+
+- `_on_save_settings()` (`btcmesh_server_gui.py:788-790`) logs "Note:
+  Password is stored in plain text in .env file" through the same
+  transient `_log()` call as everything else, immediately after a save.
+- Why it matters: this is a standing fact about the system's security
+  posture, not a one-time event - once it scrolls off-screen (or the log
+  is cleared), nothing on screen communicates it again, even though it
+  remains true for as long as the `.env` file exists.
+- Fix direction: a small persistent caption under the Password field
+  itself (e.g. "stored in plain text"), always visible while that field is
+  shown, rather than a log line that scrolls away.
+
+---
+
+**Issue 74: "Test Connection" only covers Bitcoin RPC, not the mesh
+transport, creating an asymmetric expectation**
+Open
+
+- `_on_test_connection()` (`btcmesh_server_gui.py:665-714`) tests only the
+  Bitcoin RPC settings. There is no equivalent "test" affordance for the
+  Meshtastic/MeshCore device settings sitting directly above it in the same
+  layout - the first real connection attempt for the mesh device is Start
+  Server itself.
+- Why it matters: an operator who just used Test Connection to validate
+  RPC before committing may reasonably expect the same option for the
+  device settings right next to it, and be surprised there isn't one.
+- Fix direction: either a short explanatory caption near the Scan button
+  ("no separate test - Start Server is the first connection attempt"), or
+  extend the existing Scan+probe flow into an explicit "Test Device"
+  affordance for parity.
+
+---
+
+**Issue 75: Client GUI leaves the known-nodes Spinner/Scan button visible
+but disabled for MeshCore instead of removing them**
+Open
+
+- `on_transport_selected()` (`btcmesh_client_gui.py:616-618`) sets
+  `self.node_spinner.disabled = is_meshcore` and
+  `self.refresh_nodes_btn.disabled = is_meshcore` rather than removing
+  those widgets - MeshCore has no "known contacts" destination-picker
+  equivalent (a deliberate Story 30.4 scope decision), so for that
+  transport these controls are permanently inert, yet still occupy a full
+  row of vertical space in an already-tight 450x700 window.
+- Why it matters: in a window this cramped, two grayed-out, permanently
+  non-functional controls are a real space cost, not just a cosmetic
+  nit - and a new user has no obvious reason from the UI alone why they're
+  disabled versus just "not loaded yet."
+- Fix direction: since Kivy layout is manual (`add_widget`/`remove_widget`,
+  no conditional rendering), swap this row out of the layout entirely (or
+  collapse its height to 0) when MeshCore is selected, reclaiming the space
+  for the destination field, which becomes the sole input for that
+  transport anyway.
+
+---
+
+**Issue 76: Destination Spinner+TextInput pairing has no visual/textual cue
+that they're linked**
+Open
+
+- The destination row (`btcmesh_client_gui.py:470-499`) places the known-
+  nodes `Spinner` and the manual-entry `TextInput` side by side at equal
+  width, styled identically - visually two independent fields, when
+  actually the Spinner is a convenience picker that *fills in* the
+  TextInput (`on_node_selected()`, `btcmesh_client_gui.py:844-857`), which
+  is the actual field read at send time.
+- Why it matters: nothing in the layout communicates the one-way
+  relationship - a new user has to experiment (pick a node, notice the
+  other box changed) to learn it, especially with a known-nodes list that
+  can run into the dozens/hundreds of entries.
+- Fix direction: a small connecting glyph (e.g. an arrow) between the two,
+  or visually de-emphasizing the Spinner slightly relative to the
+  TextInput to signal "picker" vs. "source of truth."
+
+---
+
+**Issue 77: History popup entries give no interactive affordance before
+being clicked**
+Open
+
+- `_create_history_entry_widget()` (`btcmesh_server_gui.py:1369-1500`)
+  binds `on_touch_down` directly on a plain `BoxLayout`
+  (`container.bind(on_touch_down=self._on_history_entry_touch)`,
+  line 1393) with no hover/pressed visual state at all - on a desktop
+  window (Kivy's touch-first widget model has no built-in desktop hover),
+  there is nothing signaling a given entry is clickable until the user
+  actually clicks it and the detail popup appears.
+- Why it matters: the colored background (dark green/red by status) reads
+  as informational, not interactive - a user has no visual reason to
+  expect clicking it does anything.
+- Fix direction: desktop hover is achievable in Kivy even though it isn't
+  automatic - binding to `Window.mouse_pos` to detect when the cursor is
+  over a given entry and applying a lighter highlight/border, or simpler,
+  adding a small chevron ("›") to each row as a static "more detail
+  available" cue.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -3858,3 +4089,14 @@ Open
 | 64    | A lost final `BTC_ACK`/`BTC_NACK` leaves the client reporting a generic "No final ACK from relay" instead of the real, already-known reason - unlike chunks, the final reply has no retry/redelivery | **Major (client never learns the real failure reason on a routine single-packet loss)** | **FIXED** |
 | 65    | MeshCore's `MESSAGES_WAITING`-driven message pull can lag behind actual radio receipt, making a genuinely-delivered chunk look lost and triggering a spurious client retry (a likely third contributor to "Duplicate chunk" warnings, alongside Issue 61's race and ordinary radio unreliability) | Minor-Medium (extra retries/latency, not data loss - firmware-timing dependent, may not be fixable in this codebase) | Open |
 | 66    | On the client GUI specifically, an idle T190 needs a physical replug to reconnect - the same device recovers fine via a plain reconnect on the server GUI | Medium (client-only reliability gap, not yet root-caused) | Open |
+| 67    | Section labels carry no visual hierarchy - everything reads at the same weight | Minor (UX polish) | Open |
+| 68    | All real-time feedback funnels through one undifferentiated scrolling log | Minor (UX polish) | Open |
+| 69    | Two near-identical oranges (`COLOR_PRIMARY`/`COLOR_WARNING`) carry different meanings in the same log stream | Minor (UX polish) | Open |
+| 70    | `StatusLog` bottom-anchors under-full content, leaving a misleading blank gap above it | Minor (UX polish) | Open |
+| 71    | RPC Host field is masked by default despite not being a secret that needs hiding while typing | Minor (UX - error-prone default) | Open |
+| 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | Open |
+| 73    | Plaintext-password-storage warning is a one-off scrolling log line instead of a persistent notice | Minor (UX/security disclosure) | Open |
+| 74    | "Test Connection" only covers Bitcoin RPC, not the mesh transport, creating an asymmetric expectation | Minor (UX polish) | Open |
+| 75    | Client GUI leaves the known-nodes Spinner/Scan button visible but disabled for MeshCore instead of removing them | Minor (UX - wasted space in a tight window) | Open |
+| 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
+| 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |
