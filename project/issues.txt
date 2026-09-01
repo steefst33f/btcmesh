@@ -3857,7 +3857,7 @@ Open
 
 **Issue 70: `StatusLog` bottom-anchors under-full content, leaving a
 misleading blank gap above it**
-Open
+✅ FIXED
 
 - `StatusLog.add_message()` (`gui/gui_common.py:249`) always forces
   `scroll_y = 0` after appending, which is correct once the log overflows
@@ -3871,6 +3871,20 @@ Open
 - Fix direction: only force `scroll_y = 0` once the inner layout's height
   actually exceeds the ScrollView's viewport height; otherwise let it
   anchor to the top.
+- **Resolved 2026-09-01**: replaced the unconditional
+  `scroll_y = 0` with a self-correcting check
+  (`_update_scroll_anchor()`): `scroll_y = 0` (bottom) only when
+  `self.layout.height > self.height` (content actually overflows),
+  otherwise `scroll_y = 1` (top). Self-correcting on every message add
+  (not just skipped when short) so scroll position also recovers
+  correctly after Clear Log empties an overflowing log back down to a
+  few short lines, without needing a separate reset in `clear()`.
+- Verified against real (non-mocked) Kivy: a short log anchors to
+  `scroll_y=1`, an overflowing log anchors to `scroll_y=0`, and clearing
+  an overflowing log back to a few short lines re-anchors to `scroll_y=1`
+  (Kivy's own smooth-scroll easing takes a moment to visually settle
+  after the jump, same as normal scrolling - confirmed by re-checking
+  after a longer delay, not a logic bug). 978/978 tests pass.
 
 ---
 
@@ -4132,6 +4146,56 @@ Open
 
 ---
 
+**Issue 79: Server GUI can appear to "receive" a message that was never
+actually addressed to it, when it shares one physical device with the
+client GUI** ℹ️ INFORMATIONAL (test-rig topology, not a code bug)
+
+- Found 2026-09-01 during real-hardware testing (unrelated to Issue 70):
+  the operator had the client GUI send a message from a Heltec T190 to a
+  separate V3 device, which genuinely arrived at the V3 - but the server
+  GUI, *also* connected to the same T190 (not a mistake either GUI's code
+  made; both had their own separate software connection to the identical
+  physical device), logged receiving a message too, despite never being
+  the addressee.
+- Investigated the two transports' receive-filtering logic side by side:
+  - `transport/meshtastic_serial.py`'s `_on_meshtastic_receive()`
+    (lines 501-540) does its own explicit destination check
+    (`packet["to"] != self._my_node_num` -> drop) - necessary because
+    Meshtastic's serial stream pushes every packet the radio sees,
+    filtered or not, regardless of addressee.
+  - `transport/meshcore_serial.py`'s `_on_event()` (lines 530-545) does
+    **no destination check at all** - it only checks that `text`/
+    `sender` are present, then dispatches unconditionally. This relies
+    entirely on the MeshCore library's own guarantee that
+    `CONTACT_MSG_RECV` only ever fires for a message genuinely addressed
+    to *this* device.
+- That guarantee assumes one software companion-connection per physical
+  device. With two separate processes (client GUI + server GUI) each
+  holding their own companion session to the same T190, the firmware has
+  no concept of "which of my two attached companion apps actually owns
+  this send" - it's the more likely explanation that the device echoed
+  the client's own outgoing send back out as `CONTACT_MSG_RECV` to
+  whichever companion connection happened to be listening, including the
+  server's. Nothing at the application layer can filter this out: from
+  the server's side, the event carries no addressing info to check
+  against in the first place (unlike Meshtastic's `to`/`toId` fields),
+  so there's nothing to correct in `_on_event()` itself.
+- Not treated as an actionable bug: this is what happens when one
+  physical radio is shared between two software roles that both
+  independently assume exclusive access - a test-rig topology mistake
+  (found this way while investigating a separate, real "Active Sessions
+  not updating" report, which itself turned out to be a symptom of this
+  same shared-device confusion rather than a genuine display bug - once
+  the operator re-tested against a properly separate physical device,
+  the Active Sessions panel updated correctly, no code fix needed there
+  either). Documented here in case it resurfaces and looks like a
+  code-level filtering bug rather than what it actually is.
+- Not yet confirmed whether the same echo happens on genuinely separate
+  physical devices under any other circumstance - no evidence of that
+  from this session, and no reason from the code to expect it.
+
+---
+
 ## Summary
 
 | Story | Issue | Severity | Status |
@@ -4202,7 +4266,7 @@ Open
 | 67    | Section labels carry no visual hierarchy - everything reads at the same weight | Minor (UX polish) | Open |
 | 68    | All real-time feedback funnels through one undifferentiated scrolling log | Minor (UX polish) | Open |
 | 69    | Two near-identical oranges (`COLOR_PRIMARY`/`COLOR_WARNING`) carry different meanings in the same log stream | Minor (UX polish) | Open |
-| 70    | `StatusLog` bottom-anchors under-full content, leaving a misleading blank gap above it | Minor (UX polish) | Open |
+| 70    | `StatusLog` bottom-anchors under-full content, leaving a misleading blank gap above it | Minor (UX polish) | **FIXED** |
 | 71    | RPC Host field is masked by default despite not being a secret that needs hiding while typing | Minor (UX - error-prone default) | Open |
 | 72    | Server GUI's settings sections stay fully rendered while disabled during a run, starving Active Sessions/Activity Log of space | Medium (UX - primary monitoring view under-sized) | **FIXED** |
 | 73    | Plaintext-password-storage warning is a one-off scrolling log line instead of a persistent notice | Minor (UX/security disclosure) | Open |
@@ -4211,3 +4275,4 @@ Open
 | 76    | Destination Spinner+TextInput pairing has no visual/textual cue that they're linked | Minor (UX polish) | Open |
 | 77    | History popup entries give no interactive affordance before being clicked | Minor (UX polish) | Open |
 | 78    | `create_input_row()`'s TextInput fields clip descenders (p, g, y) at the bottom of the field | Minor (UX/cosmetic) | **FIXED** |
+| 79    | Server GUI can appear to "receive" a message never addressed to it when sharing one physical device with the client GUI - MeshCore's receive path has no destination check, unlike Meshtastic's | Informational (test-rig topology, not a code bug) | **DOCUMENTED (no code fix)** |

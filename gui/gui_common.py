@@ -245,8 +245,19 @@ class StatusLog(ScrollView):
         )
         self.layout.add_widget(label)
 
-        # Auto-scroll to bottom
-        Clock.schedule_once(lambda dt: setattr(self, 'scroll_y', 0), 0.1)
+        # Only anchor to the bottom (scroll_y=0) once content actually
+        # overflows the viewport - otherwise anchor to the top
+        # (scroll_y=1) instead (Issue 70). Unconditionally forcing
+        # scroll_y=0 pinned even a still-short log to the bottom of the
+        # ScrollView, leaving a blank gap above the entries that read
+        # like a rendering bug on first launch. Self-correcting on every
+        # call (not just skipped when short) so scroll position recovers
+        # correctly after Clear Log empties an overflowing log back down
+        # to a few short lines, without needing a separate reset there.
+        Clock.schedule_once(self._update_scroll_anchor, 0.1)
+
+    def _update_scroll_anchor(self, _dt) -> None:
+        self.scroll_y = 0 if self.layout.height > self.height else 1
 
     def clear(self):
         """Clear all log messages."""
