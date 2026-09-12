@@ -1,54 +1,35 @@
 # BTCMesh Architecture Guide
 
-**Date:** December 2025
-**Status:** Recommended architecture for maintainability and cross-platform development
+**Date:** August 2026
+**Status:** Implemented - describes the current codebase, not a future plan
 
 ## Overview
 
-This document defines the recommended architecture for BTCMesh to ensure:
+This document defines the layered architecture BTCMesh is built on, which
+achieves:
 - Clean separation of concerns
 - Minimal code duplication
 - Easy maintainability
-- Consistent behavior across platforms (Python CLI, Desktop GUI, iOS)
+- Consistent behavior across platforms (Python CLI, Desktop GUI, future iOS)
+
+The layering below (EPIC 3 in `project/tasks.txt`, Stories 20-23) was
+completed in full: `core/`, `transport/`, `client/`, and `server/` all
+exist and are used by every UI entry point. The historical "mixed"
+`btcmesh_cli.py`/`btcmesh_gui.py`/`btcmesh_server.py` files this refactor
+replaced no longer exist in the codebase.
 
 ---
 
-## Current vs Recommended Architecture
-
-### Current Structure (Issues)
-
-```
-btcmesh_cli.py          # Mixed: CLI parsing + client logic + protocol logic + transport + output
-btcmesh_gui.py          # Wraps CLI, some duplicated logic
-btcmesh_server.py       # Mixed: server logic + transport + reassembly
-```
-
-**Problems:**
-- Business logic mixed with UI concerns
-- Protocol logic duplicated or tightly coupled
-- Hard to test in isolation
-- Swift iOS must reimplement everything from scratch
-- Protocol changes require updates in multiple places
-
-### Current vs Recommended (Visual)
+## Layered Architecture (Visual)
 
 ```mermaid
 graph TB
-    subgraph CURRENT["❌ Current (Mixed)"]
-        CLI["btcmesh_cli.py<br/>Parse args + chunking<br/>+ transport + output"]
-        GUI["btcmesh_gui.py<br/>UI + chunking<br/>+ transport"]
-        SERVER["btcmesh_server.py<br/>Server + reassembly<br/>+ transport"]
-
-        CLI -.->|duplicated| GUI
-        CLI -.->|duplicated| SERVER
-    end
-
-    subgraph RECOMMENDED["✅ Recommended (Layered)"]
+    subgraph LAYERED["Layered Architecture"]
         UI2["UI Layer<br/>CLI / GUI<br/>User interaction only"]
-        CLIENT2["Client Layer<br/>sender.py<br/>Orchestration"]
-        SERVER2["Server Layer<br/>receiver.py<br/>Orchestration"]
-        CORE2["Core Layer<br/>protocol.py<br/>Pure logic"]
-        TRANSPORT2["Transport Layer<br/>base.py<br/>Abstraction"]
+        CLIENT2["Client Layer<br/>client/sender.py<br/>Orchestration"]
+        SERVER2["Server Layer<br/>server/receiver.py<br/>+ server/run_loop.py<br/>Orchestration"]
+        CORE2["Core Layer<br/>core/protocol.py<br/>Pure logic"]
+        TRANSPORT2["Transport Layer<br/>transport/base.py<br/>+ power_control.py<br/>Abstraction"]
 
         UI2 --> CLIENT2
         UI2 --> SERVER2
@@ -58,10 +39,6 @@ graph TB
         SERVER2 --> TRANSPORT2
     end
 
-    style CLI fill:#FFB6C6,color:#000
-    style GUI fill:#FFB6C6,color:#000
-    style SERVER fill:#FFB6C6,color:#000
-
     style UI2 fill:#FFE5CC,color:#000
     style CLIENT2 fill:#90EE90,color:#000
     style SERVER2 fill:#90EE90,color:#000
@@ -69,35 +46,68 @@ graph TB
     style TRANSPORT2 fill:#87CEEB,color:#000
 ```
 
-### Recommended Structure
+### Current Structure
 
 ```
 btcmesh/
 ├── core/                       # Pure business logic (no I/O, no UI)
 │   ├── protocol.py             # Message chunking, parsing, session management
 │   ├── message_types.py        # Dataclasses for messages (BTC_TX, ACK, NACK)
-│   ├── validation.py           # Transaction hex validation
-│   └── constants.py            # Protocol constants (chunk size, timeouts)
+│   ├── constants.py            # Protocol constants (per-transport chunk size, timeouts)
+│   ├── reassembler.py          # Server-side transaction reassembly
+│   ├── transaction_parser.py   # Raw Bitcoin transaction decoder (SegWit-aware)
+│   ├── transaction_history.py  # Persistent JSON transaction history (server-side; client-side is still open, see project/tasks.txt Story 6.6)
+│   ├── device_watchdog.py      # DeviceWatchdog - wedge detection + power-cycle recovery (EPIC 5)
+│   ├── device_scan.py          # Transport-agnostic serial-port enumeration (shared by every transport)
+│   ├── rpc_client.py           # Bitcoin Core RPC client (incl. Tor/.onion support)
+│   ├── config_loader.py        # .env configuration loading
+│   ├── logger_setup.py         # Rotating file + console logging setup
+│   ├── meshtastic_utils.py     # Meshtastic-specific identity probing, node formatting
+│   └── meshcore_utils.py       # MeshCore-specific identity probing (EPIC 9)
 │
-├── transport/                  # Communication layer (abstracted)
-│   ├── base.py                 # Abstract transport interface
-│   ├── meshtastic_serial.py    # Serial/USB implementation
-│   └── meshtastic_ble.py       # BLE implementation (desktop)
+├── transport/                  # Communication layer (protocol-agnostic)
+│   ├── base.py                 # Abstract transport interface (BaseTransport)
+│   ├── factory.py              # get_transport(name) - selects Meshtastic vs MeshCore (EPIC 9)
+│   ├── meshtastic_serial.py    # Meshtastic serial/USB implementation
+│   ├── meshcore_serial.py      # MeshCore serial/USB implementation (EPIC 9) - wraps an asyncio-native client library
+│   └── power_control.py        # BasePowerControl + Uhubctl/SerialRelay backends (EPIC 5)
 │
-├── client/                     # Client-side implementations
-│   ├── sender.py               # Transaction sending logic (uses core + transport)
-│   └── session_manager.py      # Manages send sessions, retries, ACK handling
+├── client/                     # Client-side implementation
+│   └── sender.py                # TransactionSender - chunking, ARQ, retries (uses core + transport)
 │
-├── server/                     # Server-side implementations
-│   ├── receiver.py             # Message receiving logic
-│   ├── reassembler.py          # Transaction reassembly (already exists in core/)
-│   └── broadcaster.py          # RPC broadcast logic
+├── server/                     # Server-side implementation
+│   ├── receiver.py             # TransactionReceiver - reassembly, validation, broadcast
+│   └── run_loop.py             # Shared receiver wiring + polling loop (used by both server CLI and GUI)
+│
+├── gui/                        # Shared GUI building blocks (Kivy)
+│   └── gui_common.py            # Styling, StatusLog, BusyIndicator, device-probe dropdown helpers
+│
+├── hardware/                   # DIY relay-board firmware (EPIC 5 / Story 26.7)
+│   └── power_relay_firmware/    # Arduino/PlatformIO sketch for SerialRelayPowerControl
+│
+├── scripts/hw_tests/           # Ad-hoc real-hardware verification scripts (see its README)
 │
 ├── btcmesh_client_cli.py       # Thin CLI layer - argument parsing + output
 ├── btcmesh_client_gui.py       # Thin GUI layer - UI only
 ├── btcmesh_server_cli.py       # Thin server CLI entry point
 └── btcmesh_server_gui.py       # Thin server GUI layer
 ```
+
+`core/validation.py` and `client/session_manager.py`, shown in earlier
+drafts of this document, were never needed as separate modules - hex
+validation lives in `core/protocol.py`'s `create_session()`, and session/
+retry state lives directly in `client/sender.py`. `transport/
+meshtastic_ble.py` (BLE) also remains unbuilt - no BLE transport exists
+yet; see `project/mobile_platform_analysis.md` for why mobile went native
+Swift/Kotlin instead of a shared Python BLE layer.
+
+Device scanning is split by how transport-specific it is:
+`core/device_scan.py` enumerates candidate serial ports (VID-blacklist
+filtering, OS-path dedup) with zero protocol content, shared by every
+transport; `core/meshtastic_utils.py` and `core/meshcore_utils.py` each
+provide their own `probe_device_identity()` - actually connecting to
+learn a candidate's real node ID/name, which is inherently
+transport-specific (EPIC 9).
 
 ### Layer Dependencies
 
@@ -155,19 +165,11 @@ sequenceDiagram
 
 ## Terminology: CLI vs Client vs Server
 
-### Current Naming (Confusing)
+The original codebase used `btcmesh_cli.py` for the client entry point — mixing the terms **CLI** and **Client** as if they are the same thing, and containing both UI concerns (argument parsing) and business logic (chunking, retries, transport) in one file. Similarly `btcmesh_server.py` mixed server logic with transport and reassembly. Both files were deleted once their replacements below were verified (Stories 22.3/22.4/23.3).
 
-The original codebase uses `btcmesh_cli.py` for the client entry point — mixing the terms **CLI** and **Client** as if they are the same thing. This causes confusion because the file contains both UI concerns (argument parsing) and business logic (chunking, retries, transport). Similarly `btcmesh_server.py` mixes server logic with transport and reassembly.
+### Current Naming (Clear)
 
-| File | What it's called | What it actually contains |
-|------|-----------------|--------------------------|
-| `btcmesh_cli.py` | "CLI" | CLI parsing + client logic + transport + protocol |
-| `btcmesh_gui.py` | "GUI" | GUI widgets + client logic + transport |
-| `btcmesh_server.py` | "Server" | Server logic + transport + reassembly + RPC |
-
-### Recommended Naming (Clear)
-
-In the target architecture, each file name reflects its actual responsibility:
+Each file name reflects its actual responsibility:
 
 | File | Layer | Responsibility |
 |------|-------|---------------|
@@ -200,194 +202,19 @@ In the target architecture, each file name reflects its actual responsibility:
 - Raises exceptions for errors
 - 100% unit testable
 
-**Example: `core/protocol.py`**
+**Actual message types (`core/message_types.py`) and parsing/chunking
+functions (`core/protocol.py`):**
 
-```python
-from dataclasses import dataclass
-from typing import List
-import secrets
-
-# Constants
-DEFAULT_CHUNK_SIZE = 170  # hex characters
-SESSION_ID_LENGTH = 5
-
-@dataclass
-class TransactionSession:
-    """Represents a chunked transaction ready for sending."""
-    session_id: str
-    chunks: List[str]
-
-    @property
-    def total_chunks(self) -> int:
-        return len(self.chunks)
-
-@dataclass
-class ChunkMessage:
-    """A single chunk message ready for transmission."""
-    session_id: str
-    chunk_number: int  # 1-indexed
-    total_chunks: int
-    payload: str
-
-    def format(self) -> str:
-        """Format as wire protocol string."""
-        return f"BTC_TX|{self.session_id}|{self.chunk_number}/{self.total_chunks}|{self.payload}"
-
-@dataclass
-class AckMessage:
-    """Parsed acknowledgment from server."""
-    session_id: str
-    chunk_number: int
-    status: str  # 'OK', 'ERROR'
-    next_chunk: int | None = None
-    error_detail: str | None = None
-
-@dataclass
-class CompletionMessage:
-    """Parsed completion message from server."""
-    session_id: str
-    success: bool
-    txid: str | None = None
-    error: str | None = None
-
-
-def generate_session_id() -> str:
-    """Generate a random 5-character hex session ID."""
-    return secrets.token_hex(SESSION_ID_LENGTH // 2 + 1)[:SESSION_ID_LENGTH]
-
-
-def create_session(tx_hex: str, chunk_size: int = DEFAULT_CHUNK_SIZE) -> TransactionSession:
-    """
-    Create a new transaction session with chunked data.
-
-    Args:
-        tx_hex: Raw transaction hex string
-        chunk_size: Maximum characters per chunk
-
-    Returns:
-        TransactionSession with generated session_id and chunks
-
-    Raises:
-        ValueError: If tx_hex is empty or invalid
-    """
-    if not tx_hex:
-        raise ValueError("Transaction hex cannot be empty")
-
-    # Validate hex
-    try:
-        bytes.fromhex(tx_hex)
-    except ValueError:
-        raise ValueError("Invalid hex string")
-
-    chunks = [tx_hex[i:i+chunk_size] for i in range(0, len(tx_hex), chunk_size)]
-
-    return TransactionSession(
-        session_id=generate_session_id(),
-        chunks=chunks
-    )
-
-
-def get_chunk_message(session: TransactionSession, chunk_index: int) -> ChunkMessage:
-    """
-    Get a formatted chunk message for transmission.
-
-    Args:
-        session: The transaction session
-        chunk_index: 0-based index of chunk to get
-
-    Returns:
-        ChunkMessage ready for transmission
-
-    Raises:
-        IndexError: If chunk_index out of range
-    """
-    if chunk_index < 0 or chunk_index >= session.total_chunks:
-        raise IndexError(f"Chunk index {chunk_index} out of range (0-{session.total_chunks-1})")
-
-    return ChunkMessage(
-        session_id=session.session_id,
-        chunk_number=chunk_index + 1,  # Wire protocol is 1-indexed
-        total_chunks=session.total_chunks,
-        payload=session.chunks[chunk_index]
-    )
-
-
-def parse_ack(message: str) -> AckMessage:
-    """
-    Parse an ACK message from server.
-
-    Expected format: BTC_CHUNK_ACK|<session>|<chunk>|OK|REQUEST_CHUNK|<next>
-
-    Args:
-        message: Raw message string
-
-    Returns:
-        Parsed AckMessage
-
-    Raises:
-        ValueError: If message format is invalid
-    """
-    parts = message.split('|')
-
-    if len(parts) < 4:
-        raise ValueError(f"Invalid ACK format: {message}")
-
-    if parts[0] != 'BTC_CHUNK_ACK':
-        raise ValueError(f"Not an ACK message: {message}")
-
-    session_id = parts[1]
-    chunk_number = int(parts[2])
-    status = parts[3]
-
-    next_chunk = None
-    if len(parts) >= 6 and parts[4] == 'REQUEST_CHUNK':
-        next_chunk = int(parts[5])
-
-    return AckMessage(
-        session_id=session_id,
-        chunk_number=chunk_number,
-        status=status,
-        next_chunk=next_chunk
-    )
-
-
-def parse_completion(message: str) -> CompletionMessage:
-    """
-    Parse a completion message (ACK or NACK) from server.
-
-    Expected formats:
-        BTC_ACK|<session>|SUCCESS|TXID:<txid>
-        BTC_NACK|<session>|ERROR|<details>
-
-    Args:
-        message: Raw message string
-
-    Returns:
-        Parsed CompletionMessage
-
-    Raises:
-        ValueError: If message format is invalid
-    """
-    parts = message.split('|')
-
-    if len(parts) < 3:
-        raise ValueError(f"Invalid completion format: {message}")
-
-    msg_type = parts[0]
-    session_id = parts[1]
-
-    if msg_type == 'BTC_ACK' and parts[2] == 'SUCCESS':
-        txid = None
-        if len(parts) >= 4 and parts[3].startswith('TXID:'):
-            txid = parts[3][5:]  # Remove 'TXID:' prefix
-        return CompletionMessage(session_id=session_id, success=True, txid=txid)
-
-    elif msg_type == 'BTC_NACK':
-        error = '|'.join(parts[3:]) if len(parts) > 3 else parts[2]
-        return CompletionMessage(session_id=session_id, success=False, error=error)
-
-    raise ValueError(f"Unknown completion message type: {message}")
-```
+The five wire/session dataclasses - `ChunkMessage`, `ChunkAckMessage`,
+`AckMessage`, `NackMessage` (each with a `format()` method producing the
+exact wire string), and the internal `TransactionSession` - plus
+`core/protocol.py`'s `create_session()`, `get_chunk_message()`,
+`parse_chunk()`, `parse_chunk_ack()`, `parse_ack()`, `parse_nack()`, and
+`parse_message()` (a dispatching parser returning whichever typed message
+matches). See [Protocol Specification](protocol_spec.md) for the full
+class diagram, wire formats, and state machines - reproducing it here
+would just drift out of sync with that document again, as the previous
+version of this section did.
 
 ### 2. Transport Layer (`transport/`)
 
@@ -448,6 +275,36 @@ class BaseTransport(ABC):
         """Remove the current message handler."""
         ...
 
+    @abstractmethod
+    def check_alive(self, timeout_seconds: Optional[float] = None) -> bool:
+        """Best-effort liveness check - False (never raises) if not
+        connected or unresponsive within timeout_seconds."""
+        ...
+
+    @abstractmethod
+    def scan_for_reconnect_candidates(self) -> list[str]:
+        """Candidate targets to try reconnecting to after a recovery
+        power-cycle (see DeviceWatchdog, below)."""
+        ...
+
+    @abstractmethod
+    def validate_destination(self, destination: str) -> None:
+        """Raise ValueError if destination isn't a structurally valid
+        address for this transport's own addressing scheme (EPIC 9,
+        Story 30.2) - e.g. Meshtastic's `!hex8` vs MeshCore's bare
+        public-key-prefix hex. Moved here from a single free function in
+        core/protocol.py once a second transport needed a different rule."""
+        ...
+
+    @property
+    @abstractmethod
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character chunk payload this transport can carry
+        in one message (EPIC 9, Issue 51) - Meshtastic and MeshCore have
+        different message-size limits, so this is no longer a single
+        global constant in core/constants.py."""
+        ...
+
     @property
     @abstractmethod
     def is_connected(self) -> bool:
@@ -467,6 +324,52 @@ class BaseTransport(ABC):
         self.disconnect()
 ```
 
+### 2a. Transport Selection and the MeshCore Backend
+
+`transport/factory.py`'s `get_transport(name)` returns a `MeshtasticSerialTransport`
+or `MeshCoreSerialTransport` instance for `name` in `TRANSPORT_CHOICES =
+("meshtastic", "meshcore")` - both CLIs expose this as a `--transport`
+flag, defaulting to `meshtastic` so existing usage is unaffected.
+
+`transport/meshcore_serial.py`'s `MeshCoreSerialTransport` (EPIC 9) is the
+second concrete `BaseTransport` implementation - the one this abstraction
+was designed to make possible without touching `client/`, `server/`, or
+`core/protocol.py`. It wraps the `meshcore` Python library's
+asyncio-native client into `BaseTransport`'s synchronous API: a dedicated
+background thread runs the client's asyncio event loop for the
+connection's lifetime, and every call that needs to `await` something
+bridges into that loop via a bounded `_run_coro()` helper (mirroring the
+"never block the caller forever on a wedged device" guarantee
+`MeshtasticSerialTransport.send()` already gives for Issue 21). MeshCore's
+own per-message size limit is much smaller than Meshtastic's, hence
+`max_chunk_size` moving from a single global constant to a per-transport
+property (`core/constants.py`'s `DEFAULT_CHUNK_SIZE` vs
+`MESHCORE_MAX_CHUNK_SIZE`).
+
+MeshCore support is CLI-only so far - device scanning/identity and GUI
+wiring (`project/tasks.txt` Story 30.4) is deferred, and the GUIs still
+only drive `MeshtasticSerialTransport`.
+
+### 2b. Device Recovery: `transport/power_control.py` + `core/device_watchdog.py`
+
+A companion abstraction sits alongside `BaseTransport`: `BasePowerControl`
+(`transport/power_control.py`) defines a single `power_cycle(off_seconds)`
+method, backed by either `UhubctlPowerControl` (a uhubctl-compatible USB
+hub) or `SerialRelayPowerControl` (a DIY ESP32/ESP8266 relay board talking
+the `CYCLE`/`OK`/`ERR` protocol implemented by
+`hardware/power_relay_firmware/src/power_relay.ino`).
+
+`core/device_watchdog.py`'s `DeviceWatchdog` combines a `BaseTransport` and
+an optional `BasePowerControl` to detect a wedged device (via repeated
+send/connect failures, or a periodic `check_alive()` heartbeat) and drive
+recovery: disconnect, power-cycle, poll for the device's real
+`local_node_id` to reappear, reconnect. It has no background thread of its
+own - callers (`server/run_loop.py`'s `run_polling_loop()`) drive it via
+`tick()` plus `record_success()`/`record_failure()` around each transport
+operation. See `project/tasks.txt` EPIC 5 for the full story history and
+`project/issues.txt` (Issues 12, 16, 19, 20, 46, 48) for the real-hardware
+findings that shaped this design.
+
 ### 3. Client/Server Layer
 
 **Purpose:** Orchestrates core logic and transport for specific use cases.
@@ -476,79 +379,42 @@ class BaseTransport(ABC):
 ```python
 from dataclasses import dataclass
 from typing import Callable, Optional
-from core.protocol import (
-    create_session, get_chunk_message, parse_ack, parse_completion,
-    TransactionSession, CompletionMessage
-)
 from transport.base import BaseTransport
 
-@dataclass
-class SendResult:
-    """Result of sending a transaction."""
-    success: bool
-    txid: Optional[str] = None
-    error: Optional[str] = None
-    chunks_sent: int = 0
-    total_chunks: int = 0
-
-
 class TransactionSender:
-    """
-    Sends chunked transactions via Meshtastic.
-
-    Uses stop-and-wait ARQ protocol with retries.
-    """
+    """Orchestrates stop-and-wait ARQ sending of chunked transactions.
+    One send in flight per instance - both CLI and GUI create a fresh
+    instance per send."""
 
     def __init__(
         self,
         transport: BaseTransport,
-        ack_timeout: float = 30.0,
+        timeout_seconds: int = 30,
         max_retries: int = 3,
-        on_progress: Optional[Callable[[int, int], None]] = None
     ):
-        """
-        Args:
-            transport: Transport implementation to use
-            ack_timeout: Seconds to wait for ACK
-            max_retries: Max retries per chunk
-            on_progress: Optional callback(chunks_sent, total_chunks)
-        """
-        self.transport = transport
-        self.ack_timeout = ack_timeout
-        self.max_retries = max_retries
-        self.on_progress = on_progress
+        ...
 
-    def send(self, tx_hex: str, destination: str, dry_run: bool = False) -> SendResult:
-        """
-        Send a transaction to destination node.
+    def send_transaction(
+        self,
+        tx_hex: str,
+        destination: str,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        on_chunk_sending: Optional[Callable[[int, int, int, str], None]] = None,
+        on_response_received: Optional[Callable[[str], None]] = None,
+    ) -> SendResult:
+        """Validates hex, chunks it, sends each chunk with ACK wait and
+        retries, then waits for the final BTC_ACK/BTC_NACK. Returns a
+        SendResult(success, session_id, txid=..., error=...)."""
+        ...
 
-        Args:
-            tx_hex: Raw transaction hex
-            destination: Destination node ID
-            dry_run: If True, validate but don't send
-
-        Returns:
-            SendResult with success status and txid/error
-        """
-        # Create session (validates tx_hex)
-        try:
-            session = create_session(tx_hex)
-        except ValueError as e:
-            return SendResult(success=False, error=str(e))
-
-        if dry_run:
-            return SendResult(
-                success=True,
-                chunks_sent=session.total_chunks,
-                total_chunks=session.total_chunks,
-                error="Dry run - not sent"
-            )
-
-        # Send chunks with ACK handling
-        # ... implementation details ...
-
-        return SendResult(success=True, txid="...")
+    def abort(self) -> None:
+        """Request abort of the in-progress send; checked between chunks."""
+        ...
 ```
+
+(This is a trimmed signature reference, not the full implementation - see
+`client/sender.py` for the real ARQ loop, retry/timeout bookkeeping, and
+the internal `SendSession` state tracker.)
 
 ### 4. UI Layer (CLI, GUI)
 
@@ -568,15 +434,14 @@ class TransactionSender:
 
 import argparse
 import sys
-from client.sender import TransactionSender, SendResult
-from transport.meshtastic_serial import SerialTransport
+from client.sender import TransactionSender
+from transport.meshtastic_serial import MeshtasticSerialTransport
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Send Bitcoin transaction via Meshtastic')
     parser.add_argument('-d', '--destination', required=True, help='Destination node ID')
     parser.add_argument('-tx', '--transaction', required=True, help='Raw transaction hex')
-    parser.add_argument('--dry-run', action='store_true', help='Validate without sending')
     parser.add_argument('--device', help='Meshtastic device path')
     return parser.parse_args()
 
@@ -589,7 +454,7 @@ def main():
     args = parse_args()
 
     # Setup transport
-    transport = SerialTransport()
+    transport = MeshtasticSerialTransport()
 
     try:
         transport.connect(args.device)
@@ -598,25 +463,17 @@ def main():
         print(f"Connection failed: {e}", file=sys.stderr)
         return 1
 
-    # Create sender with progress callback
-    sender = TransactionSender(
-        transport=transport,
-        on_progress=print_progress
-    )
-
-    # Send transaction
-    result = sender.send(
+    # Create sender and send transaction
+    sender = TransactionSender(transport=transport)
+    result = sender.send_transaction(
         tx_hex=args.transaction,
         destination=args.destination,
-        dry_run=args.dry_run
+        on_progress=print_progress,
     )
 
     # Output result
     if result.success:
-        if result.txid:
-            print(f"SUCCESS! TXID: {result.txid}")
-        else:
-            print(f"Validated: {result.total_chunks} chunks")
+        print(f"SUCCESS! TXID: {result.txid}")
         return 0
     else:
         print(f"FAILED: {result.error}", file=sys.stderr)
@@ -640,25 +497,31 @@ To ensure consistency between Python and Swift implementations, maintain a proto
 | Message | Format | Example |
 |---------|--------|---------|
 | Chunk | `BTC_TX\|{session}\|{n}/{total}\|{payload}` | `BTC_TX\|a1b2c\|1/5\|0200000001...` |
-| Chunk ACK | `BTC_CHUNK_ACK\|{session}\|{n}\|OK\|REQUEST_CHUNK\|{next}` | `BTC_CHUNK_ACK\|a1b2c\|1\|OK\|REQUEST_CHUNK\|2` |
-| Success | `BTC_ACK\|{session}\|SUCCESS\|TXID:{txid}` | `BTC_ACK\|a1b2c\|SUCCESS\|TXID:abc123...` |
-| Error | `BTC_NACK\|{session}\|ERROR\|{details}` | `BTC_NACK\|a1b2c\|ERROR\|Invalid transaction` |
+| Chunk ACK | `BTC_CHUNK_ACK\|{session}\|{n}\|REQUEST_CHUNK\|{next}` or `...\|ALL_CHUNKS_RECEIVED` | `BTC_CHUNK_ACK\|a1b2c\|1\|REQUEST_CHUNK\|2` |
+| Success | `BTC_ACK\|{session}\|TXID:{txid}` | `BTC_ACK\|a1b2c\|TXID:abc123...` |
+| Error | `BTC_NACK\|{session}\|{details}` | `BTC_NACK\|a1b2c\|Insufficient fee` |
+
+(The status fields shown in earlier drafts of this table - `OK`, `SUCCESS`, `ERROR` - were removed as redundant bloat in Story 20.4; see Issue 7 in `project/issues.txt`.)
 
 ### Constants
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| CHUNK_SIZE | 170 | Hex characters per chunk |
+| DEFAULT_CHUNK_SIZE | 170 | Hex characters per chunk, Meshtastic transport |
+| MESHCORE_MAX_CHUNK_SIZE | 120 | Hex characters per chunk, MeshCore transport (its own message-size limit is smaller - EPIC 9, Issue 51) |
 | SESSION_ID_LENGTH | 5 | Hex characters in session ID |
 | ACK_TIMEOUT | 30 | Seconds to wait for ACK |
 | MAX_RETRIES | 3 | Retry attempts per chunk |
 | REASSEMBLY_TIMEOUT | 300 | Server-side session timeout (seconds) |
 
+Chunk size stopped being a single global constant once a second
+transport with a different message-size limit existed - see
+`BaseTransport.max_chunk_size` above.
+
 ### Session ID Generation
 
 - 5 character hexadecimal string
-- Cryptographically random
-- Python: `secrets.token_hex(3)[:5]`
+- Python: `uuid.uuid4().hex[:5]` (see `core/protocol.py`'s `generate_session_id()`)
 - Swift: `UUID().uuidString.prefix(5).lowercased()`
 
 ---
@@ -781,72 +644,56 @@ class TestTransactionSender(unittest.TestCase):
         mock_transport.is_connected = True
 
         sender = TransactionSender(transport=mock_transport)
-        result = sender.send("aabbccdd", "!dest1234")
+        result = sender.send_transaction("aabbccdd", "!dest1234")
 
         self.assertTrue(result.success)
 ```
 
 ---
 
-## Migration Path
+## Migration History
 
-### Phase 1: Extract Core Protocol
-1. Create `core/protocol.py` with pure functions
-2. Create `core/message_types.py` with dataclasses
-3. Add unit tests for core
-4. Keep existing CLI/GUI working
-
-### Phase 2: Create Transport Abstraction
-1. Create `transport/base.py` interface
-2. Create `transport/meshtastic_serial.py` implementation
-3. Update CLI and server to use new transport
-
-### Phase 3: Refactor Client Layer
-1. Create `client/sender.py`
-2. Migrate sending logic from `btcmesh_cli.py`
-3. Update GUI to use `client/sender.py`
-4. Rename `btcmesh_cli.py` → `btcmesh_client_cli.py`
-
-### Phase 4: Refactor Server Layer
-1. Create `server/receiver.py`
-2. Migrate receiving/reassembly logic from `btcmesh_server.py`
-3. Update server GUI to use `server/receiver.py`
-4. Rename `btcmesh_server.py` → `btcmesh_server_cli.py`
-
-### Phase 5: Document Protocol & Cross-Platform
-1. Finalize protocol specification
-2. Create Swift `Core/` following specification
-3. Ensure tests pass on both platforms
-
-### Migration Path (Visual)
+The refactor happened in four completed phases (EPIC 3, `project/tasks.txt`
+Stories 20-23) plus a still-open fifth:
 
 ```mermaid
 graph LR
-    START["Current<br/>Monolithic"]
-    P1["Phase 1<br/>Extract Core"]
-    P2["Phase 2<br/>Transport"]
-    P3["Phase 3<br/>Client Layer"]
-    P4["Phase 4<br/>Server Layer"]
-    P5["Phase 5<br/>Swift iOS"]
-    GOAL["Goal<br/>Layered +<br/>Cross-Platform"]
+    START["Monolithic<br/>btcmesh_cli.py etc."]
+    P1["Phase 1 ✅<br/>Extract Core"]
+    P2["Phase 2 ✅<br/>Transport"]
+    P3["Phase 3 ✅<br/>Client Layer"]
+    P4["Phase 4 ✅<br/>Server Layer"]
+    P5["Phase 5<br/>Swift iOS (not started)"]
+    GOAL["Current State<br/>Layered"]
 
     START -->|Pure functions| P1
     P1 -->|Abstraction| P2
     P2 -->|Sender logic| P3
     P3 -->|Receiver logic| P4
-    P4 -->|Mirror logic| P5
-    P5 --> GOAL
+    P4 --> GOAL
+    GOAL -.->|Mirror logic, Story 24.2| P5
 
     style START fill:#FFB6C6,color:#000
-    style P1 fill:#FFE5CC,color:#000
-    style P2 fill:#DDA0DD,color:#000
+    style P1 fill:#90EE90,color:#000
+    style P2 fill:#90EE90,color:#000
     style P3 fill:#90EE90,color:#000
     style P4 fill:#90EE90,color:#000
-    style P5 fill:#87CEEB,color:#000
+    style P5 fill:#D3D3D3,color:#000
     style GOAL fill:#90EE90,color:#000,stroke:#333,stroke-width:3px
 ```
 
----
+1. **Extract Core Protocol** (Stories 20.1-20.4) - `core/protocol.py`,
+   `core/message_types.py`, `core/constants.py`, plus unit tests.
+2. **Transport Abstraction** (Stories 21.1-21.2) - `transport/base.py`,
+   `transport/meshtastic_serial.py`.
+3. **Client Layer** (Stories 22.1-22.4) - `client/sender.py`;
+   `btcmesh_cli.py`/`btcmesh_gui.py` migrated and renamed to
+   `btcmesh_client_cli.py`/`btcmesh_client_gui.py`, originals deleted.
+4. **Server Layer** (Stories 23.1-23.3) - `server/receiver.py`;
+   `btcmesh_server.py` migrated and renamed to `btcmesh_server_cli.py`,
+   original deleted.
+5. **Swift iOS skeleton** (Story 24.2) - **not started**. No Swift code
+   exists yet; this document (Story 24.1) is the prerequisite for it.
 
 ---
 
