@@ -346,9 +346,13 @@ own per-message size limit is much smaller than Meshtastic's, hence
 property (`core/constants.py`'s `DEFAULT_CHUNK_SIZE` vs
 `MESHCORE_MAX_CHUNK_SIZE`).
 
-MeshCore support is CLI-only so far - device scanning/identity and GUI
-wiring (`project/tasks.txt` Story 30.4) is deferred, and the GUIs still
-only drive `MeshtasticSerialTransport`.
+Both GUIs also have a transport selector (a dropdown choosing
+`get_transport("meshtastic" | "meshcore")`, mirroring the CLI flag) that
+drives device scanning, connect, and send/receive for whichever transport
+is selected - `project/tasks.txt`'s Story 30.4 checkbox is stale and
+doesn't reflect this; the implementation itself is in place. Some
+transport-switching/UX rough edges remain open (`project/issues.txt`
+Issues 58, 60, 66).
 
 ### 2b. Device Recovery: `transport/power_control.py` + `core/device_watchdog.py`
 
