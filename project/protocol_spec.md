@@ -78,11 +78,14 @@ Total NACK message length is capped at 200 characters to fit LoRa payload constr
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| Chunk size | 170 hex chars (85 bytes) | Maximum hex payload per chunk |
+| Chunk size (Meshtastic) | 170 hex chars (85 bytes) | Maximum hex payload per chunk over the Meshtastic transport |
+| Chunk size (MeshCore) | 120 hex chars (60 bytes) | Maximum hex payload per chunk over the MeshCore transport - a smaller cap, since MeshCore's own message-size limit is smaller than Meshtastic's |
 | Session ID length | 5 hex chars | Random UUID-derived identifier |
 | ACK timeout | 30 seconds | Client waits this long for server ACK |
 | Max retries | 3 | Maximum retry attempts per chunk |
 | Reassembly timeout | 300 seconds (5 min) | Server discards incomplete sessions after this |
+
+Chunk size is a property of the transport in use (`BaseTransport.max_chunk_size`), not a single protocol-wide constant - added when MeshCore support introduced a second transport with a different message-size limit. Everything else in this document (message formats, session ID, ARQ behavior) is transport-independent.
 
 ## Session ID
 

@@ -1,13 +1,13 @@
 # Alternative LoRa Mesh Network Analysis for BTCMesh
 
 **Date:** August 2026
-**Status:** Research findings for future reference
+**Status:** MeshCore recommendation acted on - see EPIC 9 in `project/tasks.txt` for the actual implementation (`transport/meshcore_serial.py`). Reticulum/LXMF remains unimplemented research; the comparison below is otherwise historical context, not an open decision.
 
 ## Executive Summary
 
-BTCMesh currently runs exclusively on Meshtastic firmware. This document captures findings from investigating which other LoRa mesh network firmwares exist today, run on the **same class of hardware** (ESP32 + Semtech SX126x/SX127x boards — Heltec, LILYGO T-Beam, RAK WisBlock, etc.), and could plausibly carry BTCMesh's chunked-transaction traffic if a device were reflashed with them instead.
+BTCMesh originally ran exclusively on Meshtastic firmware; MeshCore was added as a second transport in EPIC 9. This document captures the findings that led to that choice: an investigation into which other LoRa mesh network firmwares exist, run on the **same class of hardware** (ESP32 + Semtech SX126x/SX127x boards — Heltec, LILYGO T-Beam, RAK WisBlock, etc.), and could plausibly carry BTCMesh's chunked-transaction traffic if a device were reflashed with them instead.
 
-Two live candidates were found: **MeshCore** and **Reticulum (RNS) + LXMF**. Both are real, actively-developed projects, not hardware questions — purely firmware/software ones. No implementation is proposed here; this is a decision to make once ready to prioritize one.
+Two live candidates were found: **MeshCore** and **Reticulum (RNS) + LXMF**. Both are real, actively-developed projects, not hardware questions — purely firmware/software ones. MeshCore was implemented (EPIC 9); Reticulum/LXMF remains a possible future candidate, not yet prioritized.
 
 The codebase's own design doc already anticipated this: `architecture.md` describes the `transport/` layer as protocol-agnostic and explicitly names "Meshtastic, MeshCore, Reticulum, etc." as intended targets — but that was aspirational text only, with no design or code behind it until now.
 
@@ -57,13 +57,13 @@ The addressing model is the bigger departure: destinations are cryptographic ide
 
 ## Fit With the Existing Codebase
 
-`transport/base.py`'s `BaseTransport` abstraction (`connect`, `disconnect`, `send`, `set_message_handler`, `check_alive`, `scan_for_reconnect_candidates`, `is_connected`, `local_node_id`) is already genuinely protocol-agnostic in its method signatures — no Meshtastic-specific concepts leak into the interface itself. A second transport implementation is exactly the shape of extension this layer was built for.
+`transport/base.py`'s `BaseTransport` abstraction (`connect`, `disconnect`, `send`, `set_message_handler`, `check_alive`, `scan_for_reconnect_candidates`, `is_connected`, `local_node_id`) was already genuinely protocol-agnostic in its method signatures — no Meshtastic-specific concepts leak into the interface itself. A second transport implementation was exactly the shape of extension this layer was built for.
 
-Three coupling points outside `transport/` currently assume Meshtastic and would need generalizing before *either* candidate could plug in:
+Three coupling points outside `transport/` assumed Meshtastic and needed generalizing before a second transport could plug in - all three were resolved during EPIC 9's implementation, confirming this analysis correctly predicted the real friction points:
 
-1. `core/protocol.py`'s `validate_destination()` is explicitly documented as Meshtastic-specific and hard-codes the `!hex8` node-ID format.
-2. `core/meshtastic_utils.py` (device scanning/node listing) has no transport-agnostic equivalent; it's imported directly by the GUI layer and even by `transport/meshtastic_serial.py` itself for reconnect scanning.
-3. All four entry points (`btcmesh_client_cli.py`, `btcmesh_server_cli.py`, `btcmesh_client_gui.py`, `btcmesh_server_gui.py`) hardcode `MeshtasticSerialTransport()` directly — there's no factory/registry to select a transport implementation at runtime.
+1. `core/protocol.py`'s `validate_destination()` was Meshtastic-specific, hard-coding the `!hex8` node-ID format. **Resolved** (Story 30.2): moved to `BaseTransport.validate_destination()`, an abstract method each transport implements for its own addressing scheme; the free function was deleted.
+2. `core/meshtastic_utils.py` (device scanning/node listing) had no transport-agnostic equivalent. **Resolved**: candidate-port scanning (no protocol content) moved to `core/device_scan.py`, shared by both transports; each transport keeps its own `probe_device_identity()` (`core/meshtastic_utils.py` / `core/meshcore_utils.py`) for the genuinely protocol-specific identity handshake.
+3. All four entry points hardcoded `MeshtasticSerialTransport()` directly, with no factory/registry. **Resolved** for the two CLIs via `transport/factory.py`'s `get_transport(name)` and a `--transport` flag; the two GUIs still hardcode Meshtastic (`project/tasks.txt` Story 30.4, deferred).
 
 ## Bottom Line
 

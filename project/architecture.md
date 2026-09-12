@@ -53,19 +53,23 @@ btcmesh/
 ├── core/                       # Pure business logic (no I/O, no UI)
 │   ├── protocol.py             # Message chunking, parsing, session management
 │   ├── message_types.py        # Dataclasses for messages (BTC_TX, ACK, NACK)
-│   ├── constants.py            # Protocol constants (chunk size, timeouts)
+│   ├── constants.py            # Protocol constants (per-transport chunk size, timeouts)
 │   ├── reassembler.py          # Server-side transaction reassembly
 │   ├── transaction_parser.py   # Raw Bitcoin transaction decoder (SegWit-aware)
 │   ├── transaction_history.py  # Persistent JSON transaction history (server-side; client-side is still open, see project/tasks.txt Story 6.6)
 │   ├── device_watchdog.py      # DeviceWatchdog - wedge detection + power-cycle recovery (EPIC 5)
+│   ├── device_scan.py          # Transport-agnostic serial-port enumeration (shared by every transport)
 │   ├── rpc_client.py           # Bitcoin Core RPC client (incl. Tor/.onion support)
 │   ├── config_loader.py        # .env configuration loading
 │   ├── logger_setup.py         # Rotating file + console logging setup
-│   └── meshtastic_utils.py     # Device scanning, identity probing, node formatting
+│   ├── meshtastic_utils.py     # Meshtastic-specific identity probing, node formatting
+│   └── meshcore_utils.py       # MeshCore-specific identity probing (EPIC 9)
 │
 ├── transport/                  # Communication layer (protocol-agnostic)
 │   ├── base.py                 # Abstract transport interface (BaseTransport)
+│   ├── factory.py              # get_transport(name) - selects Meshtastic vs MeshCore (EPIC 9)
 │   ├── meshtastic_serial.py    # Meshtastic serial/USB implementation
+│   ├── meshcore_serial.py      # MeshCore serial/USB implementation (EPIC 9) - wraps an asyncio-native client library
 │   └── power_control.py        # BasePowerControl + Uhubctl/SerialRelay backends (EPIC 5)
 │
 ├── client/                     # Client-side implementation
@@ -96,6 +100,14 @@ retry state lives directly in `client/sender.py`. `transport/
 meshtastic_ble.py` (BLE) also remains unbuilt - no BLE transport exists
 yet; see `project/mobile_platform_analysis.md` for why mobile went native
 Swift/Kotlin instead of a shared Python BLE layer.
+
+Device scanning is split by how transport-specific it is:
+`core/device_scan.py` enumerates candidate serial ports (VID-blacklist
+filtering, OS-path dedup) with zero protocol content, shared by every
+transport; `core/meshtastic_utils.py` and `core/meshcore_utils.py` each
+provide their own `probe_device_identity()` - actually connecting to
+learn a candidate's real node ID/name, which is inherently
+transport-specific (EPIC 9).
 
 ### Layer Dependencies
 
@@ -275,6 +287,24 @@ class BaseTransport(ABC):
         power-cycle (see DeviceWatchdog, below)."""
         ...
 
+    @abstractmethod
+    def validate_destination(self, destination: str) -> None:
+        """Raise ValueError if destination isn't a structurally valid
+        address for this transport's own addressing scheme (EPIC 9,
+        Story 30.2) - e.g. Meshtastic's `!hex8` vs MeshCore's bare
+        public-key-prefix hex. Moved here from a single free function in
+        core/protocol.py once a second transport needed a different rule."""
+        ...
+
+    @property
+    @abstractmethod
+    def max_chunk_size(self) -> int:
+        """Maximum hex-character chunk payload this transport can carry
+        in one message (EPIC 9, Issue 51) - Meshtastic and MeshCore have
+        different message-size limits, so this is no longer a single
+        global constant in core/constants.py."""
+        ...
+
     @property
     @abstractmethod
     def is_connected(self) -> bool:
@@ -293,6 +323,32 @@ class BaseTransport(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.disconnect()
 ```
+
+### 2a. Transport Selection and the MeshCore Backend
+
+`transport/factory.py`'s `get_transport(name)` returns a `MeshtasticSerialTransport`
+or `MeshCoreSerialTransport` instance for `name` in `TRANSPORT_CHOICES =
+("meshtastic", "meshcore")` - both CLIs expose this as a `--transport`
+flag, defaulting to `meshtastic` so existing usage is unaffected.
+
+`transport/meshcore_serial.py`'s `MeshCoreSerialTransport` (EPIC 9) is the
+second concrete `BaseTransport` implementation - the one this abstraction
+was designed to make possible without touching `client/`, `server/`, or
+`core/protocol.py`. It wraps the `meshcore` Python library's
+asyncio-native client into `BaseTransport`'s synchronous API: a dedicated
+background thread runs the client's asyncio event loop for the
+connection's lifetime, and every call that needs to `await` something
+bridges into that loop via a bounded `_run_coro()` helper (mirroring the
+"never block the caller forever on a wedged device" guarantee
+`MeshtasticSerialTransport.send()` already gives for Issue 21). MeshCore's
+own per-message size limit is much smaller than Meshtastic's, hence
+`max_chunk_size` moving from a single global constant to a per-transport
+property (`core/constants.py`'s `DEFAULT_CHUNK_SIZE` vs
+`MESHCORE_MAX_CHUNK_SIZE`).
+
+MeshCore support is CLI-only so far - device scanning/identity and GUI
+wiring (`project/tasks.txt` Story 30.4) is deferred, and the GUIs still
+only drive `MeshtasticSerialTransport`.
 
 ### 2b. Device Recovery: `transport/power_control.py` + `core/device_watchdog.py`
 
@@ -451,11 +507,16 @@ To ensure consistency between Python and Swift implementations, maintain a proto
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| CHUNK_SIZE | 170 | Hex characters per chunk |
+| DEFAULT_CHUNK_SIZE | 170 | Hex characters per chunk, Meshtastic transport |
+| MESHCORE_MAX_CHUNK_SIZE | 120 | Hex characters per chunk, MeshCore transport (its own message-size limit is smaller - EPIC 9, Issue 51) |
 | SESSION_ID_LENGTH | 5 | Hex characters in session ID |
 | ACK_TIMEOUT | 30 | Seconds to wait for ACK |
 | MAX_RETRIES | 3 | Retry attempts per chunk |
 | REASSEMBLY_TIMEOUT | 300 | Server-side session timeout (seconds) |
+
+Chunk size stopped being a single global constant once a second
+transport with a different message-size limit existed - see
+`BaseTransport.max_chunk_size` above.
 
 ### Session ID Generation
 
