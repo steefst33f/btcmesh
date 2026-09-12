@@ -12,9 +12,8 @@ achieves:
 - Easy maintainability
 - Consistent behavior across platforms (Python CLI, Desktop GUI, future iOS)
 
-The layering below (EPIC 3 in `project/tasks.txt`, Stories 20-23) was
-completed in full: `core/`, `transport/`, `client/`, and `server/` all
-exist and are used by every UI entry point. The historical "mixed"
+This layering is complete: `core/`, `transport/`, `client/`, and `server/`
+all exist and are used by every UI entry point. The historical "mixed"
 `btcmesh_cli.py`/`btcmesh_gui.py`/`btcmesh_server.py` files this refactor
 replaced no longer exist in the codebase.
 
@@ -56,21 +55,21 @@ btcmesh/
 │   ├── constants.py            # Protocol constants (per-transport chunk size, timeouts)
 │   ├── reassembler.py          # Server-side transaction reassembly
 │   ├── transaction_parser.py   # Raw Bitcoin transaction decoder (SegWit-aware)
-│   ├── transaction_history.py  # Persistent JSON transaction history (server-side; client-side is still open, see project/tasks.txt Story 6.6)
-│   ├── device_watchdog.py      # DeviceWatchdog - wedge detection + power-cycle recovery (EPIC 5)
+│   ├── transaction_history.py  # Persistent JSON transaction history (server-side only; not yet used by the client)
+│   ├── device_watchdog.py      # DeviceWatchdog - wedge detection + power-cycle recovery
 │   ├── device_scan.py          # Transport-agnostic serial-port enumeration (shared by every transport)
 │   ├── rpc_client.py           # Bitcoin Core RPC client (incl. Tor/.onion support)
 │   ├── config_loader.py        # .env configuration loading
 │   ├── logger_setup.py         # Rotating file + console logging setup
 │   ├── meshtastic_utils.py     # Meshtastic-specific identity probing, node formatting
-│   └── meshcore_utils.py       # MeshCore-specific identity probing (EPIC 9)
+│   └── meshcore_utils.py       # MeshCore-specific identity probing
 │
 ├── transport/                  # Communication layer (protocol-agnostic)
 │   ├── base.py                 # Abstract transport interface (BaseTransport)
-│   ├── factory.py              # get_transport(name) - selects Meshtastic vs MeshCore (EPIC 9)
+│   ├── factory.py              # get_transport(name) - selects Meshtastic vs MeshCore
 │   ├── meshtastic_serial.py    # Meshtastic serial/USB implementation
-│   ├── meshcore_serial.py      # MeshCore serial/USB implementation (EPIC 9) - wraps an asyncio-native client library
-│   └── power_control.py        # BasePowerControl + Uhubctl/SerialRelay backends (EPIC 5)
+│   ├── meshcore_serial.py      # MeshCore serial/USB implementation - wraps an asyncio-native client library
+│   └── power_control.py        # BasePowerControl + Uhubctl/SerialRelay backends
 │
 ├── client/                     # Client-side implementation
 │   └── sender.py                # TransactionSender - chunking, ARQ, retries (uses core + transport)
@@ -82,7 +81,7 @@ btcmesh/
 ├── gui/                        # Shared GUI building blocks (Kivy)
 │   └── gui_common.py            # Styling, StatusLog, BusyIndicator, device-probe dropdown helpers
 │
-├── hardware/                   # DIY relay-board firmware (EPIC 5 / Story 26.7)
+├── hardware/                   # DIY relay-board firmware for automatic device power-cycle recovery
 │   └── power_relay_firmware/    # Arduino/PlatformIO sketch for SerialRelayPowerControl
 │
 ├── scripts/hw_tests/           # Ad-hoc real-hardware verification scripts (see its README)
@@ -107,7 +106,7 @@ filtering, OS-path dedup) with zero protocol content, shared by every
 transport; `core/meshtastic_utils.py` and `core/meshcore_utils.py` each
 provide their own `probe_device_identity()` - actually connecting to
 learn a candidate's real node ID/name, which is inherently
-transport-specific (EPIC 9).
+transport-specific.
 
 ### Layer Dependencies
 
@@ -165,7 +164,7 @@ sequenceDiagram
 
 ## Terminology: CLI vs Client vs Server
 
-The original codebase used `btcmesh_cli.py` for the client entry point — mixing the terms **CLI** and **Client** as if they are the same thing, and containing both UI concerns (argument parsing) and business logic (chunking, retries, transport) in one file. Similarly `btcmesh_server.py` mixed server logic with transport and reassembly. Both files were deleted once their replacements below were verified (Stories 22.3/22.4/23.3).
+The original codebase used `btcmesh_cli.py` for the client entry point — mixing the terms **CLI** and **Client** as if they are the same thing, and containing both UI concerns (argument parsing) and business logic (chunking, retries, transport) in one file. Similarly `btcmesh_server.py` mixed server logic with transport and reassembly. Both files were deleted once their replacements below were verified.
 
 ### Current Naming (Clear)
 
@@ -290,19 +289,19 @@ class BaseTransport(ABC):
     @abstractmethod
     def validate_destination(self, destination: str) -> None:
         """Raise ValueError if destination isn't a structurally valid
-        address for this transport's own addressing scheme (EPIC 9,
-        Story 30.2) - e.g. Meshtastic's `!hex8` vs MeshCore's bare
-        public-key-prefix hex. Moved here from a single free function in
-        core/protocol.py once a second transport needed a different rule."""
+        address for this transport's own addressing scheme - e.g.
+        Meshtastic's `!hex8` vs MeshCore's bare public-key-prefix hex.
+        Lives here rather than as a single free function in
+        core/protocol.py, since each transport has a different rule."""
         ...
 
     @property
     @abstractmethod
     def max_chunk_size(self) -> int:
         """Maximum hex-character chunk payload this transport can carry
-        in one message (EPIC 9, Issue 51) - Meshtastic and MeshCore have
-        different message-size limits, so this is no longer a single
-        global constant in core/constants.py."""
+        in one message - Meshtastic and MeshCore have different
+        message-size limits, so this is a per-transport property rather
+        than a single global constant in core/constants.py."""
         ...
 
     @property
@@ -331,28 +330,26 @@ or `MeshCoreSerialTransport` instance for `name` in `TRANSPORT_CHOICES =
 ("meshtastic", "meshcore")` - both CLIs expose this as a `--transport`
 flag, defaulting to `meshtastic` so existing usage is unaffected.
 
-`transport/meshcore_serial.py`'s `MeshCoreSerialTransport` (EPIC 9) is the
-second concrete `BaseTransport` implementation - the one this abstraction
-was designed to make possible without touching `client/`, `server/`, or
+`transport/meshcore_serial.py`'s `MeshCoreSerialTransport` is the second
+concrete `BaseTransport` implementation - the one this abstraction was
+designed to make possible without touching `client/`, `server/`, or
 `core/protocol.py`. It wraps the `meshcore` Python library's
 asyncio-native client into `BaseTransport`'s synchronous API: a dedicated
 background thread runs the client's asyncio event loop for the
 connection's lifetime, and every call that needs to `await` something
-bridges into that loop via a bounded `_run_coro()` helper (mirroring the
-"never block the caller forever on a wedged device" guarantee
-`MeshtasticSerialTransport.send()` already gives for Issue 21). MeshCore's
-own per-message size limit is much smaller than Meshtastic's, hence
-`max_chunk_size` moving from a single global constant to a per-transport
-property (`core/constants.py`'s `DEFAULT_CHUNK_SIZE` vs
-`MESHCORE_MAX_CHUNK_SIZE`).
+bridges into that loop via a bounded `_run_coro()` helper, giving the
+same "never block the caller forever on a wedged device" guarantee
+`MeshtasticSerialTransport.send()` gives. MeshCore's own per-message size
+limit is much smaller than Meshtastic's, hence `max_chunk_size` being a
+per-transport property (`core/constants.py`'s `DEFAULT_CHUNK_SIZE` vs
+`MESHCORE_MAX_CHUNK_SIZE`) rather than a single global constant.
 
 Both GUIs also have a transport selector (a dropdown choosing
 `get_transport("meshtastic" | "meshcore")`, mirroring the CLI flag) that
 drives device scanning, connect, and send/receive for whichever transport
-is selected - `project/tasks.txt`'s Story 30.4 checkbox is stale and
-doesn't reflect this; the implementation itself is in place. Some
-transport-switching/UX rough edges remain open (`project/issues.txt`
-Issues 58, 60, 66).
+is selected. Some transport-switching/UX rough edges remain (e.g.
+raw error text surfaced verbatim on an unknown MeshCore destination,
+and a slow scan when switching away from a just-slept device).
 
 ### 2b. Device Recovery: `transport/power_control.py` + `core/device_watchdog.py`
 
@@ -370,9 +367,10 @@ recovery: disconnect, power-cycle, poll for the device's real
 `local_node_id` to reappear, reconnect. It has no background thread of its
 own - callers (`server/run_loop.py`'s `run_polling_loop()`) drive it via
 `tick()` plus `record_success()`/`record_failure()` around each transport
-operation. See `project/tasks.txt` EPIC 5 for the full story history and
-`project/issues.txt` (Issues 12, 16, 19, 20, 46, 48) for the real-hardware
-findings that shaped this design.
+operation. Identity is confirmed via `local_node_id` rather than an
+OS-level device path (which can change on reconnect), and a recovery
+cooldown prevents repeatedly power-cycling a device that's simply slow
+to re-enumerate.
 
 ### 3. Client/Server Layer
 
@@ -505,14 +503,14 @@ To ensure consistency between Python and Swift implementations, maintain a proto
 | Success | `BTC_ACK\|{session}\|TXID:{txid}` | `BTC_ACK\|a1b2c\|TXID:abc123...` |
 | Error | `BTC_NACK\|{session}\|{details}` | `BTC_NACK\|a1b2c\|Insufficient fee` |
 
-(The status fields shown in earlier drafts of this table - `OK`, `SUCCESS`, `ERROR` - were removed as redundant bloat in Story 20.4; see Issue 7 in `project/issues.txt`.)
+(The status fields shown in earlier drafts of this table - `OK`, `SUCCESS`, `ERROR` - were removed as redundant wire-format bloat: each was always the same fixed value, so they carried no information a client didn't already have from the message type itself.)
 
 ### Constants
 
 | Constant | Value | Description |
 |----------|-------|-------------|
 | DEFAULT_CHUNK_SIZE | 170 | Hex characters per chunk, Meshtastic transport |
-| MESHCORE_MAX_CHUNK_SIZE | 120 | Hex characters per chunk, MeshCore transport (its own message-size limit is smaller - EPIC 9, Issue 51) |
+| MESHCORE_MAX_CHUNK_SIZE | 120 | Hex characters per chunk, MeshCore transport (its own message-size limit is smaller than Meshtastic's) |
 | SESSION_ID_LENGTH | 5 | Hex characters in session ID |
 | ACK_TIMEOUT | 30 | Seconds to wait for ACK |
 | MAX_RETRIES | 3 | Retry attempts per chunk |
@@ -657,8 +655,7 @@ class TestTransactionSender(unittest.TestCase):
 
 ## Migration History
 
-The refactor happened in four completed phases (EPIC 3, `project/tasks.txt`
-Stories 20-23) plus a still-open fifth:
+The refactor happened in four completed phases plus a still-open fifth:
 
 ```mermaid
 graph LR
@@ -675,7 +672,7 @@ graph LR
     P2 -->|Sender logic| P3
     P3 -->|Receiver logic| P4
     P4 --> GOAL
-    GOAL -.->|Mirror logic, Story 24.2| P5
+    GOAL -.->|Mirror logic| P5
 
     style START fill:#FFB6C6,color:#000
     style P1 fill:#90EE90,color:#000
@@ -686,18 +683,17 @@ graph LR
     style GOAL fill:#90EE90,color:#000,stroke:#333,stroke-width:3px
 ```
 
-1. **Extract Core Protocol** (Stories 20.1-20.4) - `core/protocol.py`,
-   `core/message_types.py`, `core/constants.py`, plus unit tests.
-2. **Transport Abstraction** (Stories 21.1-21.2) - `transport/base.py`,
+1. **Extract Core Protocol** - `core/protocol.py`, `core/message_types.py`,
+   `core/constants.py`, plus unit tests.
+2. **Transport Abstraction** - `transport/base.py`,
    `transport/meshtastic_serial.py`.
-3. **Client Layer** (Stories 22.1-22.4) - `client/sender.py`;
-   `btcmesh_cli.py`/`btcmesh_gui.py` migrated and renamed to
-   `btcmesh_client_cli.py`/`btcmesh_client_gui.py`, originals deleted.
-4. **Server Layer** (Stories 23.1-23.3) - `server/receiver.py`;
-   `btcmesh_server.py` migrated and renamed to `btcmesh_server_cli.py`,
-   original deleted.
-5. **Swift iOS skeleton** (Story 24.2) - **not started**. No Swift code
-   exists yet; this document (Story 24.1) is the prerequisite for it.
+3. **Client Layer** - `client/sender.py`; `btcmesh_cli.py`/`btcmesh_gui.py`
+   migrated and renamed to `btcmesh_client_cli.py`/`btcmesh_client_gui.py`,
+   originals deleted.
+4. **Server Layer** - `server/receiver.py`; `btcmesh_server.py` migrated
+   and renamed to `btcmesh_server_cli.py`, original deleted.
+5. **Swift iOS skeleton** - **not started**. No Swift code exists yet;
+   this document is the prerequisite for it.
 
 ---
 
