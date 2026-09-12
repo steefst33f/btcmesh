@@ -63,7 +63,7 @@ Three coupling points outside `transport/` assumed Meshtastic and needed general
 
 1. `core/protocol.py`'s `validate_destination()` was Meshtastic-specific, hard-coding the `!hex8` node-ID format. **Resolved** (Story 30.2): moved to `BaseTransport.validate_destination()`, an abstract method each transport implements for its own addressing scheme; the free function was deleted.
 2. `core/meshtastic_utils.py` (device scanning/node listing) had no transport-agnostic equivalent. **Resolved**: candidate-port scanning (no protocol content) moved to `core/device_scan.py`, shared by both transports; each transport keeps its own `probe_device_identity()` (`core/meshtastic_utils.py` / `core/meshcore_utils.py`) for the genuinely protocol-specific identity handshake.
-3. All four entry points hardcoded `MeshtasticSerialTransport()` directly, with no factory/registry. **Resolved** for the two CLIs via `transport/factory.py`'s `get_transport(name)` and a `--transport` flag; the two GUIs still hardcode Meshtastic (`project/tasks.txt` Story 30.4, deferred).
+3. All four entry points hardcoded `MeshtasticSerialTransport()` directly, with no factory/registry. **Resolved** across all four via `transport/factory.py`'s `get_transport(name)` - a `--transport` flag on both CLIs, a transport dropdown on both GUIs (`project/tasks.txt`'s Story 30.4 checkbox is stale and doesn't reflect this).
 
 ## Bottom Line
 
