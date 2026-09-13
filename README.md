@@ -4,14 +4,14 @@
 
 BTC Mesh Relay is a project designed to enable the broadcasting of Bitcoin raw transactions by sending them as chunked hexadecimal strings via LoRa mesh direct messages. A dedicated client script (`btcmesh_client_cli.py`) will be used for sending, and a relay device running `btcmesh_server_cli.py` will reassemble these chunks, decode, validate, and then relay the complete transaction to a configured Bitcoin RPC node. This system is intended for scenarios with limited or censored internet access but where LoRa mesh network availability exists.
 
-Two mesh transports are supported: **Meshtastic** (the original) and **MeshCore** (added for EPIC 9), selectable via `--transport` on both CLIs or a transport dropdown in both GUIs. Both speak the same chunked BTCMesh protocol underneath - see [Protocol Specification](project/protocol_spec.md).
+Two mesh transports are supported: **Meshtastic** and **MeshCore**, selectable via `--transport` on both CLIs or a transport dropdown in both GUIs. Both speak the same chunked BTCMesh protocol underneath - see [Protocol Specification](project/protocol_spec.md).
 
 This project is currently under development.
 
 ## Features (Planned & In-Progress)
 
 *   **Meshtastic Communication**: Initializes and manages communication with a Meshtastic device.
-*   **MeshCore Communication**: Alternative mesh transport (`--transport meshcore` on both CLIs, or a transport dropdown in both GUIs). A few rough edges remain around transport-switching and destination-error messages - see `project/issues.txt` Issues 58/60/66.
+*   **MeshCore Communication**: Alternative mesh transport (`--transport meshcore` on both CLIs, or a transport dropdown in both GUIs). A few rough edges remain: switching away from a transport can leave the next device scan slow, and an unknown destination on MeshCore currently surfaces a raw internal error instead of a clean message.
 *   **Transaction Chunking & Reassembly**: Allows large Bitcoin transactions to be sent in smaller chunks over LoRa by `btcmesh_client_cli.py` and reassembled by `btcmesh_server_cli.py`.
 *   **Payload Handling**: Relay server reassembles hexadecimal chunks. The connected Bitcoin Core node performs full transaction validation upon broadcast attempt. (Advanced pre-broadcast decoding and validation capabilities on the relay server via `core/transaction_parser.py` are planned for future enhancements).
 *   **Basic Transaction Validation**: Currently, the relay server relies on the connected Bitcoin Core node for most transaction validation. (More extensive pre-broadcast sanity checks on the relay are planned).
