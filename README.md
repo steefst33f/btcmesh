@@ -8,6 +8,8 @@ Two mesh transports are supported: **Meshtastic** and **MeshCore**, selectable v
 
 This project is currently under development.
 
+This is a fork of [eddieoz/btcmesh](https://github.com/eddieoz/btcmesh) - the original relay concept, chunking protocol, and Bitcoin RPC integration. This fork adds the client/server GUIs, MeshCore transport support, automatic device recovery, transaction history, and other features described below.
+
 ## Features (Planned & In-Progress)
 
 *   **Meshtastic Communication**: Initializes and manages communication with a Meshtastic device.
@@ -386,3 +388,7 @@ Did you like it? [Buy me a coffee](https://www.buymeacoffee.com/eddieoz)
 [![Buy me a coffee](https://ipfs.io/ipfs/QmR6W4L3XiozMQc3EjfFeqSkcbu3cWnhZBn38z2W2FuTMZ?filename=buymeacoffee.webp)](https://www.buymeacoffee.com/eddieoz)
 
 Or drop me a tip through Lightning Network: ⚡ [getalby.com/p/eddieoz](https://getalby.com/p/eddieoz)
+
+And if you like the GUI and MeshCore support you can buy [Steef](https://t.me/steefst33f) a coffee too! ;) 
+
+[![buy-me-a-bitcoffee](https://img.shields.io/badge/Buy%20Steef%20a%20BitCoffee-f7931a?logo=bitcoin&logoColor=white&color=f7931a&style=flat&label=Donate)](https://buymeabitcoffee.vercel.app/btc/bc1pcxvpf04n0sc6hn28vpdgxkl3jk6vqz7kaxv5qr4jnnn2j8dzqcvs8k00th?identifier=Buy+Steef+a+Coffee)
