@@ -134,13 +134,22 @@ For reassembly errors (InvalidChunkFormat, MismatchedTotalChunks), the error typ
 
 ## Chunk Sizing
 
-Each Meshtastic text message has a payload limit. The chunk format includes overhead:
+Each transport has its own maximum message payload, so chunk size is a
+transport property (`BaseTransport.max_chunk_size`), not one global
+constant. The wire format's overhead is the same regardless of
+transport:
 
 ```
 BTC_TX|<5 chars>|<digits>/<digits>|<payload>
 ```
 
-With a 5-char session ID and typical chunk numbering (e.g. `12/15`), overhead is ~20 characters. The 170 hex-char payload keeps total message size well within Meshtastic payload limits.
+With a 5-char session ID and typical chunk numbering (e.g. `12/15`), overhead is ~20 characters.
+
+**Meshtastic (170 hex chars):** Meshtastic's practical text-message payload limit is around 237 bytes. Subtracting wire overhead leaves roughly 200+ hex chars of theoretical headroom; 170 was settled on during early real-device testing as a value with reliable margin below that ceiling, not the theoretical max itself.
+
+**MeshCore (120 hex chars):** MeshCore's companion firmware hard-caps a single text message at 160 bytes (ten cipher blocks) - any longer message is rejected outright before it ever reaches the radio. Subtracting wire overhead leaves ~141 bytes theoretically safe, but real hardware testing found messages approaching that edge still failed; 120 was chosen to leave real margin below it rather than sit right at the theoretical line.
+
+Both values were confirmed by sending real chunk messages over real hardware, not derived from the theoretical limit alone.
 
 ## Multiple Concurrent Sessions
 
