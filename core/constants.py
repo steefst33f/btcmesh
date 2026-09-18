@@ -12,7 +12,16 @@ CHUNK_DELIMITER = "|"
 CHUNK_INDEX_DELIMITER = "/"
 
 # --- Sizing ---
-DEFAULT_CHUNK_SIZE = 170  # hex characters per chunk (85 bytes)
+# Sized against Meshtastic's practical text-message payload limit
+# (~237 bytes). After the "BTC_TX|<session>|<n>/<total>|" wire overhead
+# (~20-26 bytes depending on chunk/total digit counts), roughly 200+ hex
+# chars of theoretical headroom remained; 170 was settled on during
+# early real-device testing (before per-transport limits existed, back
+# when this was the only mesh transport) as a value with reliable margin
+# below that ceiling, not the theoretical max itself. See
+# MESHCORE_MAX_CHUNK_SIZE below for MeshCore's much tighter,
+# firmware-hard-capped equivalent, derived and confirmed the same way.
+DEFAULT_CHUNK_SIZE = 170  # hex characters per chunk (85 bytes), Meshtastic transport
 SESSION_ID_LENGTH = 5  # hex characters in session ID
 
 # MeshCore's own hard cap on a single companion-protocol text message:
